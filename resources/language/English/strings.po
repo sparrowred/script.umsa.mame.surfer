@@ -1,0 +1,60 @@
+# Kodi Media Center language file
+# Addon Name: UMSA MAME Surfer
+# Addon id: script.umsa.mame.surfer
+# Addon Provider: sparrowred
+msgid ""
+msgstr ""
+"Project-Id-Version: XBMC Addons\n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: sparrowred\n"
+"Language-Team: English\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "#30000"
+msgid "Basic"
+msgstr ""
+
+msgctxt "#30100"
+msgid "MAME executeable"
+msgstr ""
+
+msgctxt "#30111"
+msgid "MAME ini file"
+msgstr ""
+
+msgctxt "#30112"
+msgid "MAME working directory"
+msgstr ""
+
+msgctxt "#30201"
+msgid "ProgettoSnaps path"
+msgstr ""
+
+msgctxt "#30202"
+msgid "Dat files path"
+msgstr ""
+
+msgctxt "#30251"
+msgid "AspectRatio of Screen"
+msgstr ""
+
+msgctxt "#30252"
+msgid "ROMs Temp folder"
+msgstr ""
+
+msgctxt "#30253"
+msgid "Preferred Country"
+msgstr ""
+
+msgctxt "#30254"
+msgid "Play videos (crashes for me after a while)"
+msgstr ""
+
+msgctxt "#30255"
+msgid "PDF Viewer for Manuals"
+msgstr ""

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon
+  id="script.umsa.mame.surfer"
+  version="(alpha version)"
+  name="UMSA MAME surfer"
+  provider-name="sparrowred">
+  <requires>
+  </requires>
+  <extension point="xbmc.python.script" library="default.py"></extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en">Frontend for MAME with the UMSA twist</summary>
+    <description lang="en">Easy to use browser and launcher for emulators based on UMSA
+UMSA is based on MAME and it's Software Lists and combines all
+software ports, conversion, remakes and sometimes even unoffical ones.
+
+** Note ** This piece of software is absolut alpha status.
+Many functions are not implemented or only half way
+and there are many known and unknown bugs,
+It's just a hobby side project for umsa.ini to
+showcase it and encourage other frontend authors to support it.
+
+Thanks:
+The MAME team and all dat and ini authors, the Kodi team and RCB author malte
+and of course progetto-SNAPS for the wonderful collection of artwork.
+
+</description>
+        <language></language>
+        <license>GPL 3.0</license>
+        <platform>all</platform>        
+  </extension>
+</addon>
