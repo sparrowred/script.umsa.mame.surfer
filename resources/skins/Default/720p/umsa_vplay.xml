@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+
+<window>
+    <allowoverlay>yes</allowoverlay>
+    <defaultcontrol always="false">4000</defaultcontrol>
+    <coordinates>
+        <posx>0</posx>
+        <posy>0</posy>
+    </coordinates>
+
+    <controls>
+        <control type="image" id="75">
+            <description>background image</description>
+            <posx>0</posx>
+            <posy>0</posy>
+            <width>1280</width>
+            <height>720</height>
+            <colordiffuse>FF000000</colordiffuse>
+            <texture>backg.png</texture>
+        </control>
+        
+        <control type="videowindow" id="2004">
+            <description>VIDEO WINDOW FOR VIDEOSNAP</description>
+            <animation effect="fade" start="0" end="100" time="2000" condition="Player.HasVideo">Conditional</animation>
+            <posx>600</posx>
+            <posy>15</posy>
+            <width>675</width>
+            <height>400</height>
+            <visible>Player.HasVideo</visible>
+            <aspectratio>stretch</aspectratio>
+        </control>
+        
+        <control type="image">
+            <description>background image</description>
+            <animation effect="fade" start="0" end="100" time="2000" condition="!String.IsEmpty(Control.GetLabel(2005))">Conditional</animation>
+            <animation effect="fade" start="100" end="0" time="2000" condition="String.IsEmpty(Control.GetLabel(2005))">Conditional</animation>
+            <posx>600</posx>
+            <posy>690</posy>
+            <width>680</width>
+            <height>30</height>
+            <colordiffuse>90000000</colordiffuse>
+            <texture>backg.png</texture>
+            <visible>!String.IsEmpty(Control.GetLabel(2005))</visible>
+        </control>
+        
+        <control type="Label" id="2005">
+            <description>video info label</description>
+            <animation effect="fade" start="0" end="100" time="2000" condition="!String.IsEmpty(Control.GetLabel(2005))">Conditional</animation>
+            <animation effect="fade" start="100" end="0" time="2000" condition="String.IsEmpty(Control.GetLabel(2005))">Conditional</animation>
+            <posx>610</posx>
+            <posy>690</posy>
+            <width>655</width>
+            <scroll>true</scroll>
+            <visible>True</visible>
+            <textcolor>FF00FF00</textcolor>
+            <font>font-15</font>
+        </control>
+        
+    </controls>
+    
+</window>

@@ -35,6 +35,10 @@ msgctxt "#30201"
 msgid "ProgettoSnaps path"
 msgstr ""
 
+msgctxt "#30203"
+msgid "2nd Artwork path"
+msgstr ""
+
 msgctxt "#30202"
 msgid "Dat files path"
 msgstr ""
@@ -52,9 +56,33 @@ msgid "Preferred Country"
 msgstr ""
 
 msgctxt "#30254"
-msgid "Play videos (crashes for me after a while)"
+msgid "Auto-Play Videos"
 msgstr ""
 
 msgctxt "#30255"
 msgid "PDF Viewer for Manuals"
+msgstr ""
+
+msgctxt "#30256"
+msgid "CHDMAN (for converting chd to cue/bin)"
+msgstr ""
+
+msgctxt "#31000"
+msgid "Misc"
+msgstr ""
+
+msgctxt "#31013"
+msgid "Use PIL library (for image detection)"
+msgstr ""
+
+msgctxt "#31014"
+msgid "Delete DB files"
+msgstr ""
+
+msgctxt "#32000"
+msgid "ScreenSaver"
+msgstr ""
+
+msgctxt "#32010"
+msgid "Show"
 msgstr ""

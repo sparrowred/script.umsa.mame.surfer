@@ -11,7 +11,9 @@ class Check:
         if pil:
             
             # chrashes on some machines when screensaver starts the second time
+            # now works, seems some PIL or Kodi Update fixed it
             from PIL import Image, ImageStat
+            #print("##### Loaded PIL library!")
             self.Image = Image
             self.ImageStat = ImageStat
             
@@ -59,32 +61,41 @@ class Check:
         
         if self.pil:
             
-            img = self.Image.open( snapshot )
+            # sanity
+            try:
+                img = self.Image.open( snapshot )
+            except:
+                return False
+            
             imgmd5 = hashlib.md5( img.tobytes() ).hexdigest()
             imgv = self.ImageStat.Stat( img ).var
             img.close()
             
             if imgmd5 in self.bad_image_list:
-                print "- check_snapshot_pil %s - bad" % ( snapshot, )
+                #print("- check_snapshot_pil {} - bad".format(snapshot))
                 return False
-            elif reduce( lambda x, y: x and y < 0.005, imgv, True ):
-                print "- check_snapshot_pil %s - same color" % ( snapshot, )
+            elif reduce( lambda x, y: x and y < 0.010, imgv, True ): # 0.005
+                #print("- check_snapshot_pil {} - same color".format(snapshot))
                 return False
             else:
-                print "- check_snapshot_pil %s - %s" % ( snapshot, imgmd5 )
+                #print("- check_snapshot_pil {} - {}".format( snapshot, imgmd5 ))
                 return True
         
         else:
             
-            img = open( snapshot, 'rb' )
+            # sanity
+            try:
+                img = open( snapshot, 'rb' )
+            except:
+                return False
             imgmd5 = hashlib.md5( img.read() ).hexdigest()
             img.close()
             
             if imgmd5 in self.bad_image_list:
-                print "- check_snapshot %s - bad" % ( snapshot, )
+                #print("- check_snapshot {} - bad".format(snapshot))
                 return False
             else:
-                print "- check_snapshot %s - %s" % ( snapshot, imgmd5 )
+                #print("- check_snapshot {} - {}".format( snapshot, imgmd5 ))
                 return True
             
-        return
+        return False

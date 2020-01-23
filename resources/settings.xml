@@ -6,13 +6,21 @@
         <setting id="mamedir" type="folder" label="30112" default=""/>
         <setting type="sep"/>
         <setting id="progetto" type="folder" label="30201" default=""/>
+        <setting id="otherart" type="folder" label="30203" default=""/>
         <setting id="datdir" type="folder" label="30202" default=""/>
         <setting type="sep"/>
         <setting id="aspectratio" type="select" label="30251" values="16:9|16:10|5:4|4:3" default="16:9" />
         <setting id="temp_path" type="folder" label="30252" default=""/>
         <setting id="pdfviewer" type="file" label="30255" default=""/>
-<!--        <setting id="pref_country" type="select" label="30253" values="Euro|USA|Japan" />
-        <setting id="playvideo" type="bool" label="30254" default="false"/>
--->
+        <setting id="chdman" type="file" label="30256" default=""/>
+    </category>
+    <category label="31000">
+        <setting id="pref_country" type="select" label="30253" values="Euro|USA|Japan" />
+        <setting id="playvideo" type="bool" label="30254" default="false" />
+        <setting id="pil" type="bool" label="31013" default="false" />
+        <setting id="deldb" type="action" label="31014" action="RunScript(special://home/addons/script.umsa.mame.surfer/deldb.py)" />
+    </category>
+    <category label="32000">
+        <setting id="ssaver" type="select" label="32010" values="Random|Videos|Snaps" default="Random" />
     </category>
 </settings>

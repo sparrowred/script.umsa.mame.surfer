@@ -1,7 +1,10 @@
 ﻿<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 
-<window>
+<!-- font change for transparency skin:
+cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa_transparency.xml
+-->
 
+<window>
     <allowoverlay>yes</allowoverlay>
     <defaultcontrol always="false">4000</defaultcontrol>
     <coordinates>
@@ -19,28 +22,14 @@
             <height>720</height>
             <texture>backg.png</texture>
         </control>
-
-        <!-- big right multi image TODO fallback pics, see http://kodi.tv/new-multiimage-control-code-allows-background-loading/ -->
-        <control type="multiimage" id="2232">
-            <posx>600</posx>
-            <posy>35</posy>
-            <width>675</width>
-            <height>650</height>
-            <imagepath background="true">$INFO[Container(2233).ListItem.Icon]</imagepath>
-            <timeperimage>5000</timeperimage>
-            <fadetime>400</fadetime>
-            <pauseatend>200</pauseatend>
-            <loop>yes</loop>
-            <aspectratio align="center" aligny="center">keep</aspectratio>
-            <visible>!Container(2233).ListItem.Property(NotEnabled)</visible>
-        </control>
-
+        
         <!-- list for big right image -->
         <control type="wraplist" id="2233">
             <posx>595</posx>
             <posy>682</posy>
             <width>675</width>
             <height>18</height>
+            <!-- <visible>!Player.HasVideo</visible> -->
             <viewtype>list</viewtype>
             <autoscroll delay="200" time="5000" repeat="200">true</autoscroll> 
             <itemlayout></itemlayout>
@@ -57,6 +46,30 @@
                     <info>ListItem.Label</info>
                 </control>
             </focusedlayout>
+        </control>
+        
+        <!-- big right multi image TODO fallback pics, see http://kodi.tv/new-multiimage-control-code-allows-background-loading/ -->
+        <control type="multiimage" id="2232">
+            <animation condition="Player.HasVideo" type="Conditional">
+                <effect type="slide" end="250,300" delay="0" time="300"/>
+                <effect type="zoom" end="42,42" delay="0" time="300"/>
+            </animation>
+            <animation condition="!Player.HasVideo" type="Conditional">
+                <effect type="zoom" end="100,100" delay="0" time="300"/>
+                <effect type="slide" start="250,300" end="0,0" delay="0" time="300"/>
+            </animation>
+            <posx>600</posx>
+            <posy>35</posy>
+            <width>675</width>
+            <height>650</height>
+            <imagepath background="true">$INFO[Container(2233).ListItem.Icon]</imagepath>
+            <timeperimage>5000</timeperimage>
+            <fadetime>400</fadetime>
+            <pauseatend>200</pauseatend>
+            <loop>yes</loop>
+            <aspectratio align="center" aligny="center">keep</aspectratio>
+            <!-- <visible>!Player.HasVideo + !Container(2233).ListItem.Property(NotEnabled)</visible> -->
+            <visible>!Container(2233).ListItem.Property(NotEnabled)</visible>
         </control>
 
         <!-- FOCUS INDICATOR -->
@@ -117,7 +130,8 @@
             <width>20</width>
             <height>30</height>
             <texture>arrowg.png</texture>
-            <visible>!Player.HasVideo</visible>
+            <!-- <visible>!Player.HasVideo</visible> -->
+            <visible>true</visible>
         </control>
         <control type="Image">
             <posx>5</posx>
@@ -131,7 +145,7 @@
         <!-- Software name -->
         <!-- <control type="Label" id="4000"> -->
         <control type="Button" id="4000">
-            <onup>2101</onup>
+            <onup>4901</onup>
             <ondown>4005</ondown>
             <posx>40</posx>
             <posy>0</posy>
@@ -281,7 +295,7 @@
             <texture>separator3.png</texture>
         </control>
 
-        <!-- left side bottom: snap/video, title textbox for info -->
+        <!-- left side bottom: snap, title textbox for info -->
 
         <!-- Multiimage Solution: List with autoscroll
              and with this also a Label for the Multiimage is possible ((: -->
@@ -294,7 +308,8 @@
             <height>200</height>
             <texture background="true">$INFO[Container(2223).ListItem.Icon]</texture>
             <fadetime>500</fadetime>
-            <visible>!Player.HasVideo + Container(2223).ListItem.Property(Horizontal)</visible>
+            <!-- <visible>!Player.HasVideo + Container(2223).ListItem.Property(Horizontal)</visible> -->
+            <visible>Container(2223).ListItem.Property(Horizontal)</visible>
         </control>
         <!-- snapshot image vertical 3:4 -->
         <control type="image" id="2221">
@@ -304,7 +319,7 @@
             <height>200</height>
             <texture background="true">$INFO[Container(2223).ListItem.Icon]</texture>
             <fadetime>500</fadetime>
-            <visible>!Player.HasVideo + Container(2223).ListItem.Property(Vertical)</visible>
+            <visible>Container(2223).ListItem.Property(Vertical)</visible>
         </control>
         <!-- snapshot image not scaled for lcds -->
         <control type="image">
@@ -317,7 +332,7 @@
             <texture background="true">$INFO[Container(2223).ListItem.Icon]</texture>
             <aspectratio align="left" aligny="bottom">keep</aspectratio>
             <fadetime>500</fadetime>
-            <visible>!Player.HasVideo + Container(2223).ListItem.Property(NotScaled)</visible>
+            <visible>Container(2223).ListItem.Property(NotScaled)</visible>
         </control>
 
         <control type="wraplist" id="2223">
@@ -328,7 +343,7 @@
             <height>18</height>
             <viewtype>list</viewtype>
             <autoscroll delay="0" time="2000" repeat="0">true</autoscroll>
-            <visible>!Player.HasVideo</visible>
+            <visible>true</visible>
             <itemlayout></itemlayout>
             <focusedlayout>
                 <control type="label">
@@ -353,7 +368,7 @@
             <posy>460</posy>
             <width>480</width>
             <height>30</height>
-            <visible>!Player.HasVideo</visible>
+            <visible>true</visible>
             <orientation>horizontal</orientation>
             <itemlayout width="120" height="30">
                 <control type="label">
@@ -389,85 +404,49 @@
             <height>190</height>
             <font>font-17</font>
             <textcolor>FF00FF00</textcolor>
-            <visible>!Player.HasVideo</visible>
+            <visible>true</visible>
             <autoscroll delay="4200" time="2600" repeat="7000"></autoscroll>
             <label>$INFO[Container(4033).ListItem.Property(text)]</label>
         </control>
-
-        <!-- video -->
+        
+        <!-- video window and title label -->
         <control type="videowindow" id="2004">
             <description>VIDEO WINDOW FOR VIDEOSNAP</description>
-            <posx>20</posx>
-            <posy>280</posy>
-            <width>560</width>
+            <animation effect="fade" start="0" time="2000" condition="Player.HasVideo">Conditional</animation> -->
+            <posx>600</posx>
+            <posy>15</posy>
+            <width>675</width>
             <height>400</height>
-            <visible>true</visible>
+            <visible>Player.HasVideo</visible>
             <aspectratio>stretch</aspectratio>
         </control>
-
-<!--        <control type="Label">
-            <description>VIDEO TIME TO RUN</description>
-            <posx>100</posx>
-            <posy>690</posy>
+        
+        <control type="Label" id="2005">
+            <description>VIDEO INFO LABEL</description>
+            <!-- <animation effect="fade" start="20" time="1000" pulse="true" condition="Player.HasVideo">Conditional</animation> -->
+            <posx>720</posx>
+            <posy>10</posy>
+            <width>655</width>
+            <align>center</align>
+            <scroll>true</scroll>
             <visible>Player.HasVideo</visible>
-            <textcolor>FFB2D4F5</textcolor>
-            <label>$INFO[MusicPlayer.TimeRemaining]</label>
-            <font>font-15</font>
-        </control>-->
-
-        <!-- TODO: try to make windows out of these -->
+            <textcolor>FF00FF00</textcolor>
+            <label>$INFO[VideoPlayer.Title]</label>
+            <font>font10</font>
+        </control>
+        
         <!-- Game list for all -->
         <control type="group" id="407">
+            
             <control type="image" id="4107">
                 <description>filter background image</description>
                 <posx>400</posx>
                 <posy>50</posy>
                 <width>870</width>
-                <height>600</height>
+                <height>620</height>
                 <texture>popup.png</texture>
                 <colordiffuse>FFFFFFFF</colordiffuse>
-            </control>
-            <control type="image">
-                <description>filter focus category</description>
-                <posx>407</posx>
-                <posy>95</posy>
-                <width>186</width>
-                <height>1</height>
-                <texture>focus_h.png</texture>
-                <visible>Control.HasFocus(4009)</visible>
-            </control>
-            <control type="list" id="4009">
-                <description>CONTEXT MENU</description>
-                <onleft>4000</onleft>
-                <onright>4007</onright>
-                <posx>405</posx>
-                <posy>100</posy>
-                <width>190</width>
-                <height>500</height>
-                <orientation>vertical</orientation>
-                <itemlayout width="300" height="30">
-                    <control type="label">
-                        <posx>0</posx>
-                        <posy>0</posy>
-                        <width>300</width>
-                        <height>30</height>
-                        <font>font-15</font>
-                        <selectedcolor>green</selectedcolor>
-                        <info>ListItem.Label</info>
-                    </control>
-                </itemlayout>
-                <focusedlayout width="300" height="30">
-                    <control type="label">
-                        <posx>0</posx>
-                        <posy>0</posy>
-                        <width>300</width>
-                        <height>30</height>
-                        <font>font-15</font>
-                        <selectedcolor>green</selectedcolor>
-                        <textcolor>green</textcolor>
-                        <info>ListItem.Label</info>
-                    </control>
-                </focusedlayout>
+                <visible>ControlGroup(407).HasFocus</visible>
             </control>
             <control type="label" id="4117">
                 <description>description for content in game list</description>
@@ -475,6 +454,14 @@
                 <posy>55</posy>
                 <width>450</width>
                 <scroll>true</scroll>
+                <visible>ControlGroup(407).HasFocus</visible>
+            </control>
+            <control type="label" id="4217">
+                <description>hidden field for content id</description>
+                <posx>605</posx>
+                <posy>55</posy>
+                <width>450</width>
+                <visible>False</visible>
             </control>
             <control type="image">
                 <description>option focus</description>
@@ -487,6 +474,7 @@
             </control>
             <control type="wraplist" id="4118">
                 <description>options</description>
+                <visible>ControlGroup(407).HasFocus</visible>
                 <onleft>4007</onleft>
                 <onright>4119</onright>
                 <posx>1050</posx>
@@ -529,6 +517,7 @@
             </control>
             <control type="wraplist" id="4119">
                 <description>filter switch</description>
+                <visible>ControlGroup(407).HasFocus</visible>
                 <onleft>4118</onleft>
                 <posx>1150</posx>
                 <posy>55</posy>
@@ -559,15 +548,6 @@
                     </control>
                 </focusedlayout>
             </control>
-            <control type="image" id="4115">
-                <description>snap</description>
-                <posx>415</posx>
-                <posy>490</posy>
-                <width>200</width>
-                <height>140</height>
-                <texture>$INFO[Container(4007).ListItem.Icon]</texture>
-                <visible>true</visible>
-            </control>
             <control type="image">
                 <description>games list focus</description>
                 <posx>622</posx>
@@ -579,33 +559,144 @@
             </control>
             <control type="fixedlist" id="4007">
                 <description>games list</description>
-                <onleft>4009</onleft>
+                <visible allowhiddenfocus="true">ControlGroup(407).HasFocus</visible>
+                <onleft>4902</onleft>
                 <onright>4118</onright>
-                <posx>620</posx>
+                <posx>380</posx>
                 <posy>100</posy>
-                <width>640</width>
+                <width>840</width>
                 <height>510</height>
                 <orientation>vertical</orientation>
                 <focusposition>8</focusposition>
                 <movement>7</movement>
                 <itemlayout width="670" height="30">
                     <control type="label">
+                        <description>year</description>
+                        <posx>35</posx>
+                        <posy>0</posy>
+                        <width>60</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <info>ListItem.Writer</info>
+                    </control>
+                    <control type="label">
+                        <description>software name</description>
+                        <posx>110</posx>
+                        <posy>0</posy>
+                        <width>500</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <info>ListItem.Label</info>
+                    </control>
+                    <control type="label">
+                        <description>maker</description>
+                        <posx>660</posx>
+                        <posy>0</posy>
+                        <width>220</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <info>ListItem.Studio</info>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="670" height="30">
+                    <control type="label">
+                        <description>year</description>
+                        <posx>40</posx>
+                        <posy>0</posy>
+                        <width>60</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <textcolor>green</textcolor>
+                        <info>ListItem.Writer</info>
+                    </control>
+                    <control type="label">
+                        <description>software name</description>
+                        <posx>115</posx>
+                        <posy>0</posy>
+                        <width>500</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <scroll>true</scroll>
+                        <textcolor>green</textcolor>
+                        <info>ListItem.Label</info>
+                    </control>
+                    <control type="label">
+                        <description>maker</description>
+                        <posx>665</posx>
+                        <posy>0</posy>
+                        <width>220</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <scroll>true</scroll>
+                        <textcolor>green</textcolor>
+                        <info>ListItem.Studio</info>
+                    </control>
+                </focusedlayout>
+            </control>
+            
+            <control type="textbox" id="4114">
+                <description>info text</description>
+                <posx>420</posx>
+                <posy>610</posy>
+                <width>630</width>
+                <height>50</height>
+                <font>font-17</font>
+                <textcolor>FF00FF00</textcolor>
+                <visible>ControlGroup(407).HasFocus</visible>
+                <label>$INFO[Container(4007).ListItem.Property(text)]</label>
+            </control>
+            
+            <control type="image" id="4115">
+                <description>snap</description>
+                <posx>1030</posx>
+                <posy>520</posy>
+                <width>200</width>
+                <height>140</height>
+                <visible>ControlGroup(407).HasFocus</visible>
+                <texture>$INFO[Container(4007).ListItem.Icon]</texture>
+            </control>
+            
+            <control type="image">
+                <description>sub gamelist bg</description>
+                <animation effect="slide" end="0,-500" delay="0" time="400" tween="quadratic" easing="out" condition="Control.HasFocus(4902)">Conditional</animation>
+                <animation effect="slide" end="0,500" delay="0" time="400" tween="quadratic" easing="out" condition="!Control.HasFocus(4902)">Conditional</animation>
+                <posx>300</posx>
+                <posy>1000</posy>
+                <width>200</width>
+                <height>280</height>
+                <texture>popup.png</texture>
+                <visible>Control.HasFocus(4902)</visible>
+                <colordiffuse>FFFFFFFF</colordiffuse>
+            </control>
+            
+            <control type="list" id="4902">
+                <description>sub gamelist menu</description>
+                <animation effect="slide" end="0,-500" delay="0" time="400" tween="quadratic" easing="out" condition="Control.HasFocus(4902)">Conditional</animation>
+                <animation effect="slide" end="0,500" delay="0" time="400" tween="quadratic" easing="out" condition="!Control.HasFocus(4902)">Conditional</animation>
+                <onleft>4000</onleft>
+                <posx>300</posx>
+                <posy>1000</posy>
+                <width>200</width>
+                <height>280</height>
+                <visible>true</visible>
+                <orientation>vertical</orientation>
+                <itemlayout width="300" height="30">
+                    <control type="label">
                         <posx>10</posx>
                         <posy>0</posy>
-                        <width>620</width>
+                        <width>200</width>
                         <height>30</height>
                         <font>font-15</font>
                         <selectedcolor>green</selectedcolor>
                         <info>ListItem.Label</info>
                     </control>
                 </itemlayout>
-                <focusedlayout width="670" height="30">
+                <focusedlayout width="300" height="30">
                     <control type="label">
                         <posx>10</posx>
                         <posy>0</posy>
-                        <width>620</width>
+                        <width>200</width>
                         <height>30</height>
-                        <scroll>true</scroll>
                         <font>font-15</font>
                         <selectedcolor>green</selectedcolor>
                         <textcolor>green</textcolor>
@@ -613,10 +704,13 @@
                     </control>
                 </focusedlayout>
             </control>
+            
         </control>
         
-        <!-- Filter Window with 2 vertical lists,
-        1. filter categories (swl and cat), 2. content with radio button  -->
+
+        <!-- Filter Window with 3 vertical lists,
+         1   filter categories (swl and cat),
+         2+3 active and inactive content -->
         <control type="group" id="408">
             <control type="image" id="4108">
                 <description>filter background image</description>
@@ -626,20 +720,41 @@
                 <height>600</height>
                 <texture>popup.png</texture>
                 <colordiffuse>FFFFFFFF</colordiffuse>
+                <visible>ControlGroup(408).HasFocus</visible>
             </control>
             <control type="label" id="4109">
-                <description>description for content in game list</description>
-                <posx>605</posx>
+                <description>description for content in filter list</description>
+                <posx>700</posx>
                 <posy>55</posy>
                 <width>450</width>
                 <scroll>true</scroll>
+                <visible>ControlGroup(408).HasFocus</visible>
             </control>
             <control type="label" id="4110">
-                <description>description for content in game list</description>
-                <posx>400</posx>
+                <description>description for loaded filter list</description>
+                <posx>330</posx>
                 <posy>55</posy>
                 <width>450</width>
                 <scroll>true</scroll>
+                <visible>ControlGroup(408).HasFocus</visible>
+            </control>
+            <control type="label">
+                <description>description for active filter list</description>
+                <posx>550</posx>
+                <posy>85</posy>
+                <width>200</width>
+                <font>font10</font>
+                <label>active</label>
+                <visible>ControlGroup(408).HasFocus</visible>
+            </control>
+            <control type="label">
+                <description>description for inactive filter list</description>
+                <posx>930</posx>
+                <posy>85</posy>
+                <width>200</width>
+                <font>font10</font>
+                <label>inactive</label>
+                <visible>ControlGroup(408).HasFocus</visible>
             </control>
             <control type="image">
                 <description>filter switch focus</description>
@@ -652,6 +767,7 @@
             </control>
             <control type="wraplist" id="4116">
                 <description>filter switch</description>
+                <visible>ControlGroup(408).HasFocus</visible>
                 <onleft>4088</onleft>
                 <posx>1150</posx>
                 <posy>55</posy>
@@ -693,6 +809,7 @@
             </control>
             <control type="list" id="4008">
                 <description>filter category list</description>
+                <visible allowhiddenfocus="true">ControlGroup(408).HasFocus</visible>
                 <onleft>4000</onleft>
                 <onright>4088</onright>
                 <posx>300</posx>
@@ -727,53 +844,32 @@
             </control>
             <control type="image">
                 <description>focus filter content</description>
-                <posx>600</posx>
-                <posy>130</posy>
-                <width>1</width>
-                <height>350</height>
+                <posx>500</posx>
+                <posy>100</posy>
+                <width>380</width>
+                <height>510</height>
+                <colordiffuse>30436EEE</colordiffuse>
                 <texture>focus.png</texture>
                 <visible>Control.HasFocus(4088)</visible>
             </control>
             <control type="fixedlist" id="4088">
-                <!-- My suggestion is fake the look with graphics that look like a radio button
-                and then use a property like ListItem.Property(IsEnabled) to toggle the visibility
-                of the correct graphics so each layout has a "Enabled Image" "Disabled Image"
-                visible depending on if "ListItem.Property(IsEnabled)" is true
-                and the Label over the top of them  -->
-                <description>filter content list</description>
+                <description>filter active content list</description>
+                <visible>ControlGroup(408).HasFocus</visible>
                 <onleft>4008</onleft>
-                <onright>4116</onright>
-                <posx>600</posx>
+                <onright>4089</onright>
+                <posx>500</posx>
                 <posy>100</posy>
-                <width>670</width>
+                <width>380</width>
                 <height>510</height>
                 <pagecontrol>10</pagecontrol>
                 <focusposition>8</focusposition>
                 <movement>7</movement>
                 <orientation>vertical</orientation>
-                <itemlayout width="670" height="30">
-                    <control type="image">
-                        <posx>10</posx>
-                        <posy>12</posy>
-                        <width>10</width>
-                        <height>10</height>
-                        <texture>check.png</texture>
-                        <visible>ListItem.Property(IsEnabled)</visible>
-                        <aspectratio>scale</aspectratio>
-                    </control>
-                    <control type="image">
-                        <posx>10</posx>
-                        <posy>12</posy>
-                        <width>10</width>
-                        <height>10</height>
-                        <visible>IsEmpty(ListItem.Property(IsEnabled))</visible>
-                        <texture>uncheck.png</texture>
-                        <aspectratio>scale</aspectratio>
-                    </control>
+                <itemlayout width="380" height="30">
                     <control type="label">
-                        <posx>30</posx>
+                        <posx>10</posx>
                         <posy>0</posy>
-                        <width>660</width>
+                        <width>380</width>
                         <height>30</height>
                         <font>font-15</font>
                         <textcolor>green</textcolor>
@@ -781,178 +877,122 @@
                         <info>ListItem.Label</info>
                     </control>
                 </itemlayout>
-                <focusedlayout width="670" height="30">
-                    <control type="image">
-                        <posx>10</posx>
-                        <posy>12</posy>
-                        <width>10</width>
-                        <height>10</height>
-                        <texture>check.png</texture>
-                        <visible>ListItem.Property(IsEnabled)</visible>
-                        <aspectratio>scale</aspectratio>
-                    </control>
-                    <control type="image">
-                        <posx>10</posx>
-                        <posy>12</posy>
-                        <width>10</width>
-                        <height>10</height>
-                        <texture>uncheck.png</texture>
-                        <visible>IsEmpty(ListItem.Property(IsEnabled))</visible>
-                        <aspectratio>scale</aspectratio>
-                    </control>
+                <focusedlayout width="380" height="30">
                     <control type="label">
-                        <posx>30</posx>
+                        <posx>10</posx>
                         <posy>0</posy>
-                        <width>660</width>
+                        <width>380</width>
                         <height>30</height>
                         <font>font-15</font>
                         <textcolor>FF00FF00</textcolor>
                         <selectedcolor>blue</selectedcolor>
+                        <scroll>true</scroll>
+                        <info>ListItem.Label</info>
+                    </control>
+                </focusedlayout>
+            </control>
+            <control type="image">
+                <description>focus filter content</description>
+                <posx>880</posx>
+                <posy>100</posy>
+                <width>380</width>
+                <height>510</height>
+                <colordiffuse>30436EEE</colordiffuse>
+                <texture>focus.png</texture>
+                <visible>Control.HasFocus(4089)</visible>
+            </control>
+            <control type="fixedlist" id="4089">
+                <description>filter inactive content list</description>
+                <visible>ControlGroup(408).HasFocus</visible>
+                <onleft>4088</onleft>
+                <onright>4116</onright>
+                <posx>880</posx>
+                <posy>100</posy>
+                <width>380</width>
+                <height>510</height>
+                <pagecontrol>10</pagecontrol>
+                <focusposition>8</focusposition>
+                <movement>7</movement>
+                <orientation>vertical</orientation>
+                <itemlayout width="380" height="30">
+                    <control type="label">
+                        <posx>10</posx>
+                        <posy>0</posy>
+                        <width>380</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <textcolor>green</textcolor>
+                        <selectedcolor>blue</selectedcolor>
+                        <info>ListItem.Label</info>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="380" height="30">
+                    <control type="label">
+                        <posx>10</posx>
+                        <posy>0</posy>
+                        <width>380</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <textcolor>FF00FF00</textcolor>
+                        <selectedcolor>blue</selectedcolor>
+                        <scroll>true</scroll>
                         <info>ListItem.Label</info>
                     </control>
                 </focusedlayout>
             </control>
         </control>
-
-        <!-- Button group -->
-        <control type="group" id="400">
-            <animation effect="slide" start="0,600" end="0,650" delay="0" time="400" tween="quadratic" easing="out" condition="ControlGroup(400).HasFocus">Conditional</animation>
-            <animation effect="slide" start="0,0" end="0,1300" delay="0" time="400" tween="quadratic" easing="out" condition="!ControlGroup(400).HasFocus">Conditional</animation>
-
+        
+        <control type="group" id="490">
+            <posx>-300</posx>
+            <posy>300</posy>
+            <animation effect="slide" end="300,0" delay="0" time="400" tween="quadratic" easing="out" condition="ControlGroup(490).HasFocus">Conditional</animation>
+            <animation effect="slide" end="-300,0" delay="0" time="400" tween="quadratic" easing="out" condition="!ControlGroup(490).HasFocus">Conditional</animation>
+            
             <control type="image">
-                <animation effect="zoom" start="0,0,0,0" end="0,0,1280,120" time="400" tween="quadratic" easing="out" condition="ControlGroup(400).HasFocus">Conditional</animation>
+                <animation effect="zoom" start="0,0,0,0" end="0,0,300,350" time="400" tween="quadratic" easing="out" condition="ControlGroup(490).HasFocus">Conditional</animation>
                 <description>filter background image</description>
                 <posx>0</posx>
                 <posy>0</posy>
-                <width>1280</width>
-                <height>120</height>
+                <width>300</width>
+                <height>350</height>
                 <texture>popup.png</texture>
                 <colordiffuse>FFFFFFFF</colordiffuse>
             </control>
-
-            <control type="button" id="2101"> 
-                <description>context</description>
-                <posx>25</posx>
-                <posy>25</posy>
-                <width>220</width>
-                <height>30</height>
-                <visible>true</visible>
-                <colordiffuse>DDFFFFFF</colordiffuse>
-                <texturefocus>button_focus.png</texturefocus>
-                <texturenofocus>button_nofocus.png</texturenofocus>
-                <label>SEARCH</label>
-                <textcolor>DDFFFFFF</textcolor>
-                <disabledcolor>80FFFFFF</disabledcolor>
-                <align>center</align>
-                <aligny>center</aligny>
-                <textoffsetx></textoffsetx>
-                <textoffsety></textoffsety>
-                <pulseonselect></pulseonselect>
-                <onup>4033</onup>
-                <ondown>4000</ondown>
-                <onleft>2105</onleft>
-                <onright>2102</onright>
+            <control type="list" id="4901">
+                <description>main menu</description>
+                <onleft>4000</onleft>
+                <posx>0</posx>
+                <posy>0</posy>
+                <width>300</width>
+                <height>350</height>
+                <orientation>vertical</orientation>
+                <itemlayout width="300" height="30">
+                    <control type="label">
+                        <posx>10</posx>
+                        <posy>0</posy>
+                        <width>300</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <selectedcolor>green</selectedcolor>
+                        <info>ListItem.Label</info>
+                    </control>
+                </itemlayout>
+                <focusedlayout width="300" height="30">
+                    <control type="label">
+                        <posx>10</posx>
+                        <posy>0</posy>
+                        <width>300</width>
+                        <height>30</height>
+                        <font>font-15</font>
+                        <selectedcolor>green</selectedcolor>
+                        <textcolor>green</textcolor>
+                        <info>ListItem.Label</info>
+                    </control>
+                </focusedlayout>
             </control>
-
-            <control type="button" id="2102"> 
-                <description>filter</description>
-                <posx>275</posx>
-                <posy>25</posy>
-                <width>220</width>
-                <height>30</height>
-                <visible>true</visible>
-                <colordiffuse>DDFFFFFF</colordiffuse>
-                <texturefocus>button_focus.png</texturefocus>
-                <texturenofocus>button_nofocus.png</texturenofocus>
-                <label>FILTER</label>
-                <textcolor>DDFFFFFF</textcolor>
-                <disabledcolor>80FFFFFF</disabledcolor>
-                <align>center</align>
-                <aligny>center</aligny>
-                <textoffsetx></textoffsetx>
-                <textoffsety></textoffsety>
-                <pulseonselect></pulseonselect>
-                <onup>4033</onup>
-                <ondown>4000</ondown>
-                <onleft>2101</onleft>
-                <onright>2103</onright>
-            </control>
-
-            <control type="button" id="2104"> 
-                <description>settings</description>
-                <posx>775</posx>
-                <posy>25</posy>
-                <width>220</width>
-                <height>30</height>
-                <visible>true</visible>
-                <colordiffuse>DDFFFFFF</colordiffuse>
-                <texturefocus>button_focus.png</texturefocus>
-                <texturenofocus>button_nofocus.png</texturenofocus>
-                <label>SETTINGS</label>
-                <textcolor>DDFFFFFF</textcolor>
-                <disabledcolor>80FFFFFF</disabledcolor>
-                <align>center</align>
-                <aligny>center</aligny>
-                <textoffsetx></textoffsetx>
-                <textoffsety></textoffsety>
-                <pulseonselect></pulseonselect>
-                <onup>4033</onup>
-                <ondown>4000</ondown>
-                <onleft>2103</onleft>
-                <onright>2105</onright>
-            </control>
-
-            <control type="button" id="2105"> 
-                <description>update</description>
-                <posx>1025</posx>
-                <posy>25</posy>
-                <width>220</width>
-                <height>30</height>
-                <visible>true</visible>
-                <colordiffuse>DDFFFFFF</colordiffuse>
-                <texturefocus>button_focus.png</texturefocus>
-                <texturenofocus>button_nofocus.png</texturenofocus>
-                <label>UPDATE DB</label>
-                <textcolor>DDFFFFFF</textcolor>
-                <disabledcolor>80FFFFFF</disabledcolor>
-                <align>center</align>
-                <aligny>center</aligny>
-                <textoffsetx></textoffsetx>
-                <textoffsety></textoffsety>
-                <pulseonselect></pulseonselect>
-                <onup>4033</onup>
-                <ondown>4000</ondown>
-                <onleft>2104</onleft>
-                <onright>2101</onright>
-            </control>
-            
-            <control type="button" id="2103"> 
-                <description>exit</description>
-                <posx>525</posx>
-                <posy>25</posy>
-                <width>220</width>
-                <height>30</height>
-                <visible>true</visible>
-                <colordiffuse>DDFFFFFF</colordiffuse>
-                <texturefocus>button_focus.png</texturefocus>
-                <texturenofocus>button_nofocus.png</texturenofocus>
-                <label>EXIT</label>
-                <textcolor>DDFFFFFF</textcolor>
-                <disabledcolor>80FFFFFF</disabledcolor>
-                <align>center</align>
-                <aligny>center</aligny>
-                <textoffsetx></textoffsetx>
-                <textoffsety></textoffsety>
-                <pulseonselect></pulseonselect>
-                <onup>4033</onup>
-                <ondown>4000</ondown>
-                <onleft>2102</onleft>
-                <onright>2104</onright>
-            </control>
-            
         </control>
-
-        <!-- 2 bottom labels for status/music info and time playes -->
+            
+        <!-- 2 bottom labels for status text and music info -->
         <control type="label" id="4100">
             <description>music info</description>
             <posx>40</posx>
@@ -960,7 +1000,7 @@
             <width>600</width>
             <visible>Player.HasAudio</visible>
             <textcolor>FFB2D4F5</textcolor>
-            <label>$INFO[MusicPlayer.Artist] - $INFO[MusicPlayer.Title] (- $INFO[MusicPlayer.TimeRemaining])</label>
+            <label>$INFO[MusicPlayer.Artist] - $INFO[MusicPlayer.Title] (-$INFO[MusicPlayer.TimeRemaining])</label>
             <font>font10</font>
         </control>
         <control type="label" id="4101">

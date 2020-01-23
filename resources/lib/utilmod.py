@@ -17,19 +17,19 @@ class Dats:
             if d[-4:] != '.dat':
                 continue
             x = os.path.join( datdir, d )
-            print "scanning " + x
+            #print("scanning " + x)
             fobj = None
             try:
                 fobj = codecs.open( x, 'r')
             except:
-                print "cant open"
+                #print("cant open")
                 self.status += "can't open %s" % (x,)
             if fobj:
                 self.scan_dat(fobj)
                 fobj.close()
                 
         time2 = time.time()
-        print "- scan_dats     %0.3f ms" % ( (time2-time1)*1000.0, )
+        #print("- scan_dats     %0.3f ms" % ( (time2-time1)*1000.0, ))
         return
     
     def scan_dat(self, fobj):
@@ -287,7 +287,8 @@ def load_software_list(settings_folder, filename):
     
     if fobj:
         for line in fobj:
-            software_list = map( int, line.split(',') )
+            for i in line.split(','):
+                software_list.append(int(i))
     
         fobj.close()
         
@@ -310,4 +311,3 @@ def save_software_list(settings_folder, filename, software_list):
         fobj.close()
     
     return
-

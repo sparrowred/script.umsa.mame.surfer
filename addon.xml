@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <addon
   id="script.umsa.mame.surfer"
-  version="(alpha version)"
+  version="0.0.1"
   name="UMSA MAME surfer"
   provider-name="sparrowred">
   <requires>
+    <import addon="xbmc.python" version="2.25.0"/>
+    <import addon="plugin.video.youtube"/>
   </requires>
-  <extension point="xbmc.python.script" library="default.py"></extension>
+  <extension point="xbmc.python.script" library="default.py">
+    <provides>video game</provides>
+  </extension>
   <extension point="xbmc.addon.metadata">
     <summary lang="en">Frontend for MAME with the UMSA twist</summary>
     <description lang="en">Easy to use browser and launcher for emulators based on UMSA
