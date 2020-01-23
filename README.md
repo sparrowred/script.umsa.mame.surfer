@@ -40,15 +40,14 @@ Optional: Go to Settings, Interface, Fonts and set to Arial based to get Kanjis.
 You need to set the Settings level at least to Standard.
 
 Usage:
-- The enter button starts the emulation.
-- In the dat section enter popups a list for Recommended, Series, Videos and Manuals.
-- The context button (key c) opens a popup for different lists.
-- Go up from the top for a menu which contains the Filter options.
+- The enter button starts the emulation
+- In the dat section enter popups a list for Recommended, Series, Videos and Manuals
+- The context button (key c) opens a popup for different lists
+- Go up from the top for a menu which contains the Filter options
 
 Todo:
-- Scan dat files and artwork pictures to database for faster access and startup.
-- Speed up unoptimized databases statements (sometimes needs seconds).
-- Add favorite lists.
+- Rework database statements
+- Add favorite lists
 
 See also:
 https://github.com/sparrowred/screensaver.picture.slideshow, a fork of a
