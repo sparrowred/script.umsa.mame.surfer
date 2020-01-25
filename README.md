@@ -5,7 +5,7 @@ What's the difference to all the other frontends?
 
 This frontend uses the information from https://umsa.info which shows all ports, conversions, remakes and sometimes clones and homebrews which are documented in MAME for the same software.
 
-![UMSA](https://github.com/sparrowred/script.umsa.mame.surfer/screenshot.jpg)
+![UMSA](https://github.com/sparrowred/script.umsa.mame.surfer/raw/master/screenshot.png)
 
 Warning: This software is still in development. Except some bugs and some not so well working features.
 
