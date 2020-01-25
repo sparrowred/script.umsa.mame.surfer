@@ -1,35 +1,27 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<addon
-  id="script.umsa.mame.surfer"
-  version="0.0.1"
-  name="UMSA MAME surfer"
-  provider-name="sparrowred">
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="script.umsa.mame.surfer" name="UMSA MAME surfer" version="0.0.1" provider-name="sparrowred">
   <requires>
     <import addon="xbmc.python" version="2.25.0"/>
-    <import addon="plugin.video.youtube"/>
   </requires>
   <extension point="xbmc.python.script" library="default.py">
-    <provides>video game</provides>
+    <provides>game</provides>
   </extension>
   <extension point="xbmc.addon.metadata">
     <summary lang="en">Frontend for MAME with the UMSA twist</summary>
-    <description lang="en">Easy to use browser and launcher for emulators based on UMSA
-UMSA is based on MAME and it's Software Lists and combines all
-software ports, conversion, remakes and sometimes even unoffical ones.
+    <description lang="en">
+https://umsa.info is based on MAME and it's Software Lists and combines all software ports, conversion, remakes and sometimes even unoffical ones.
 
-** Note ** This piece of software is absolut alpha status.
-Many functions are not implemented or only half way
-and there are many known and unknown bugs,
-It's just a hobby side project for umsa.ini to
-showcase it and encourage other frontend authors to support it.
+*** Note *** Software is still in development and has bugs.
+This is a side project to showcase umsa.info and encourage other frontend authors to support it.
 
-Thanks:
-The MAME team and all dat and ini authors, the Kodi team and RCB author malte
-and of course progetto-SNAPS for the wonderful collection of artwork.
-
-</description>
-        <language></language>
-        <license>GPL 3.0</license>
-        <platform>all</platform>        
+Thanks to MAMEdev, all support and artwork file authors especially AntoPisa, Kodi team and RCB add-on author malte.</description>
+    <platform>all</platform>
+    <license>GPL 3.0</license>
+    <source>https://github.com/sparrowred/script.umsa.mame.surfer</source>
+    <assets>
+      <icon>icon.png</icon>
+      <fanart>fanart.jpg</fanart>
+      <screenshot>screenshot.png</screenshot>
+    </assets>
   </extension>
 </addon>

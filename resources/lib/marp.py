@@ -1,36 +1,47 @@
 # -*- coding: utf-8 -*-
-# lib to fetch mame inp files from replay.marpirc.net
-
-# 1. search for a game and see all results
-# 2. get a random inp file from a relative actual version
-#    means at least one search with a version
-
-# INP Version 3.0 since which MAME version?
-
-import re
-import random
-import zipfile
-# from StringIO import StringIO
-from io import BytesIO
-#py3
-try:
-    from urllib.request import urlopen
-    from urllib.parse import urlencode
-# py2
-except ImportError:
-    from urllib import urlopen
-    from urllib import urlencode
-
-host = "http://replay.marpirc.net"
+""" lib to fetch mame inp files from replay.marpirc.net
 
 # or make a class so we can have internal lists
 # of last search or with random elements?
 
-def get_set(setname):
+  1. search for a game and see all results
+  2. get a random inp file from a relative actual version
+     means at least one search with a version
 
-    uri = 'r/{}'.format( setname )
+    TODO
+
+    # name inp file like zip file from url
+    # so we can precheck if file already exists in inp folder
+    # then there is no need to redownload
+
+    # download zip from url and unzip inp file to path
+    # which should be the mame inp folder
+
+    # return name of inp file
+
+  INP Version 3.0 since which MAME version? """
+
+import re
+import zipfile
+from io import BytesIO
+# PY2: remove except part for py3 only
+try:
+    from urllib.request import urlopen
+    from urllib.parse import urlencode
+except ImportError:
+    from urllib2 import urlopen
+    from urllib import urlencode
+
+HOST = "http://replay.marpirc.net"
+
+def get_set(setname):
+    """ sets r/ in front of setname
+        TODO: not used """
+    uri = 'r/{}'.format(setname)
+    return uri
 
 def search(short_name='', long_name='', version=''):
+    """ search """
 
     parg = {
         "short" : short_name,
@@ -48,21 +59,22 @@ def search(short_name='', long_name='', version=''):
         "sort" : "short",
         "mode" : "search",
     }
-    p_dl = urllib.urlencode( parg )
-    req = urllib2.urlopen( host+'/index.cgi', data=p_dl, timeout=60 )
-    c_dl = req.read()
+    p_dl = urlencode(parg).encode('utf-8')
+    req = urlopen("{}/index.cgi".format(HOST), data=p_dl, timeout=60)
+    c_dl = req.read().decode('utf-8', errors='ignore')
     # user_set_score_version.zip
-    dl_ver = re.findall( r'<A HREF=\'(\/inp\/.*?\.zip)\' onMouseOver=".*?">(.*?)</A>', c_dl )
+    dl_ver = re.findall(r'<A HREF=\'(\/inp\/.*?\.zip)\' onMouseOver=".*?">(.*?)</A>', c_dl)
 
     # text output: "no_table" : "on"
     parg['no_table'] = "on"
-    p_dl = urllib.urlencode( parg )
-    req2 = urllib2.urlopen( host+'/index.cgi', data=p_dl, timeout=60 )
-    t_dl = req2.read()
+    p_dl = urlencode(parg).encode('utf-8')
+    req2 = urlopen(HOST+'/index.cgi', data=p_dl, timeout=60)
+    t_dl = req2.read().decode('utf-8', errors='ignore')
 
     # cadashs (Cadash (Spain, version 1)) #1st : 116155 Jarl (100%)
-    info = re.findall( r'<LI>\n(.*?) \((.*)\) (#.*?) : (.*?) (.*?) \((.*)\)\n', t_dl)
+    info = re.findall(r'<LI>\n(.*?) \((.*)\) (#.*?) : (.*?) (.*?) \((.*)\)\n', t_dl)
 
+    # TODO: rework and make dict not list
     ret = []
     for i in range(0, len(info)):
         # setname can contain *set or set-*
@@ -73,50 +85,33 @@ def search(short_name='', long_name='', version=''):
         if z > 0:
             x = x[:z]
 
-        ret.append( [x] + list(info[i]) + list(dl_ver[i]) )
+        ret.append([x] + list(info[i]) + list(dl_ver[i]))
 
     # full list so it can be presented by umsa
     return ret
 
 def rand(version):
-
-    # or search(195) + search(194)
-    x = search(version=version)
-
-    # return list with short_name and url with zip
-    return x
+    """ return random inp file """
+    return search(version=version)
 
 def download(zip_url, path):
-
-    #print( host+zip_url)
-    req = urllib2.urlopen( host+zip_url, timeout=20 )
-    zip_file = req.read()
-    zip_obj = zipfile.ZipFile(BytesIO(zip_file))
-    
-    files = zip_obj.namelist()
-    #print( "zip-content:")
-    #print( files)
-    #print( "-----")
-
+    """ download marp inp file and extract """
     inp = ''
+
+    zip_obj = zipfile.ZipFile(
+        BytesIO(urlopen("{}{}".format(HOST, zip_url), timeout=60).read())
+    )
+
+    # get first *.inp file
     for name in zip_obj.namelist():
-        #print( name)
         if name[-4:] == '.inp':
-            x = zip_obj.extract(name, path)
-            #print( x)
+            zip_obj.extract(name, path)
             inp = name
             break
-    
-    # name inp file like zip file from url
-    # so we can precheck if file already exists in inp folder
-    # then there is no need to redownload
 
-    # download zip from url and unzip inp file to path
-    # which should be the mame inp folder
-
-    # return name of inp file
     return inp
 
+"""
 # test
 #x = search(version="194")
 #y = download( random.choice(x),"/tmp/" )
@@ -156,3 +151,4 @@ Jarl</A></TD><TD>28 Feb 18<BR>12:23:16</TD><TD>340,600</TD><TD>
 <BR> <A HREF='https://github.com/mahlemiut/wolfmame/releases/tag/wolf195'
 onMouseOver="window.status='Download wolf195'; return true">get MAME</A></TD></TR>
 '''
+"""

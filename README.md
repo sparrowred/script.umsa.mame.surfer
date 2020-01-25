@@ -1,56 +1,48 @@
 # script.umsa.mame.surfer
-Kodi Add-on: A frontend for MAME with the UMSA twist
+Kodi Add-on: a frontend for MAME with the UMSA twist
 
-What's the difference?
+What's the difference to all the other frontends?
 
-This frontend uses the information from https://umsa.info which shows all
-ports, conversions, remakes and sometimes clones and homebrews which are in MAME
-for the same software.
+This frontend uses the information from https://umsa.info which shows all ports, conversions, remakes and sometimes clones and homebrews which are documented in MAME for the same software.
 
-Warning:
-This software is in alpha status. So expect bugs, chrashes and not working features.
+![UMSA](https://github.com/sparrowred/script.umsa.mame.surfer/screenshot.jpg)
+
+Warning: This software is still in development. Except some bugs and some not so well working features.
 
 Features:
-- Filter options for softwarelists, categories, number of players and years.
-- Lists for source, softwarelists, categories, publishers, years and play status.
-- Tries to choose the best machine for an entry from a softwarelist.
-- Simple support for different emulators.
-- Support for ProgettoSnaps artwork and datfiles.
-- Moves taken snapshots from machine directory to software list directory.
+- Tries to choose the best machine for an entry from a MAME softwarelist
+- Simple support for different emulators which includes chd and zip extraction
+- Filter options for softwarelists, categories, number of players and years
+- Lists for softwarelists, sources, categories, publishers, years and play status
+- Moves taken snapshots from machine directory to softwarelist directory
+- Support for ProgettoSnaps artwork files and also a second artwork directory
+- Supports all different MAME support files
+- A small random http://replay.marpirc.net/ replayer
 
-Needed:
-- A working MAME installation, see http://mamedev.org
+What you need:
+- A working MAME installation, see https://mamedev.org
 - The Kodi mediacenter, see https://kodi.tv
-- Some artwork from http://www.progettosnaps.net, otherwise it's so empty
-- Some dat files like https://www.arcade-history.com and http://mameinfo.mameworld.info
-  for additional informations
+- Some MAME artwork files from http://www.progettosnaps.net, otherwise you will only see text
+- Some MAME support files like https://www.arcade-history.com and https://mameinfo.mameworld.info. You can see an overview here: http://www.progettosnaps.net/support/
 
 How to install:
-1. Download the Add-on: https://umsa.info/umsa.mame.surfer.zip
-2. Start Kodi, go to Settings (the icon on top in the middle), System,
-   Add-ons and activate Unknown sources
-3. Go back to main menu, Add-ons, use the icon on the top left,
-   Install from zip file and choose umsa.mame.surfer.zip
-4. Go back to main menu, Add-ons and you should see the UMSA MAME Surfer icon.
-5. Select it and the Settings will pop up. Configure what you can.
-   - ProgettoSnaps: only unzipped images like cabinets/cabinets/snes.png are supported
-6. Now the Add-on will start. Have fun.
+1. Download https://github.com/sparrowred/script.umsa.mame.surfer/archive/master.zip
+2. Start Kodi, go to Settings (the icon on top in the middle), System, Add-ons and activate "Unknown sources"
+3. Go back to main menu, choose Add-ons and look for "Install from zip file". Search for your downloaded file and select it
+4. Now the UMSA MAME surfer icon should appear, start it
+5. The Settings will pop up, try to configure what you can
+   - Artwork: at the moment only unzipped images (cabinets/cabinets/snes.png) are supported
+6. Finally the Add-on should start
 
-Optional: Go to Settings, Interface, Fonts and set to Arial based to get Kanjis.
-You need to set the Settings level at least to Standard.
+or clone this repository to your Kodi addons directory and activate it in Kodi
+
+Optional: Go to Settings, Interface, Skin and Fonts, set to Arial based and it will also show Kanjis. You need to set the Settings level at least to Standard.
 
 Usage:
+- Move around in all 4 directions
 - The enter button starts the emulation
-- In the dat section enter popups a list for Recommended, Series, Videos and Manuals
-- The context button (key c) opens a popup for different lists
-- Go up from the top for a menu which contains the Filter options
-
-Todo:
-- Rework database statements
-- Add favorite lists
+- The context button (key c) opens different lists
+- Go up from the top for more options like search, filters, updates and play status
 
 See also:
-https://github.com/sparrowred/screensaver.picture.slideshow, a fork of a
-Kodi Screensaver with support for UMSA MAME surfer.
-
-Contact: sparrowred16 at this gmail thing com
+https://github.com/sparrowred/screensaver.picture.slideshow, a fork of a Kodi Screensaver with support for UMSA MAME surfer.
