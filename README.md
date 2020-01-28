@@ -7,7 +7,7 @@ This frontend uses the information from https://umsa.info which shows all ports,
 
 ![UMSA](https://github.com/sparrowred/script.umsa.mame.surfer/raw/master/screenshot.png)
 
-Warning: This software is still in development. Except some bugs and some not so well working features.
+Warning: Software is still in development, expect some bugs and some not so well working features.
 
 Features:
 - Tries to choose the best machine for an entry from a MAME softwarelist

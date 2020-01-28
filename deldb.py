@@ -1,12 +1,18 @@
-import os, sys, re
-import xbmc, xbmcaddon
+# -*- coding: utf-8 -*-
+"""Delete UMSA MAME surfer database files from Kodi userdata folder
 
-folder = xbmc.translatePath(
-        'special://profile/addon_data/script.umsa.mame.surfer/'
-)
+TODO
+ - xbmc popup with done message
+ - get folder from Kodi
+"""
 
-os.remove( os.path.join( folder, 'umsa.db') )
-os.remove( os.path.join( folder, 'dat.db') )
-os.remove( os.path.join( folder, 'artwork.db') )
+import os
+import xbmc
 
-# TODO xbmc popup with done msg
+FOLDER = xbmc.translatePath('special://profile/addon_data/script.umsa.mame.surfer/')
+try:
+    os.remove(os.path.join(FOLDER, 'umsa.db'))
+    os.remove(os.path.join(FOLDER, 'dat.db'))
+    os.remove(os.path.join(FOLDER, 'artwork.db'))
+except FileNotFoundError:
+    pass

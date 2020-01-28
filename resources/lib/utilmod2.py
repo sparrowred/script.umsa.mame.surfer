@@ -97,3 +97,31 @@ class Check:
                 else:
                     ret = True
         return ret
+
+def check_image_aspect(set_info):
+    """Pseudo aspect ratio check for image
+
+    Returns Vertical, Horizontal or NotScaled for one set
+    based on display_type, display_rotation, category and swl.name
+
+    TODO
+    - move to new screensaver module
+    """
+
+    aspect_ratio = None
+    if set_info['display_rotation'] in [90, 270]:
+        aspect_ratio = 'Vertical'
+    else:
+        aspect_ratio = 'Horizontal'
+    # TODO:
+    # - enhance list, check display_type
+    # - problem is that set is not lcd, but machine gameboy!
+    # - fetch display type for s['swl_machine_id']
+    if (set_info['display_type'] == 'lcd' or
+            set_info['category'] in (
+                'Electromechanical / Pinball', 'Handheld Game') or
+            set_info['swl_name'] in (
+                'gameboy', 'lynx', 'gamegear')):
+
+        aspect_ratio = 'NotScaled'
+    return aspect_ratio

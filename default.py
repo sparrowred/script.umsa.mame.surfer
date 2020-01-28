@@ -1,22 +1,20 @@
+# -*- coding: utf-8 -*-
+"""add-on start up"""
+
 import os
 import sys
-#import re
 import xbmc
 import xbmcaddon
 
 __addon__ = xbmcaddon.Addon()
 __addonid__ = __addon__.getAddonInfo('id')
-__cwd__ = __addon__.getAddonInfo('path')#py2.decode("utf-8")
+__cwd__ = __addon__.getAddonInfo('path')
 __language__ = __addon__.getLocalizedString
-__resource__ = xbmc.translatePath(
-    os.path.join(__cwd__, 'resources', 'lib')#py2.encode("utf-8")
-)#py2.decode("utf-8")
+__resource__ = xbmc.translatePath(os.path.join(__cwd__, 'resources', 'lib'))
 
-# Test
-#print("### sys.argv ###")
-#print(sys.argv)
+xbmc.log("UMSA MAME surfer: startup - sys.argv: {}".format(sys.argv))
 
-# Shared resources
+# shared resources
 addonPath = ''
 addon = xbmcaddon.Addon(id='script.umsa.mame.surfer')
 addonPath = addon.getAddonInfo('path')

@@ -2,6 +2,7 @@
 """Module for umsa.info sqlite3 database
 
 TODO:
+ - rework execute_statement
  - optimize logic for filters
 """
 
@@ -57,7 +58,7 @@ class DBMod:
 
         # connect to umsa db
         self.gdb = sqlite3.connect(os.path.join(db_path, "umsa.db"))
-        self.gdb.text_factory = str
+        self.gdb.row_factory = sqlite3.Row
         self.gdbc = self.gdb.cursor()
 
         # sanity
@@ -67,7 +68,6 @@ class DBMod:
 
         # connect to status db
         self.sdb = sqlite3.connect(os.path.join(db_path, "status.db"))
-        self.sdb.text_factory = str
         self.sdbc = self.sdb.cursor()
 
         # defines filter with self.filter_tables, self.filter_where
@@ -139,7 +139,7 @@ class DBMod:
 
         # connect to umsa db
         self.gdb = sqlite3.connect(os.path.join(db_path, "umsa.db"))
-        self.gdb.text_factory = str
+        self.gdb.row_factory = sqlite3.Row
         self.gdbc = self.gdb.cursor()
 
         # creat additonal tables
@@ -161,10 +161,10 @@ class DBMod:
         self.gdbc.execute("DETACH DATABASE 'dat'")
         self.gdbc.execute("DETACH DATABASE 'art'")
 
-    def create_dat_tables(self, c):
+    def create_dat_tables(self, db_cursor):
         """create dat tables"""
 
-        c.execute(
+        db_cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS dat(
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,7 +173,7 @@ class DBMod:
             )
             """
         )
-        c.execute(
+        db_cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS dat_set(
                 id      INTEGER,
@@ -182,7 +182,7 @@ class DBMod:
             """
         )
 
-    def create_art_tables(self, c):
+    def create_art_tables(self, db_cursor):
         """create art tables"""
 
         # id = sets.id
@@ -191,7 +191,7 @@ class DBMod:
         #             but scrapping and projectmess also have jpg
         # path = 0 = progettosnaps, 1 = other
 
-        c.execute(
+        db_cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS art_set(
                 id          INTEGER,
@@ -206,29 +206,6 @@ class DBMod:
         """close database"""
         self.gdb.close()
         #self.sdb.close()
-
-    def scan_ini(self, ini_file):
-        """scan ini
-
-        TODO: unused?
-        """
-
-        xbmc.log("scanning {}".format(ini_file))
-        fobj = None
-        try:
-            fobj = open(ini_file, 'r')
-        except:
-            xbmc.log("cant open {}".format(ini_file))
-        if fobj:
-
-            for line in fobj:
-                line = line.rstrip()
-                if len(line) < 1:
-                    continue
-
-
-
-            fobj.close()
 
     def scan_dats(self, datdir, db_path):
         """Read all MAME dat files from a directory
@@ -246,68 +223,64 @@ class DBMod:
 
         self.scan_what = 'files'
         # connect to db
-        db = sqlite3.connect(os.path.join(db_path, "dat.db"))
-        db.text_factory = str
-        dbc = db.cursor()
+        db_conn = sqlite3.connect(os.path.join(db_path, "dat.db"))
+        dbc = db_conn.cursor()
 
         # create tables for first run
         self.create_dat_tables(dbc)
-        db.commit()
+        db_conn.commit()
 
         # clean table
         dbc.execute("DELETE FROM dat")
         dbc.execute("DELETE FROM dat_set")
-        db.commit()
+        db_conn.commit()
 
         all_sets = {}
         try:
             gdb = sqlite3.connect(os.path.join(db_path, "umsa.db"))
-        except:
+        except sqlite3.OperationalError:
             return
-
-        gdb.text_factory = str
         gdbc = gdb.cursor()
         gdbc.execute(
             "SELECT swl.name, s.name, s.id \
              FROM sets s, swl WHERE swllink_id = swl.id"
         )
-        g_sets = gdbc.fetchall()
+        for i in gdbc.fetchone():
+            all_sets["{}:{}".format(i[0], i[1])] = i[2]
         gdbc.close()
-        for s in g_sets:
-            all_sets["{}:{}".format(s[0], s[1])] = s[2]
 
         files_in_datdir = os.listdir(datdir)
         count = 1.0
-        for d in files_in_datdir:
-            if d[-4:] != '.dat':
+        for datfile in files_in_datdir:
+            if datfile[-4:] != '.dat':
                 continue
             # PY2: remove codecs.open part
             if version_info < (3, 0):
                 try:
-                    fobj = codecs.open(os.path.join(datdir, d), 'r')
+                    fobj = codecs.open(os.path.join(datdir, datfile), 'r')
                 except IOError:
                     fobj = False
             else:
                 try:
-                    fobj = open(os.path.join(datdir, d), 'r', encoding='utf-8', errors='ignore')
+                    fobj = open(
+                        os.path.join(datdir, datfile), 'r', encoding='utf-8', errors='ignore'
+                    )
                 except IOError:
                     fobj = False
             if fobj:
-                self.scan_what = d
+                self.scan_what = datfile
                 self.scan_perc = int(count/len(files_in_datdir)*100)
 
-                self.scan_dat(fobj, all_sets, d, dbc)
-                db.commit()
+                self.scan_dat(fobj, all_sets, datfile, dbc)
+                db_conn.commit()
                 fobj.close()
             count += 1
-
-        db.close()
+        db_conn.close()
 
     def add_dat_to_db(self, db_path):
         """add dat to database"""
 
         gdb = sqlite3.connect(os.path.join(db_path, "umsa.db"))
-        gdb.text_factory = str
         gdbc = gdb.cursor()
         # creat additonal tables
         self.create_dat_tables(gdbc)
@@ -323,7 +296,7 @@ class DBMod:
         gdbc.execute("DETACH DATABASE 'dat'")
         gdb.close()
 
-    def scan_dat(self, fobj, all_sets, datfile, c):
+    def scan_dat(self, fobj, all_sets, datfile, db_conn):
         """scan dat"""
 
         swl = []
@@ -357,18 +330,18 @@ class DBMod:
                             if flag:
                                 continue
 
-                        c.execute(
+                        db_conn.execute(
                             "INSERT INTO dat (file, entry) \
                              VALUES (?, ?)", (k, v)
                         )
-                        dat_ids.append(c.lastrowid)
+                        dat_ids.append(db_conn.lastrowid)
 
                     # save pointers to sets
                     for x in swl:
                         for y in sets:
                             if x+':'+y in all_sets:
                                 for i in dat_ids:
-                                    c.execute(
+                                    db_conn.execute(
                                         "INSERT INTO dat_set (id, dat_id) VALUES (?, ?)",
                                         (all_sets["{}:{}".format(x, y)], i)
                                     )
@@ -492,7 +465,7 @@ class DBMod:
         #         if line == '$end':
         #
         #             # save entries to DB
-        #             c.execute(
+        #             db_conn.execute(
         #                 "INSERT INTO dat (file, entry) \
         #                  VALUES (?, ?)", (datfile, dat)
         #             )
@@ -541,7 +514,7 @@ class DBMod:
 
         #self.ddb.commit()
 
-    def scan_artwork(self, paths, db_path, typeof=None):
+    def scan_artwork(self, paths, db_path):
         """scan artwork"""
 
         # create list with all swls from path
@@ -553,11 +526,9 @@ class DBMod:
 
         # connect to db
         db = sqlite3.connect(os.path.join(db_path, "artwork.db"))
-        db.text_factory = str
         dbc = db.cursor()
         # umsa connect for swl sets
         gdb = sqlite3.connect(os.path.join(db_path, "umsa.db"))
-        gdb.text_factory = str
         gdbc = gdb.cursor()
 
         # create tables for first run
@@ -600,7 +571,7 @@ class DBMod:
                     swl_id = x[0]
                 else:
                     # TODO: real logging for such errors
-                    xbmc.log("swl {} not found... next".format(swl))
+                    xbmc.log("UMSA dbmod scan_artwork: swl {} not found... next".format(swl))
                     continue
                 gdbc.execute(
                     "SELECT id, name FROM sets WHERE swllink_id = ?", (swl_id,)
@@ -615,15 +586,14 @@ class DBMod:
                 self.scan_perc = int(count/c_dirs*100)
                 for art_type in swls[swl]:
                     # TODO: dont scan icons, not needed
-                    dirs = None
                     if art_type == 'icons':
                         continue
                     self.scan_what = "{0}/{1}".format(swl, art_type)
                     if swl == 'mame':
-                        dirs, files = xbmcvfs.listdir(
+                        unused, files = xbmcvfs.listdir(
                             os.path.join(path, art_type, art_type))
                     else:
-                        dirs, files = xbmcvfs.listdir(
+                        unused, files = xbmcvfs.listdir(
                             os.path.join(path, art_type, swl))
                     # TODO: commit every 1000?
                     for f in files:
@@ -657,7 +627,6 @@ class DBMod:
 
         # own connect to umsa.db
         gdb = sqlite3.connect(os.path.join(db_path, "umsa.db"))
-        gdb.text_factory = str
         gdbc = gdb.cursor()
         # sanity: create additonal tables
         self.create_art_tables(gdbc)
@@ -813,10 +782,16 @@ class DBMod:
         return self.gdbc.fetchone()[0]
 
     def get_random_art(self, art_types):
-        """get random artwork"""
+        """Get 1 random artwork
 
-        # if set try with filter
-        yes = False
+        Takes a list of artwork types
+        Returns a dictonary with informations or None if nothing is found
+        """
+
+        rand_art = False
+        end_result = {}
+
+        # get with filter if on
         if self.use_filter:
             statement = "SELECT sets.id, art_set.extension, art_set.path, art_set.type \
                          FROM {} WHERE {} \
@@ -828,51 +803,53 @@ class DBMod:
                              )
                          )
             self.gdbc.execute(statement)
-            y = self.gdbc.fetchone()
-            if y:
-                yes = True
-        # nothing yet: wo filter
-        if not yes:
+            rand_art = self.gdbc.fetchone()
+        # and without filter if we haven't found anything
+        if not rand_art:
             statement = "SELECT sets.id, art_set.extension, art_set.path, art_set.type \
                         FROM sets, art_set \
                         WHERE type IN ({}) AND sets.id = art_set.id \
                         ORDER BY RANDOM() LIMIT 1".format("'"+"','".join(art_types)+"'")
             self.gdbc.execute(statement)
-            y = self.gdbc.fetchone()
-            if not y:
-                xbmc.log("UMSA: dbmod: got no random art: {}".format(y))
+            rand_art = self.gdbc.fetchone()
+            if not rand_art:
+                xbmc.log("UMSA dbmod get_random art: no artwork for {}".format(art_types))
                 return None
+        end_result.update(rand_art)
 
         # get needed infos
         self.gdbc.execute(
-            "SELECT sets.name, swl.name, gamename, \
-                    year.name, maker.name, softwarelink_id, \
-                    swl.system_id, cat.name \
+            "SELECT sets.name, swl.name as swl, gamename, \
+                    year.name as year, maker.name as maker, softwarelink_id as s_id, \
+                    swl.system_id as swl_system_id, cat.name as cat \
              FROM sets, swl, year, maker, category cat \
              WHERE sets.id = ? \
              AND sets.year_id = year.id AND sets.publisher_id = maker.id \
              AND sets.swllink_id = swl.id AND sets.classification_id = cat.id",
-            (y[0],)
+            (rand_art['id'],)
         )
-        x = self.gdbc.fetchone()
-        x += (y[1], y[2], y[3])
+        art_info = self.gdbc.fetchone()
+        end_result.update(art_info)
 
         # snap/title: get display
         if 'snap' in art_types or 'titles' in art_types:
-            if x[1] == 'mame':
-                machine = y[0]
+            if end_result['swl'] == 'mame':
+                machine = rand_art['id']
             else:
-                machine = x[6]
+                machine = end_result['swl_system_id']
             self.gdbc.execute(
                 "SELECT display_rotation, display_type \
                 FROM sets WHERE id = ?", (machine,)
             )
-            z = self.gdbc.fetchone()
-            x += z
+            art_displayinfo = self.gdbc.fetchone()
+            end_result.update(art_displayinfo)
+        else:
+            end_result.update({'display_rotation': 0, 'display_type': ''})
 
-        return x
+        return end_result
 
     def get_set_ids_for_software(self, software_id):
+        """Return all set ids for given software id"""
 
         sets = []
         self.gdbc.execute(
@@ -885,6 +862,11 @@ class DBMod:
         return sets
 
     def get_status_for_software(self, software_id):
+        """Return play status for given software id
+
+        TODO: remove call to get_set_ids...
+              use sub-select or join?
+        """
 
         sets = self.get_set_ids_for_software(software_id)
 
@@ -894,59 +876,68 @@ class DBMod:
         self.sdbc.execute(select_statement, sets)
 
         x = self.sdbc.fetchone()
-        xbmc.log("UMSA: dbmod: get_status_for_software: result = {}".format(x)) # TODO: check
+        xbmc.log("UMSA dbmod get_status_for_software: result = {}".format(x)) # TODO: check
 
         return x
 
     def get_series(self, software_id):
+        """Return all software from a series based on a software id
 
+        TODO software can belong to more than one series
+        """
+
+        # check if software has a series attached
         self.gdbc.execute(
             "SELECT series_id \
              FROM series_seq WHERE software_id = ?", (software_id,)
         )
-        x = self.gdbc.fetchone()
-        if not x:
+        series_ids = self.gdbc.fetchall()
+        if not series_ids:
             return None
+
+        # get all entries for the series
+        all_series = []
         self.gdbc.execute(
             "SELECT software_id \
              FROM series_seq, software, year \
              WHERE series_id = ? AND software_id = software.id \
              AND software.year_id = year.id \
-             ORDER BY seqno, year.name", (x[0],)
+             ORDER BY seqno, year.name", (series_ids[0]['series_id'],) # simply use first series
         )
-        ll = []
         for i in self.gdbc.fetchall():
             self.gdbc.execute(
-                "SELECT DISTINCT s.id, s.name, y.name, m.name \
+                "SELECT DISTINCT s.id, s.name, y.name as year, m.name as maker \
                  FROM software s, sets v, \
                       year y, maker m \
                  WHERE s.id = v.softwarelink_id AND y.id = s.year_id \
                        AND m.id = s.developer_id AND s.id = ?", (i[0],)
             )
-            r = self.gdbc.fetchone()
-            ll.append({'id': r[0], 'name': r[1], 'year': r[2], 'maker': r[3],})
-        return ll
+            all_series.append(self.gdbc.fetchone())
+        return all_series
 
     def check_series(self, software_id):
+        """Return count of series entries based on software id"""
 
+        # first check if series exists
         self.gdbc.execute(
             "SELECT series_id \
              FROM series_seq WHERE software_id = ?", (software_id, )
         )
-        x = self.gdbc.fetchone()
+        series_exists = self.gdbc.fetchone()
 
-        if x:
+        # now count
+        if series_exists:
             self.gdbc.execute(
                 "SELECT COUNT(series_id) \
-                 FROM series_seq WHERE series_id = ?", (x[0],)
+                 FROM series_seq WHERE series_id = ?", (series_exists['series_id'],)
             )
             return self.gdbc.fetchone()[0]
-        else:
-            return None
+        return None
 
     def make_time_nice(self, t):
+        """Return a nice time string from a timestamp"""
 
-        m, s = divmod(
+        m, unused = divmod(
             int(time.time() - time.mktime(time.strptime(t, "%Y-%m-%d %H:%M"))), 60
         )
         h, m = divmod(m, 60)
@@ -961,15 +952,16 @@ class DBMod:
         return last_nice
 
     def get_status_for_set(self, set_id):
+        """Return play status for a set id"""
 
         self.sdbc.execute(
             "SELECT * FROM sets WHERE ID = ?", (set_id,)
         )
         i = self.sdbc.fetchone()
         if not i:
-            return
+            return None
 
-        m, s = divmod(i[2], 60)
+        m, unused = divmod(i[2], 60)
         h, m = divmod(m, 60)
         time_played = "%d:%02d" % (h, m)
 
@@ -981,26 +973,30 @@ class DBMod:
             'options'       : i[4],
             'last_nice'     : self.make_time_nice(i[1]),
         }
-
         return x
 
     def get_all_emulators(self):
+        """Return all different emulators
+
+        Returns a dictonary with the name as key, rest as values.
+        """
 
         self.sdbc.execute("SELECT id, name, exe, dir, zip FROM emu ORDER BY name")
-
         d = {}
         for i in self.sdbc.fetchall():
-            d[i[1]] = {
+            d[i['name']] = {
                 'id'    : i[0],
                 'exe'   : i[2],
                 'dir'   : i[3],
                 'zip'   : i[4]
             }
-
         return d
 
-
     def get_emulator(self, source=None, swl_name=None):
+        """Returns different emulators based on source or swl_name
+
+        Returns dictonary with name as key, rest as values.
+        """
 
         if source:
             self.sdbc.execute(
@@ -1019,17 +1015,11 @@ class DBMod:
 
         d = {}
         for i in self.sdbc.fetchall():
-            d[i[0]] = {
-                'exe'   : i[1],
-                'dir'   : i[2],
-                'zip'   : i[3]
-            }
-
+            d[i[0]] = {'exe': i[1], 'dir': i[2], 'zip': i[3]}
         return d
 
-    def save_emulator(
-            self, name, exe, working_dir, zip_support, source=None, swl_name=None
-        ):
+    def save_emulator(self, name, exe, working_dir, zip_support, source=None, swl_name=None):
+        """Save different emulator to database and also connect it"""
 
         self.sdbc.execute(
             "INSERT INTO emu (name, exe, dir, zip) VALUES (?,?,?,?)",
@@ -1040,21 +1030,21 @@ class DBMod:
         return self.connect_emulator(emu_id, source=source, swl_name=swl_name)
 
     def connect_emulator(self, emu_id, source=None, swl_name=None):
+        """Connect emulator to source or softwarelist"""
 
         if source:
             self.sdbc.execute(
                 "INSERT INTO emu_conn (emu_id, source) VALUES (?, ?)", (emu_id, source)
             )
+            self.sdb.commit()
         elif swl_name:
             self.sdbc.execute(
                 "INSERT INTO emu_conn (emu_id, swl) VALUES (?, ?)", (emu_id, swl_name)
             )
-        else:
-            return "error"
-
-        self.sdb.commit()
+            self.sdb.commit()
 
     def write_options(self, set_id, options):
+        """Write options"""
 
         self.sdbc.execute(
             "UPDATE sets SET options = ? WHERE id = ?", (set_id, options)
@@ -1093,6 +1083,7 @@ class DBMod:
         self.sdb.commit()
 
     def get_latest_by_software(self, software_id):
+        """Return id of latest played set for a software id"""
 
         sets = self.get_set_ids_for_software(software_id)
 
@@ -1102,10 +1093,13 @@ class DBMod:
         set_id = self.sdbc.fetchone()
         if set_id:
             set_id = set_id[0]
-
         return set_id
 
     def get_prevnext_software(self, sid, prev_or_next):
+        """Execute prepared statement for the previous or next entries
+
+        Returns a software list.
+        """
 
         if prev_or_next == 'prev':
             direction = "DESC"
@@ -1121,7 +1115,9 @@ class DBMod:
         )
         sname = self.gdbc.fetchone()[0]
 
-        # duplicate from execute_statement
+        # TODO !!! duplicate from execute_statement
+        # only thing to take care of is direction !!!
+
         # build tables and where clause
         if self.use_filter:
             tables = ','.join(
@@ -1161,7 +1157,7 @@ class DBMod:
                    AND s.name {} ? AND {} ORDER BY {} {} LIMIT 100".format(
                        tables, snd, where, order, direction
                    )
-        xbmc.log("UMSA: dbmod: get_prevnext_software: execute statement\n{}".format(execute))
+        xbmc.log("UMSA dbmod get_prevnext_software: execute statement\n{}".format(execute))
         self.gdbc.execute(execute, (sname,))
         slist = self.gdbc.fetchall()
 
@@ -1187,9 +1183,17 @@ class DBMod:
         return d, pos
 
     def execute_statement(self, set_id):
-        "execute statement"
+        """Execute prepared statement with filter settings
 
-        time1 = time.time()
+        TODO:
+        ! optimize: remove count, only show next 100, not prev 50
+        - optimize2: rewritte sql for filters, needs join
+        - directly get a dictonary from database
+        - get times for everything
+        - extend logging
+        """
+
+        #time1 = time.time()
         # build tables and where clause
         if self.use_filter:
             tables = ','.join(
@@ -1208,30 +1212,31 @@ class DBMod:
             where += " AND " + self.where
 
         # count overall
-        count_statement = 'SELECT COUNT(DISTINCT s.id) \
-             FROM %s WHERE %s' % (tables, where)
-        self.gdbc.execute(count_statement)
-        result_count = self.gdbc.fetchone()[0]
-        xbmc.log("UMSA: dbmod: execute_statement, count = {}".format(result_count))
+        #count_statement = 'SELECT COUNT(DISTINCT s.id) FROM {} WHERE {}'.format(
+        #    tables, where
+        #)
+        #self.gdbc.execute(count_statement)
+        #result_count = self.gdbc.fetchone()[0]
+        #xbmc.log("UMSA: dbmod: execute_statement, count = {}".format(result_count))
 
-        if result_count == 0:
-            # try without filter
-            tables = "software s, sets"
-            where = "s.id = sets.softwarelink_id"
-
-            # add self.table and self.where
-            if self.table:
-                if self.table not in tables:
-                    tables += ", " + self.table
-            if self.where:
-                where += " AND " + self.where
-
-            # count overall
-            count_statement = 'SELECT COUNT(DISTINCT s.id) \
-                 FROM %s WHERE %s' % (tables, where)
-            self.gdbc.execute(count_statement)
-            result_count = self.gdbc.fetchone()[0]
-            xbmc.log("UMSA: dbmod: execute_statement, count wo filters = {}".format(result_count))
+        #if result_count == 0:
+        #    # try without filter
+        #    tables = "software s, sets"
+        #    where = "s.id = sets.softwarelink_id"
+        #
+        #    # add self.table and self.where
+        #    if self.table:
+        #        if self.table not in tables:
+        #            tables += ", " + self.table
+        #    if self.where:
+        #        where += " AND " + self.where
+        #
+        #    # count overall
+        #    count_statement = 'SELECT COUNT(DISTINCT s.id) \
+        #         FROM %s WHERE %s' % (tables, where)
+        #    self.gdbc.execute(count_statement)
+        #    result_count = self.gdbc.fetchone()[0]
+        #    xbmc.log("UMSA: dbmod: execute_statement, count wo filters = {}".format(result_count))
 
         # get software name from set id
         self.gdbc.execute(
@@ -1242,8 +1247,8 @@ class DBMod:
         )
         sname = self.gdbc.fetchone()[0]
 
-        time4 = time.time()
-        xbmc.log("UMSA: dbmod: execute_statement, count time: {:.0f}ms".format((time4-time1)*1000))
+        #time4 = time.time()
+        #xbmc.log("UMSA: dbmod: execute_statement, count time: {:.0f}ms".format((time4-time1)*1000))
 
         # add tables year, maker when not already in
         if "year y" not in tables:
@@ -1262,115 +1267,112 @@ class DBMod:
             self.order = 's.name'
 
         # get previous 50
-        prev_statement = 'SELECT DISTINCT s.name \
-             FROM %s \
-             WHERE y.id = s.year_id AND m.id = s.developer_id \
-                   AND s.name <= ? AND %s \
-             ORDER BY %s DESC LIMIT 50' % (tables, where, order)
-        #xbmc.log("UMSA: dbmod: prev_statement {}".format(prev_statement))
-        self.gdbc.execute(prev_statement, (sname,))
-        prev = self.gdbc.fetchall()
-        time5 = time.time()
-        xbmc.log('UMSA: dbmod: get previous 50: {:.0f}ms'.format((time5 - time4) * 1000))
+        #prev_statement = 'SELECT DISTINCT s.name \
+        #     FROM %s \
+        #     WHERE y.id = s.year_id AND m.id = s.developer_id \
+        #           AND s.name <= ? AND %s \
+        #     ORDER BY %s DESC LIMIT 50' % (tables, where, order)
+        ##xbmc.log("UMSA: dbmod: prev_statement {}".format(prev_statement))
+        #self.gdbc.execute(prev_statement, (sname,))
+        #prev = self.gdbc.fetchall()
+        #time5 = time.time()
+        #xbmc.log('UMSA: dbmod: get previous 50: {:.0f}ms'.format((time5 - time4) * 1000))
 
         # get the software list
-        fetch_statement = "SELECT DISTINCT s.name, s.id, y.name, m.name \
-                           FROM {} \
-                           WHERE y.id = s.year_id AND m.id = s.developer_id \
+        fetch_statement = "SELECT DISTINCT \
+                               s.name as name, s.id as id, y.name as year, m.name as maker \
+                           FROM {} WHERE y.id = s.year_id AND m.id = s.developer_id \
                            AND s.name >= ? AND {} ORDER BY {} ASC LIMIT 100".format(
                                tables, where, order
                            )
-        xbmc.log("UMSA: get swl statement: {}".format(fetch_statement))
-        self.gdbc.execute(fetch_statement, (prev[-1][0],))
+        #xbmc.log("UMSA: get swl statement: {}".format(fetch_statement))
+        #self.gdbc.execute(fetch_statement, (prev[-1][0],))
+        self.gdbc.execute(fetch_statement, (sname,))
         slist = self.gdbc.fetchall()
-        time6 = time.time()
-        xbmc.log('UMSA: dbmod: get final 100: {:.0f}ms'.format((time6 - time5) * 1000))
+        #time6 = time.time()
+        #xbmc.log('UMSA: dbmod: get final 100: {:.0f}ms'.format((time6 - time5) * 1000))
+
+        # set prev and next in list
+        slist.insert(0, {'id': "prev", 'name': "PREV", 'year': "<<<", 'maker': '<<<'})
+        slist.append({'id': "next", 'name': "NEXT", 'year': ">>>", 'maker': '>>>'})
 
         # create dict for return, get pos, set prev/next
-        d = []
-        pos = 0
-        x = 0
-        if len(prev) == 50:
-            d.append({'id': 'prev', 'name': 'PREVIOUS', 'year'   : '<<<', 'maker'  : '<<<',})
-            x += 1
-        for i in slist:
-            d.append({"id": i[1], 'name': i[0], 'year': i[2], 'maker' : i[3],})
-            if sname == i[0]:
-                pos = x
-            x += 1
-        if len(slist) == 100:
-            d.append({'id': 'next', 'name': 'NEXT', 'year': '>>>', 'maker': '>>>'})
+        #d = []
+        #pos = 0
+        #x = 0
+        #if len(prev) == 50:
+        #    d.append({'id': 'prev', 'name': 'PREVIOUS', 'year': '<<<', 'maker': '<<<',})
+        #    x += 1
+        #for i in slist:
+        #    d.append({"id": i[1], 'name': i[0], 'year': i[2], 'maker' : i[3],})
+        #    if sname == i[0]:
+        #        pos = x
+        #    x += 1
+        #if len(slist) == 100:
+        #    d.append({'id': 'next', 'name': 'NEXT', 'year': '>>>', 'maker': '>>>'})
 
-        time7 = time.time()
-        xbmc.log('UMSA dbmod: build dict for return: {:.0f}ms'.format((time7 - time6) * 1000))
+        #time7 = time.time()
+        #xbmc.log('UMSA dbmod: build dict for return: {:.0f}ms'.format((time7 - time6) * 1000))
 
-        return d, pos, result_count
+        #return d, pos, result_count
+        return slist, 1, 0
 
     def get_by_software(self, set_id):
-        """get by software"""
+        """Return list of software"""
 
         self.table = ''
         self.where = ''
-
         return self.execute_statement(set_id)
 
     def get_software_for_source(self, set_id, source):
-        """get software for source"""
+        """Return list of software based on MAME source file"""
 
         self.table = ''
         self.where = 'sets.source = "%s"' % (source,)
-
         return self.execute_statement(set_id)
 
     def get_by_cat(self, cat, set_id):
-        """get by category"""
+        """Return list of software based on category"""
 
         self.table = 'category cat'
         self.where = 'cat.name = "{}" AND cat.id = sets.classification_id'.format(cat,)
-
         return self.execute_statement(set_id)
 
     def get_by_year(self, year, set_id):
+        """Return list of software based on year"""
 
-        self.gdbc.execute(
-            "SELECT id FROM year WHERE name = ?", (year,)
-        )
-        y_id = self.gdbc.fetchone()[0]
+        self.gdbc.execute("SELECT id FROM year WHERE name = ?", (year,))
+        year_id = self.gdbc.fetchone()[0]
 
         self.table = 'year y'
         self.where = 'sets.id in (SELECT sets.id FROM sets, year y \
-                      WHERE y.id = %s AND y.id = sets.year_id)' % (y_id,)
-
+                      WHERE y.id = {} AND y.id = sets.year_id)'.format(year_id)
         return self.execute_statement(set_id)
 
     def get_by_maker(self, maker, set_id):
+        """Return list of software based on maker"""
 
-        self.gdbc.execute(
-            "SELECT id FROM maker WHERE name = ?", (maker,)
-        )
-        m_id = self.gdbc.fetchone()[0]
+        self.gdbc.execute("SELECT id FROM maker WHERE name = ?", (maker,))
+        maker_id = self.gdbc.fetchone()[0]
 
         self.table = 'maker m'
         self.where = 'sets.id in (SELECT sets.id FROM sets, maker m \
-                      WHERE m.id = %s AND m.id = sets.publisher_id)' % (m_id,)
-
+                      WHERE m.id = {} AND m.id = sets.publisher_id)'.format(maker_id)
         return self.execute_statement(set_id)
 
     def get_by_swl(self, swl_name, set_id):
+        """Return list of software based on softwarelist"""
 
-        self.gdbc.execute(
-            "SELECT id FROM swl WHERE name = ?", (swl_name,)
-        )
+        self.gdbc.execute("SELECT id FROM swl WHERE name = ?", (swl_name,))
         swl_id = self.gdbc.fetchone()[0]
 
         self.table = "swl"
-        self.where = "swl.id = %s AND swl.id = sets.swllink_id" % (swl_id,)
+        self.where = "swl.id = {} AND swl.id = sets.swllink_id".format(swl_id)
 
-        x = self.execute_statement(set_id)
-
-        return x
+        return self.execute_statement(set_id)
 
     def get_last_played(self, order):
+        """get_last_played"""
 
         d = []
         e = {}
@@ -1413,7 +1415,7 @@ class DBMod:
         # sort dict after value in var order and create list for return
         for k, v in reversed(sorted(e.items(), key=lambda t: t[1][order])):
 
-            m, s = divmod(v["time_played"], 60)
+            m, unused = divmod(v["time_played"], 60)
             h, m = divmod(m, 60)
             time_played = "%d:%02d" % (h, m)
 
@@ -1511,6 +1513,10 @@ class DBMod:
 
     # create commandline options for mame
     def get_cmd_line_options(self, set_id, set_name, machine_name, swl_name):
+        """Create command line options for MAME emulator run
+
+        Based on id, name of set, and the names of machine and swl.
+        """
 
         # get options for softwarelist
         ## this is manually set coz some swls need special options
@@ -1583,7 +1589,7 @@ class DBMod:
                     xbmc.log("UMSA dbmod: get_cmd_line_options: setid {}".format(_setinfo))
                     _parts2 = self.get_parts_for_set_id(_setinfo['set_id'])
                     xbmc.log("UMSA dbmod: get_cmd_line_options: parts {}".format(_parts2))
-                    _cmdopt, x = self.create_cmdline(
+                    _cmdopt, unused = self.create_cmdline(
                         list(_parts2), _devices, _set
                     )
                     more_options += _cmdopt
@@ -1617,6 +1623,11 @@ class DBMod:
         return cmd_options
 
     def get_all_dbentries(self, cat):
+        """Return select parameters based on filter categories
+
+        Gets a filter category.
+        Returns a list of database tables and rows.
+        """
 
         if cat == "Softwarelists":
             select_placeholders = (
@@ -1641,14 +1652,22 @@ class DBMod:
                 'name', 'nplayers', 'nplayers', '', 'name'
             )
         else:
-            return
+            return None
 
         select_statement = "SELECT t.id, t.%s, count(distinct s.id) \
                             FROM %s t, software s, sets v \
                             WHERE t.id = v.%s_id and s.id = v.softwarelink_id %s \
                             GROUP BY t.id ORDER BY t.%s" % select_placeholders
-
         self.gdbc.execute(select_statement)
+
+        # TODO: why does this not work
+        # IndexError: tuple index out of range
+        #self.gdbc.execute(
+        #    "SELECT t.id, t.{}, count(distinct s.id) \
+        #     FROM {} t, software s, sets v \
+        #     WHERE t.id = v.{}_id and s.id = v.softwarelink_id {} \
+        #     GROUP BY t.id ORDER BY t.{}".format(select_placeholders)
+        #)
 
         return self.gdbc.fetchall()
 
@@ -1747,14 +1766,14 @@ class DBMod:
         )
         r = self.gdbc.fetchall()
 
-        c, pos, result = 0, None, []
+        count, pos, result = 0, None, []
         for i in r:
             result.append({'id': i[0], 'name': i[1], 'year': i[2], 'maker': i[3],})
 
             # check if search is in beginning of s.name and set pos
             if search.lower() == i[1][:len(search)].lower() and not pos:
-                pos = c
-            c += 1
+                pos = count
+            count += 1
         if not pos:
             pos = 0
 
@@ -1765,12 +1784,9 @@ class DBMod:
         return result, pos, results_count
 
     def get_machine_name(self, machine_id):
+        """Get name of machine from id"""
 
-        self.gdbc.execute(
-            "SELECT m.name, m.gamename \
-             FROM sets m \
-             WHERE m.id = ?", (machine_id,)
-        )
+        self.gdbc.execute("SELECT m.name, m.gamename FROM sets m WHERE m.id = ?", (machine_id,))
         machine = self.gdbc.fetchone()
         return machine[0], machine[1]
 
@@ -1799,7 +1815,7 @@ class DBMod:
         self.gdbc.execute(
             "SELECT DISTINCT \
                 s.id, s.name, s.gamename, s.detail, \
-                y.name, m.name, ss.status, ss.filtr \
+                y.name as year, m.name as maker, ss.status, ss.filtr \
              FROM \
                 sets s, swl sw, \
                 swl_status ss, year y, \
@@ -1816,30 +1832,37 @@ class DBMod:
         )
 
         machines = []
-        pos, x = 0, 0
+        pos, count = 0, 0
         for s in self.gdbc.fetchall():
-            # label2 = s[2] #[:len(s[2]) - len(s[3])].strip() # remove detail
             machines.append(
                 {
-                    'id'       : s[0],
-                    'name'     : "{}, {}".format(s[2], s[5]),
-                    'label2'   : s[2],
-                    'setname'  : s[1],
-                    'detail'   : s[3],
-                    'fullname' : s[2],
-                    'status'   : s[6],
-                    'filter'   : s[7],
-                    'year'     : s[4],
-                    'maker'    : "{},{}".format(s[6], s[7])
+                    'id'       : s['id'],
+                    'name'     : "{}, {}".format(
+                        s['gamename'],
+                        # PY2: remove encode for py3 only
+                        s['maker'].encode('utf-8', errors='ignore')
+                        ),
+                    'label2'   : s['gamename'],
+                    'setname'  : s['name'],
+                    'detail'   : s['detail'],
+                    'fullname' : s['gamename'],
+                    'status'   : s['status'],
+                    'filter'   : s['filtr'],
+                    'year'     : s['year'],
+                    'maker'    : "{},{}".format(s['status'], s['filtr'])
                 }
             )
-            if machine == s[1]:
-                pos = x
-            x += 1
+            if machine == s['name']:
+                pos = count
+            count += 1
 
         return machines, pos
 
     def get_swl_id(self, swl_name):
+        """get swl id
+
+        TODO: unused
+        """
 
         self.gdbc.execute(
             "SELECT id FROM swl WHERE name = ?", (swl_name,)
@@ -1847,13 +1870,19 @@ class DBMod:
         return self.gdbc.fetchone()[0]
 
     def get_set_name(self, set_id):
+        """Returns set name from set id
 
-        self.gdbc.execute(
-            "SELECT name FROM sets WHERE id = ?", (set_id,)
-        )
+        TODO: Only used by run_emulator, diff_emu: search for rom file in filesystem
+        """
+
+        self.gdbc.execute("SELECT name FROM sets WHERE id = ?", (set_id,))
         return self.gdbc.fetchone()[0]
 
     def get_info_for_id(self, _id):
+        """get info for id
+
+        TODO: unused
+        """
 
         self.gdbc.execute(
             "SELECT DISTINCT v.id, v.name, v.gamename, c.name, c.flag \
@@ -1872,13 +1901,21 @@ class DBMod:
         return machines
 
     def get_sets_for_machine(self, software_id, machine_id):
+        """Get sets for a machine
+
+        TODO: unused
+
+        Gets software and machine id
+        Returns list of all sets and set is saved in database dictonary
+        """
 
         # get_sets: get all sets for s.id and machine (can mean more than 1 swl)
         self.gdbc.execute(
             "SELECT \
                 v.id, v.name, v.gamename, v.detail, v.source, \
-                y.name, m.name, swl.name, \
-                v.display_type, v.display_rotation, c.name, c.flag \
+                y.name as year, m.name as publisher, swl.name as swl_name, \
+                v.display_type , v.display_rotation, c.name as category, \
+                c.flag as category_is_machine \
              FROM \
                 sets v, swl, \
                 year y, maker m, \
@@ -1897,26 +1934,26 @@ class DBMod:
             (software_id, machine_id)
         )
 
-        sets = []
-        for i in self.gdbc.fetchall():
-            sets.append(
-                {
-                    'id'                  : i[0],
-                    'name'                : i[1],
-                    'gamename'            : i[2],
-                    'detail'              : i[3],
-                    'source'              : i[4],
-                    'year'                : i[5],
-                    'publisher'           : i[6],
-                    'swl_name'            : i[7],
-                    'display_type'        : i[8],
-                    'display_rotation'    : i[9],
-                    'category'            : i[10],
-                    'category_is_machine' : i[11],
-                }
-            )
+        #sets = []
+        #for i in self.gdbc.fetchall():
+        #    sets.append(
+        #        {
+        #            'id'                  : i[0],
+        #            'name'                : i[1],
+        #            'gamename'            : i[2],
+        #            'detail'              : i[3],
+        #            'source'              : i[4],
+        #            'year'                : i[5],
+        #            'publisher'           : i[6],
+        #            'swl_name'            : i[7],
+        #            'display_type'        : i[8],
+        #            'display_rotation'    : i[9],
+        #            'category'            : i[10],
+        #            'category_is_machine' : i[11],
+        #        }
+        #    )
 
-        return sets
+        return self.gdbc.fetchall()
 
     def get_best_machine_for_set(self, swl_name, detail, swl_machine_id):
         """get best machine for set"""
@@ -1924,53 +1961,50 @@ class DBMod:
         best_machine = None
 
         # get originals, compatible machines
-        machines, dummy = self.get_machines(swl_name)
+        machines, unused = self.get_machines(swl_name)
 
-        # check machines
+        # checki if only 1 machines
         if len(machines) == 1:
-            return machines[0]
-        elif len(machines) == 0:
-            return None
-        # check if only one original
+            best_machine = machines[0]
+        # check if only 1 original
         elif (machines[0]['status'] == "original"
               and machines[1]['status'] == "compatible"):
-            return machines[0]
-        # check if swl_machine is in machines
-        for m in machines:
-            #xbmc.log("{}".format(m))
-            if m['id'] == swl_machine_id:
-                best_machine = m
-                #xbmc.log( "-- yeah, got {} from db".format(best_machine,))
-        # no hit until now, set first machine
-        if not best_machine:
             best_machine = machines[0]
-            #xbmc.log("-- ok, damn, setting the first entry %s" % (best_machine))
-        # exception for famicom_flop
-        # TODO famicom should be disconnected in mame source
-        if swl_name == "famicom_flop":
-            return machines[1]
+        else:
+            # check if swl_machine is in machines
+            for m in machines:
+                #xbmc.log("{}".format(m))
+                if m['id'] == swl_machine_id:
+                    best_machine = m
+                    #xbmc.log( "-- yeah, got {} from db".format(best_machine,))
+            # no hit until now, set first machine
+            if not best_machine:
+                best_machine = machines[0]
+                #xbmc.log("-- ok, damn, setting the first entry %s" % (best_machine))
+            # exception for famicom_flop
+            # TODO famicom should be disconnected in mame source
+            if swl_name == "famicom_flop":
+                best_machine = machines[1]
 
-        # get country from detail
-        #for c in reversed(sorted(COUNTRIES.keys())):
-        for c in sorted(COUNTRIES.keys()):
-            for d in COUNTRIES[c]:
-                if d in detail.lower():
-                    # check gamename of machines for country from detail
-                    #xbmc.log("-- check machines for country %s" % (d,))
-                    # first try actual best
-                    for c2 in COUNTRIES[c]:
-                        if c2 in best_machine['fullname'].lower():
-                            #xbmc.log("-- use best machine")
-                            return best_machine
-                    # now check all machines
-                    for m in machines:
+            # get country from detail
+            #for c in reversed(sorted(COUNTRIES.keys())):
+            for c in sorted(COUNTRIES.keys()):
+                for d in COUNTRIES[c]:
+                    if d in detail.lower():
+                        # check gamename of machines for country from detail
+                        #xbmc.log("-- check machines for country %s" % (d,))
+                        # first try actual best
                         for c2 in COUNTRIES[c]:
-                            if c2 in m['fullname'].lower():
-                                best_machine = m
-                                #xbmc.log("-- got machine %s over country" % (best_machine))
+                            if c2 in best_machine['fullname'].lower():
+                                #xbmc.log("-- use best machine")
                                 return best_machine
-
-        # return best machine
+                        # now check all machines
+                        for m in machines:
+                            for c2 in COUNTRIES[c]:
+                                if c2 in m['fullname'].lower():
+                                    best_machine = m
+                                    #xbmc.log("-- got machine %s over country" % (best_machine))
+                                    return best_machine
         return best_machine
 
     def get_all_for_software(self, software_id):
