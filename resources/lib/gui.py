@@ -254,33 +254,34 @@ class Player(xbmc.Player):
             self.parent.VPlayer.getControl(VIDEO_LABEL).setLabel('')
 
             # get total time in sec
-            tt = int(self.parent.Player.getTotalTime())
+            total_time = int(self.parent.Player.getTotalTime())
             # wait until video starts
             #while not self.parent.Player.isPlayingVideo():
-            while tt == 0:
+            while total_time == 0:
                 xbmc.sleep(100)
-                tt = int(self.parent.Player.getTotalTime())
+                total_time = int(self.parent.Player.getTotalTime())
             # calc show times
-            if tt > 28:
-                tc1 = 10
-                tc2 = tt-10
-            elif tt > 16:
-                tc1 = 8
-                tc2 = tt-2
+            if total_time > 28:
+                timecount1 = 10
+                timecount2 = total_time-10
+            elif total_time > 16:
+                timecount1 = 8
+                timecount2 = total_time-2
             else:
-                tc1 = 4
-                tc2 = tt-1
+                timecount1 = 4
+                timecount2 = total_time-1
             self.runp = True
-            c = 0
-            xbmc.log("UMSA Player: time: {}, start {}, end {}".format(tt, tc1, tc2))
+            count_seconds = 0
+            xbmc.log("UMSA Player: time: {}, start {}, end {}".format(
+                total_time, timecount1, timecount2))
             while self.runp:
                 if self.parent.Player.isPlayingVideo():
-                    if c == tc1:
+                    if count_seconds == timecount1:
                         # set video label
                         self.parent.VPlayer.getControl(VIDEO_LABEL).setLabel(
                             self.parent.Player.getVideoInfoTag().getTitle()
                         )
-                    elif c == tc2:
+                    elif count_seconds == timecount2:
                         self.parent.VPlayer.getControl(VIDEO_LABEL).setLabel('')
                         self.runp = False
                         continue
@@ -288,7 +289,7 @@ class Player(xbmc.Player):
                     self.runp = False
                     continue
                 xbmc.sleep(1000)
-                c += 1
+                count_seconds += 1
         xbmc.log("UMSA Player: onPlayBackStarted: routine ended")
 
     def onPlayBackEnded(self):
@@ -374,20 +375,20 @@ class Monitor(xbmc.Monitor):
                         'swl_name' : snap['swl'],
                     }
                 )
-            x = random.randint(0, 1280)
-            y = random.randint(0, 720)
+            x_axis = random.randint(0, 1280)
+            y_axis = random.randint(0, 720)
             if aspect == 'Vertical':
                 # TODO look up aspect calc from ssaver
                 piclist.append(
-                    xbmcgui.ControlImage(x-120, y-160, 240, 320, filename)
+                    xbmcgui.ControlImage(x_axis-120, y_axis-160, 240, 320, filename)
                 )
             elif aspect == 'NotScaled':
                 piclist.append(
-                    xbmcgui.ControlImage(x-180, y-180, 360, 360, filename, 2)
+                    xbmcgui.ControlImage(x_axis-180, y_axis-180, 360, 360, filename, 2)
                 )
             else:
                 piclist.append(
-                    xbmcgui.ControlImage(x-180, y-135, 360, 270, filename)
+                    xbmcgui.ControlImage(x_axis-180, y_axis-135, 360, 270, filename)
                 )
             # show pic
             self.parent.addControl(piclist[-1])
@@ -397,8 +398,8 @@ class Monitor(xbmc.Monitor):
             xbmc.sleep(2000)
         # clean up
         piclist.reverse()
-        for o in piclist:
-            self.parent.removeControl(o)
+        for i in piclist:
+            self.parent.removeControl(i)
 
     def onScreensaverActivated(self):
         """onScreensaverActivated
@@ -440,16 +441,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
     def __init__(self, strXMLname, strFallbackPath, strDefaultName, forceFallback):
 
-        # no settings
-        if not os.path.exists(SETTINGS_FOLDER):
-            __addon__.openSettings()
-        self.read_settings()
-
         # initialize
         random.seed()
         self.mame_ini = None
         self.quit = False
-        self.selectedControlId = SOFTWARE_BUTTON # holds the old control id from skin
+        self.selected_control_id = SOFTWARE_BUTTON # holds the old control id from skin
         self.main_focus = SOFTWARE_BUTTON # remember main select when in gamelist
         self.info = None # contains all sets for actual software
 
@@ -474,7 +470,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.VPlayer = None
         self.dialog = None
         self.emu_dialog = None
-        self.pd = None
+        self.progress_dialog = None
         self.already_playing = None
         self.playvideo = None
         self.filter_lists = None
@@ -486,11 +482,22 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.played = None
         self.vidman = None
 
+        # no settings
+        if not os.path.exists(SETTINGS_FOLDER):
+            __addon__.openSettings()
+        self.read_settings()
+
+        # TODO: make filter_cat a constant
         # filter categories
         self.filter_cat = [
             "Softwarelists", "Game Categories", "Machine Categories", "Players",
             "Years", "----------", "Load Filter", "Save Filter"
             ]
+
+        # import check_snapshot for screensaver
+        self.util = Check()
+        if self.util.pil:
+            xbmc.log("UMSA: PIL library found")
 
         xbmc.log("UMSA __init__ done")
 
@@ -524,7 +531,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.emu_dialog = xbmcgui.DialogProgress()
 
         # bg progress bar
-        self.pd = xbmcgui.DialogProgressBG()
+        self.progress_dialog = xbmcgui.DialogProgressBG()
 
         # no videos when something is already running
         if self.Player.isPlayingVideo():
@@ -565,10 +572,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.getControl(FILTER_LABEL2).setLabel('Filter: {}'.format(self.act_filter))
 
         # fill filter lists
-        l = []
+        list_items = []
         for i in self.filter_cat:
-            l.append(xbmcgui.ListItem(i))
-        self.getControl(FILTER_CATEGORY_LIST).addItems(l)
+            list_items.append(xbmcgui.ListItem(i))
+        self.getControl(FILTER_CATEGORY_LIST).addItems(list_items)
         self.getControl(FILTER_OPTIONS).addItems(('all', 'none', 'invert'))
 
         # database connection
@@ -614,21 +621,21 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
     # sequence: onFocus, onClick, onAction
 
-    def onFocus(self, controlId):
+    def onFocus(self, control_id):
         """Kodi onFocus"""
 
-        xbmc.log("UMSA onFocus: old: %s" % (self.selectedControlId,))
-        xbmc.log("UMSA onFocus: new: %s" % (controlId,))
+        xbmc.log("UMSA onFocus: old: {}".format(self.selected_control_id))
+        xbmc.log("UMSA onFocus: new: {}".format(control_id))
 
         # TODO: get rid off dummy with a list instead of the software button?
         # list item label would then be actual software button input from skin
         self.dummy = None
 
         # # close popups
-        if controlId in (SOFTWARE_BUTTON, SYSTEM_WRAPLIST, SET_LIST, TEXTLIST):
-        #if controlId == SOFTWARE_BUTTON or controlId == SYSTEM_WRAPLIST:
+        if control_id in (SOFTWARE_BUTTON, SYSTEM_WRAPLIST, SET_LIST, TEXTLIST):
+        #if control_id == SOFTWARE_BUTTON or control_id == SYSTEM_WRAPLIST:
 
-            if self.selectedControlId in (
+            if self.selected_control_id in (
                     GAME_LIST, GAME_LIST_OPTIONS, GAME_LIST_SORT, SUBMAIN_MENU
                 ):
                 self.setFocus(self.getControl(SOFTWARE_BUTTON))
@@ -637,7 +644,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 else:
                     self.dummy = True
 
-            elif self.selectedControlId in (
+            elif self.selected_control_id in (
                     FILTER_CATEGORY_LIST,
                     FILTER_CONTENT_LIST_ACTIVE,
                     FILTER_CONTENT_LIST_INACTIVE,
@@ -649,20 +656,20 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 else:
                     self.dummy = True
 
-            elif self.selectedControlId == MAIN_MENU:
+            elif self.selected_control_id == MAIN_MENU:
                 self.dummy = True
 
         # update menu when focused
-        elif controlId == MAIN_MENU:
+        elif control_id == MAIN_MENU:
             # TODO sub main
             # self.build_main_menu()
             pass
 
         # WORKING VERSION
         # close popups
-        # if controlId == SOFTWARE_BUTTON or controlId == SYSTEM_WRAPLIST:
+        # if control_id == SOFTWARE_BUTTON or control_id == SYSTEM_WRAPLIST:
         #
-        #     if self.selectedControlId in (
+        #     if self.selected_control_id in (
         #             GAME_LIST, GAME_LIST_OPTIONS, GAME_LIST_SORT
         #         ):
         #         self.setFocus(self.getControl(SOFTWARE_BUTTON))
@@ -671,7 +678,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         #         else:
         #             self.dummy = True
         #
-        #     elif self.selectedControlId in (
+        #     elif self.selected_control_id in (
         #             FILTER_CATEGORY_LIST,
         #             FILTER_CONTENT_LIST_ACTIVE,
         #             FILTER_CONTENT_LIST_INACTIVE,
@@ -685,24 +692,24 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # check if we have to move to next item
         # as the actual item has no or only 1 element
-        # if (controlId == SYSTEM_WRAPLIST
+        # if (control_id == SYSTEM_WRAPLIST
         #      and self.getControl(SYSTEM_WRAPLIST).size() == 1
         #    ):
-        #     if self.selectedControlId == SET_LIST:
+        #     if self.selected_control_id == SET_LIST:
         #         xbmc.log("- from SET to SOFTWARE")
         #         self.setFocus(self.getControl(SOFTWARE_BUTTON))
         #     else:
         #         xbmc.log("- from SOFTWARE to SET")
         #         self.setFocus(self.getControl(SET_LIST))
-        # if controlId == SET_LIST and self.getControl(SET_LIST).size() == 1:
-        #     if self.selectedControlId == SYSTEM_WRAPLIST:
+        # if control_id == SET_LIST and self.getControl(SET_LIST).size() == 1:
+        #     if self.selected_control_id == SYSTEM_WRAPLIST:
         #         xbmc.log("- from MACHINE to TEXT")
         #         self.setFocus(self.getControl(TEXTLIST))
         #     else:
         #         xbmc.log("- from TEXT to MACHINE")
         #         self.setFocus(self.getControl(SYSTEM_WRAPLIST))
-        if (controlId == TEXTLIST and self.getControl(TEXTLIST).size() < 2):
-            if self.selectedControlId == SET_LIST:
+        if (control_id == TEXTLIST and self.getControl(TEXTLIST).size() < 2):
+            if self.selected_control_id == SET_LIST:
                 xbmc.log("UMSA onFocus: from SET to SOFTWARE")
                 self.setFocus(self.getControl(SOFTWARE_BUTTON))
             else:
@@ -710,11 +717,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 xbmc.log("UMSA onFocus: from SOFTWARE to SET")
                 self.setFocus(self.getControl(SET_LIST))
 
-        # update controlId
+        # update control_id
         self.enter = None
-        self.selectedControlId = controlId
+        self.selected_control_id = control_id
 
-    def onClick(self, controlID):
+    def onClick(self, control_id):
         """Kodi onClick"""
 
         xbmc.log("UMSA onClick")
@@ -726,21 +733,21 @@ class UMSA(xbmcgui.WindowXMLDialog):
             return
 
         # start emulator
-        if controlID in (SOFTWARE_BUTTON, SET_LIST, SYSTEM_WRAPLIST):
+        if control_id in (SOFTWARE_BUTTON, SET_LIST, SYSTEM_WRAPLIST):
             self.run_emulator()
 
         # TEXTLIST: start emulator or show series
-        elif controlID == TEXTLIST:
+        elif control_id == TEXTLIST:
             if self.getControl(TEXTLIST).getSelectedItem().getLabel() == 'Series':
-                x = self.ggdb.get_series(self.last[self.lastptr])
-                if x:
-                    self.popup_gamelist(x, 0, 'Series', [], [])
+                series = self.ggdb.get_series(self.last[self.lastptr])
+                if series:
+                    self.popup_gamelist(series, 'Series')
                 #self.getControl(GAME_LIST_TEXT).setText('')
             else:
                 self.run_emulator()
 
         # pushed GAME_LIST_OPTIONS
-        elif controlID == GAME_LIST_OPTIONS:
+        elif control_id == GAME_LIST_OPTIONS:
             item = self.getControl(GAME_LIST_OPTIONS).getSelectedItem().getLabel()
 
             if item == "new search":
@@ -750,36 +757,36 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     self.searchold = keyboard.getText()
                 else:
                     return
-                x, pos, result_count = self.ggdb.get_searchresults(self.searchold)
+                gamelist, pos, result_count = self.ggdb.get_searchresults(self.searchold)
                 gl_label = '%d results for %s' % (result_count, self.searchold)
                 gl_options = ('new search',)
 
                 # check how many results
-                if len(x) == 0:
+                if len(gamelist) == 0:
                     xbmc.executebuiltin('XBMC.Notification(nothing,,5000)')
                     return
-                if len(x) == 1:
+                if len(gamelist) == 1:
                     self.searchold = None
                     self.lastptr += 1
-                    self.last.insert(self.lastptr, x[0]['id'])
+                    self.last.insert(self.lastptr, gamelist[0]['id'])
                     self.select_software(self.last[self.lastptr])
                     return
 
                 # TODO no popup, but refill
-                self.popup_gamelist(x, pos, gl_label, [], gl_options)
+                self.popup_gamelist(gamelist, gl_label, pos=pos, options=gl_options)
 
             # options from play status
             elif item in ('time_played', 'last_played', 'play_count'):
-                x, pos = self.ggdb.get_last_played(item)
+                gamelist, pos = self.ggdb.get_last_played(item)
                 self.getControl(GAME_LIST).reset()
-                l = []
-                for i in x:
-                    li = xbmcgui.ListItem(i['name'], str(i['id']))
-                    li.setInfo(
+                gui_list = []
+                for i in gamelist:
+                    list_item = xbmcgui.ListItem(i['name'], str(i['id']))
+                    list_item.setInfo(
                         'video', {'Writer': i['year'], 'Studio': i['maker']}
                         )
-                    l.append(li)
-                self.getControl(GAME_LIST).addItems(l)
+                    gui_list.append(list_item)
+                self.getControl(GAME_LIST).addItems(gui_list)
                 self.setFocus(self.getControl(GAME_LIST))
 
             elif item in ('name', 'year', 'publisher'):
@@ -787,11 +794,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 content = int(self.getControl(GAME_LIST_LABEL_ID).getLabel())
                 self.update_gamelist(content)
 
-        elif controlID == GAME_LIST_SORT:
+        elif control_id == GAME_LIST_SORT:
             self.gamelist_switch_filter()
 
         # FILTER: select all, none or invert lists
-        elif controlID == FILTER_OPTIONS:
+        elif control_id == FILTER_OPTIONS:
 
             item = self.getControl(FILTER_OPTIONS).getSelectedItem().getLabel()
             filter_category_name = self.getControl(FILTER_LABEL).getLabel()
@@ -800,13 +807,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.filter_lists[filter_category_name] = []
             elif item == 'all':
                 self.filter_lists[filter_category_name] = []
-                for e in self.ggdb.get_all_dbentries(filter_category_name):
-                    self.filter_lists[filter_category_name].append(str(e[0]))
+                for i in self.ggdb.get_all_dbentries(filter_category_name):
+                    self.filter_lists[filter_category_name].append(str(i[0]))
             elif item == 'invert':
                 templist = []
-                for e in self.ggdb.get_all_dbentries(filter_category_name):
-                    if str(e[0]) not in self.filter_lists[filter_category_name]:
-                        templist.append(str(e[0]))
+                for i in self.ggdb.get_all_dbentries(filter_category_name):
+                    if str(i[0]) not in self.filter_lists[filter_category_name]:
+                        templist.append(str(i[0]))
                 self.filter_lists[filter_category_name] = templist
 
             self.set_filter_content(filter_category_name)
@@ -820,7 +827,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def onAction(self, action):
         """Kodi onAction"""
 
-        xbmc.log("UMSA onAction: {}".format(action.getId()))
+        xbmc.log("UMSA onAction: id = {}".format(action.getId()))
 
         if action.getId() == 0:
             return
@@ -840,24 +847,25 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     or action.getId() in ACTION_MOVEMENT_RIGHT):
                 return
 
-        # TODO: does not work
-        # check if 18 is correct
-        # try play windowed=False
-        if action.getId() == 18: # tab for video fullscreen/window switch
-            xbmc.log("UMSA onAction: switch video fullscreen/windowed")
-            self.Player.play(windowed=True)
+        # TODO: switch to fullscreen video
+        # Keyboard: scancode: 0x17, sym: 0x0009, unicode: 0x0009, modifier: 0x0
+        # HandleKey: tab (0xf009) pressed, action is FullScreen
+        # UMSA onAction: id = 18
+        # UMSA onAction: SOFTWARE_BUTTON
+        if action.getId() == 18:
+            self.Player.play(windowed=False)
 
         # exit only in main screen, otherwise close popup or stop video
         if action.getId() in ACTION_CANCEL_DIALOG:
 
-            x = self.selectedControlId
-            if x in (
+            actual_control = self.selected_control_id
+            if actual_control in (
                     GAME_LIST, GAME_LIST_OPTIONS, GAME_LIST_SORT, SUBMAIN_MENU
             ):
                 self.setFocus(self.getControl(SOFTWARE_BUTTON))
                 self.enter = True
                 return
-            if x in (
+            if actual_control in (
                     FILTER_CATEGORY_LIST, FILTER_CONTENT_LIST_ACTIVE,
                     FILTER_CONTENT_LIST_INACTIVE, FILTER_OPTIONS,
             ):
@@ -872,7 +880,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.exit()
 
         # ACTION SOFTWARE_BUTTON
-        if self.selectedControlId == SOFTWARE_BUTTON:
+        if self.selected_control_id == SOFTWARE_BUTTON:
             xbmc.log("UMSA onAction: SOFTWARE_BUTTON")
 
             if action.getId() in ACTION_MOVEMENT_RIGHT:
@@ -891,22 +899,22 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.gamelist_move()
 
         # MAIN MENU
-        elif self.selectedControlId == MAIN_MENU:
+        elif self.selected_control_id == MAIN_MENU:
 
             if action.getId() in ACTION_MOVEMENT_RIGHT+ACTION_ENTER:
 
                 # get menu item
-                m = int(self.getControl(MAIN_MENU).getSelectedItem().getLabel2())
-                xbmc.log("UMSA onAction: menu = {}".format(m))
+                menu_item = int(self.getControl(MAIN_MENU).getSelectedItem().getLabel2())
+                xbmc.log("UMSA onAction: menu = {}".format(menu_item))
 
-                if m == M_FAVS:
+                if menu_item == M_FAVS:
                     pass
 
-                elif m == M_FILTER:
+                elif menu_item == M_FILTER:
                     self.setFocus(self.getControl(FILTER_CATEGORY_LIST))
 
-                elif m == M_MORE:
-                    xl = []
+                elif menu_item == M_MORE:
+                    list_items = []
                     for i in (
                             ('Update', M_UPD),
                             ('Artwork Show', M_SSAVER),
@@ -916,14 +924,17 @@ class UMSA(xbmcgui.WindowXMLDialog):
                             ('Youtube Video', M_YTVID),
                             ('Settings (empty)', M_SETTINGS),
                             ('Addon Settings', M_ASETTINGS),
-                            ('< Back', M_BACK)
-                    ):
-                        xl.append(xbmcgui.ListItem(i[0], str(i[1])))
+                            ('< Back', M_BACK)):
+                        # PY2: Kodi 18 and Python2 can not start the youtube plugin
+                        #if PY_VER < (3, 0) and i[0] == 'Youtube Video':
+                        #    pass
+                        #else:
+                        list_items.append(xbmcgui.ListItem(i[0], str(i[1])))
                     self.getControl(MAIN_MENU).reset()
-                    self.getControl(MAIN_MENU).addItems(xl)
+                    self.getControl(MAIN_MENU).addItems(list_items)
                     self.setFocus(self.getControl(MAIN_MENU))
 
-                elif m == M_YTVID:
+                elif menu_item == M_YTVID:
                     query_string = urlencode(
                         {"search_query" : '{} {}'.format(
                             self.actset['gamename'].replace(self.actset['detail'], '').split(),
@@ -941,14 +952,16 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     playurl = "plugin://plugin.video.youtube/play/?video_id={}".format(
                         search_results[0]
                     )
+                    # PY2: youtube plugin does not work
                     self.Player.play(playurl, windowed=True)
-                    # TODO doesnt work, try with new window like fsvidplay
-                    # and put playurl into skin? or this we have to call player?
+                    if PY_VER < (3, 0):
+                        self.exit()
 
-                elif m == M_EXIT:
+
+                elif menu_item == M_EXIT:
                     self.exit()
 
-                elif m == M_UPD:
+                elif menu_item == M_UPD:
                     self.setFocus(self.getControl(SOFTWARE_BUTTON))
                     # sanity
                     if self.scan_thread and not self.scan_thread.isAlive():
@@ -972,7 +985,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                         self.scan_thread = Thread(target=self.update, args=('art',))
                         self.scan_thread.start()
 
-                elif m == M_SSAVER:
+                elif menu_item == M_SSAVER:
                     self.setFocus(self.getControl(SOFTWARE_BUTTON))
                     ret = self.dialog.select(
                         'Which show would please you?', (
@@ -986,38 +999,38 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     if ret == 0:
                         self.play_random_videos()
                     elif ret == 1:
-                        x = self.ggdb.get_art_types()
+                        art_types = self.ggdb.get_art_types()
                         ret2 = self.dialog.multiselect(
-                            "What do you want to see?", x
+                            "What do you want to see?", art_types
                         )
                         if ret2:
-                            y = []
+                            selected_art_types = []
                             for i in ret2:
-                                y.append(x[i])
-                            xbmc.sleep(500)
-                            self.Monitor.snapshot_crossover(y)
+                                selected_art_types.append(art_types[i])
+                            #xbmc.sleep(500)
+                            self.Monitor.snapshot_crossover(selected_art_types)
                     elif ret == 2:
                         self.marp_replayer()
-                elif m == M_ASETTINGS:
+                elif menu_item == M_ASETTINGS:
                     self.setFocus(self.getControl(SOFTWARE_BUTTON))
                     __addon__.openSettings()
                     self.read_settings()
-                elif m == M_BACK:
+                elif menu_item == M_BACK:
                     self.build_main_menu()
 
-                elif m == M_LISTS:
+                elif menu_item == M_LISTS:
                     xbmc.log("UMSA onAction: M_LISTS sub")
                     #self.setFocus(self.getControl(GAME_LIST_LABEL))
                     self.update_gamelist(M_ALL)
                 else:
                     self.setFocus(self.getControl(GAME_LIST_LABEL))
-                    self.update_gamelist(m)
+                    self.update_gamelist(menu_item)
 
             elif action.getId() in ACTION_CONTEXT:
 
-                m = int(self.getControl(MAIN_MENU).getSelectedItem().getLabel2())
+                menu_item = int(self.getControl(MAIN_MENU).getSelectedItem().getLabel2())
 
-                if m == M_FILTER:
+                if menu_item == M_FILTER:
                     if self.ggdb.use_filter:
                         self.ggdb.use_filter = False
                     else:
@@ -1025,15 +1038,16 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     self.build_main_menu()
 
         # TODO: rename, is for gamelist menu now
-        elif self.selectedControlId == SUBMAIN_MENU:
-
+        elif self.selected_control_id == SUBMAIN_MENU:
             if action.getId() in ACTION_MOVEMENT_RIGHT+ACTION_ENTER:
-
-                sm = int(self.getControl(SUBMAIN_MENU).getSelectedItem().getLabel2())
-                self.update_gamelist(sm)
+                #sm = int(self.getControl(SUBMAIN_MENU).getSelectedItem().getLabel2())
+                #self.update_gamelist(sm)
+                self.update_gamelist(
+                    int(self.getControl(SUBMAIN_MENU).getSelectedItem().getLabel2())
+                )
 
         # ACTION SYSTEM_WRAPLIST
-        elif self.selectedControlId == SYSTEM_WRAPLIST:
+        elif self.selected_control_id == SYSTEM_WRAPLIST:
             xbmc.log("UMSA onAction: MACHINE_LIST")
 
             if action.getId() in ACTION_MOVEMENT_RIGHT or action.getId() in ACTION_MOVEMENT_LEFT:
@@ -1048,13 +1062,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 else:
                     self.update_gamelist(M_SWL)
 
-        elif self.selectedControlId == TEXTLIST:
+        elif self.selected_control_id == TEXTLIST:
 
             if action.getId() in ACTION_CONTEXT:
                 self.update_gamelist(M_ALL)
 
         # ACTION GAME_LIST
-        elif self.selectedControlId == GAME_LIST:
+        elif self.selected_control_id == GAME_LIST:
             xbmc.log("UMSA onAction: GAME_LIST")
 
             if action.getId() in ACTION_ENTER:
@@ -1065,28 +1079,28 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.gamelist_move()
 
         # ACTION FILTER_CATEGORY_LIST
-        elif self.selectedControlId == FILTER_CATEGORY_LIST:
+        elif self.selected_control_id == FILTER_CATEGORY_LIST:
             xbmc.log("UMSA onAction: FILTER_CATEGORY_LIST")
 
             if action.getId() in ACTION_ENTER:
                 self.filter_category()
 
         # ACTION FILTER_CONTENT_LIST_ACTIVE
-        elif self.selectedControlId == FILTER_CONTENT_LIST_ACTIVE:
+        elif self.selected_control_id == FILTER_CONTENT_LIST_ACTIVE:
             xbmc.log("UMSA onAction: FILTER_CONTENT_LIST_ACTIVE")
 
             if action.getId() in ACTION_ENTER:
                 self.filter_content('active')
 
         # ACTION FILTER_CONTENT_LIST_INACTIVE
-        elif self.selectedControlId == FILTER_CONTENT_LIST_INACTIVE:
+        elif self.selected_control_id == FILTER_CONTENT_LIST_INACTIVE:
             xbmc.log("UMSA onAction: FILTER_CONTENT_LIST_INACTIVE")
 
             if action.getId() in ACTION_ENTER:
                 self.filter_content('inactive')
 
         # ACTION SET_LIST
-        elif self.selectedControlId == SET_LIST:
+        elif self.selected_control_id == SET_LIST:
             xbmc.log("UMSA onAction: SET_LIST")
 
             if action.getId() in ACTION_MOVEMENT_LEFT+ACTION_MOVEMENT_RIGHT:
@@ -1152,11 +1166,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def build_sublist_menu(self):
         """Builds the sublist menu"""
 
-        xl = []
-        xl.append(xbmcgui.ListItem('All', str(M_ALL)))
-        xl.append(xbmcgui.ListItem('Publisher', str(M_MAKER)))
-        xl.append(xbmcgui.ListItem('Category', str(M_CAT)))
-        xl.append(xbmcgui.ListItem('Year', str(M_YEAR)))
+        list_items = []
+        list_items.append(xbmcgui.ListItem('All', str(M_ALL)))
+        list_items.append(xbmcgui.ListItem('Publisher', str(M_MAKER)))
+        list_items.append(xbmcgui.ListItem('Category', str(M_CAT)))
+        list_items.append(xbmcgui.ListItem('Year', str(M_YEAR)))
 
         rec = False
         for i in self.all_dat:
@@ -1164,22 +1178,22 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 rec = True
                 break
         if rec:
-            xl.append(xbmcgui.ListItem("Recommended", str(M_REC)))
+            list_items.append(xbmcgui.ListItem("Recommended", str(M_REC)))
 
         # source
         if self.actset['swl_name'] == 'mame':
-            c = self.ggdb.count_source(self.actset['source'])
-            if c > 1:
-                xl.append(xbmcgui.ListItem(
+            count_source = self.ggdb.count_source(self.actset['source'])
+            if count_source > 1:
+                list_items.append(xbmcgui.ListItem(
                     'Source {} ({})'.format(
-                        self.actset['source'], c
+                        self.actset['source'], count_source
                     ), str(M_SOURCE)
                 ))
             else:
                 xbmc.log("UMSA build_sublist_menu: only 1 source: {}".format(self.actset['source']))
         # swl
         else:
-            xl.append(xbmcgui.ListItem(
+            list_items.append(xbmcgui.ListItem(
                 'Softwarelist: {}'.format(
                     self.actset['swl_name']
                 ), str(M_SWL)
@@ -1188,70 +1202,74 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # TODO: series, search?
 
         self.getControl(SUBMAIN_MENU).reset()
-        self.getControl(SUBMAIN_MENU).addItems(xl)
+        self.getControl(SUBMAIN_MENU).addItems(list_items)
 
     def build_main_menu(self):
-        """Builds up the main menu"""
+        """Builds up the main menu
 
-        xl = []
+        TODO: exchange numbers with constants
+        """
+
+        list_items = []
         # TODO build fav support
-        xl.append(xbmcgui.ListItem('Add to Favorites', '1'))
+        list_items.append(xbmcgui.ListItem('Add to Favorites', '1'))
 
         # TODO save diff emu per set and show here
-        xl.append(xbmcgui.ListItem('Emulator: MAME', '2'))
+        list_items.append(xbmcgui.ListItem('Emulator: MAME', '2'))
 
         # TODO only when emu = mame
         if self.actset['swl_name'] != 'mame':
-            c = self.ggdb.count_machines_for_swl(self.actset['swl_name'])
-            if c > 1:
-                xl.append(xbmcgui.ListItem('- change machine ({})'.format(c), '21'))
+            count_machines = self.ggdb.count_machines_for_swl(self.actset['swl_name'])
+            if count_machines > 1:
+                list_items.append(xbmcgui.ListItem('- change machine ({})'.format(
+                    count_machines), '21'))
 
         # series
         series = self.ggdb.check_series(self.last[self.lastptr])
         if series:
-            xl.append(
+            list_items.append(
                 xbmcgui.ListItem("Show series ({})".format(series), '3')
             )
 
         # video/manual/TODO sound
         xbmc.log("UMSA  build_main_menu: video, manual status = {}".format(self.vidman))
         if self.vidman != (0, 0):
-            t = ''
+            list_item = ''
             if self.vidman[0] == 1 and self.vidman[1] == 0:
-                t = "Play Video"
+                list_item = "Play Video"
             elif self.vidman[1] == 1 and self.vidman[0] == 0:
-                t = "Show Manual"
+                list_item = "Show Manual"
             else:
                 if self.vidman[0] > 0:
-                    t += "Videos({}) ".format(self.vidman[0])
+                    list_item += "Videos({}) ".format(self.vidman[0])
                 if self.vidman[1] > 0:
-                    t += "Manuals({})".format(self.vidman[1])
-            xl.append(xbmcgui.ListItem(t, str(M_VMS)))
+                    list_item += "Manuals({})".format(self.vidman[1])
+            list_items.append(xbmcgui.ListItem(list_item, str(M_VMS)))
 
         # search
         if self.searchold:
-            xl.append(
+            list_items.append(
                 xbmcgui.ListItem('Last Search: {}'.format(self.searchold), str(M_SEARCH))
                 )
         else:
-            xl.append(
+            list_items.append(
                 xbmcgui.ListItem('New Search', str(M_SEARCH))
                 )
 
         # filter
         if self.ggdb.use_filter:
-            xl.append(
+            list_items.append(
                 xbmcgui.ListItem('Filter: {}'.format(self.act_filter), '7')
                 )
         else:
-            xl.append(
+            list_items.append(
                 xbmcgui.ListItem('Filter: off', '7')
                 )
 
-        xl.append(xbmcgui.ListItem('More', '8'))
-        xl.append(xbmcgui.ListItem('Exit UMSA', '9'))
+        list_items.append(xbmcgui.ListItem('More', '8'))
+        list_items.append(xbmcgui.ListItem('Exit UMSA', '9'))
         self.getControl(MAIN_MENU).reset()
-        self.getControl(MAIN_MENU).addItems(xl)
+        self.getControl(MAIN_MENU).addItems(list_items)
 
     def gamelist_move(self):
         """Move in gamelist"""
@@ -1262,9 +1280,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
             xbmc.log("UMSA gamelist_move: no games = return")
             return
         # get infos
-        gi = self.getControl(GAME_LIST).getSelectedItem()
+        gamelist_item = self.getControl(GAME_LIST).getSelectedItem()
         # check if we have an item
-        if not gi:
+        if not gamelist_item:
             xbmc.log("UMSA gamelist_move: no selected item = return")
             return
         #gameinfo = self.getControl(GAME_LIST).getSelectedItem().getLabel()
@@ -1275,7 +1293,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             return
         # check if gamelist kodi obj already has property text
         # return when text already present
-        if gi.getProperty('text'):
+        if gamelist_item.getProperty('text'):
             xbmc.log("UMSA gamelist_move: text already there = return")
             return
         # get snap, machines
@@ -1287,11 +1305,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 path = self.progetto
             else:
                 path = self.other_artwork
-            gi.setArt(
+            gamelist_item.setArt(
                 {'icon' : os.path.join(path, 'snap', snap[0].replace('mame', 'snap'))}
                 )
-        gi.setProperty('text', snap[2])
-        xbmc.log("UMSA gamelist_move: properties set = {}".format(gi.getProperty('text')))
+        gamelist_item.setProperty('text', snap[2])
+        xbmc.log("UMSA gamelist_move: properties set = {}".format(
+            gamelist_item.getProperty('text')))
 
     def gamelist_switch_filter(self):
         """Switch filter in gamelist"""
@@ -1338,7 +1357,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
         elif self.getControl(GAME_LIST_LABEL).getLabel() == 'Choose Media':
 
             # TODO: add play soundtrack
-            xbmc.log("UMSA gamelist_click: id = {}".format(gamelist_id))
+
+            # close list window
+            self.enter = True
+            self.setFocus(self.getControl(SOFTWARE_BUTTON))
+
             if gamelist_id[-3:] == "mp4":
 
                 #if self.Player.isPlayingVideo():
@@ -1346,16 +1369,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 #    xbmc.sleep(200)
                 # TODO video label
                 gameinfo = self.getControl(GAME_LIST).getSelectedItem().getLabel()
-                li = xbmcgui.ListItem(gameinfo)
-                #li.setInfo('video',
+                list_item = xbmcgui.ListItem(gameinfo)
+                #list_items.setInfo('video',
                 #    {'Writer': i['year'],
                 #     'Studio': i['maker']}
                 #)
-                self.Player.play(
-                    gamelist_id,
-                    listitem=li,
-                    windowed=True
-                )
+                self.Player.play(gamelist_id, listitem=list_item, windowed=True)
 
             else:
                 self.setFocus(self.getControl(SOFTWARE_BUTTON))
@@ -1373,17 +1392,17 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 else:
                     size = self.getControl(GAME_LIST).size()
                     sid = int(self.getControl(GAME_LIST).getListItem(size-2).getLabel2())
-                x, pos = self.ggdb.get_prevnext_software(sid, gamelist_id)
+                gamelist, pos = self.ggdb.get_prevnext_software(sid, gamelist_id)
 
-                l = []
-                for i in x:
-                    li = xbmcgui.ListItem(i['name'], str(i['id']))
-                    li.setInfo(
+                list_items = []
+                for i in gamelist:
+                    list_item = xbmcgui.ListItem(i['name'], str(i['id']))
+                    list_item.setInfo(
                         'video', {'Writer' : i['year'], 'Studio' : i['maker'],}
                         )
-                    l.append(li)
+                    list_items.append(list_item)
                 self.getControl(GAME_LIST).reset()
-                self.getControl(GAME_LIST).addItems(l)
+                self.getControl(GAME_LIST).addItems(list_items)
                 self.getControl(GAME_LIST).selectItem(pos)
                 self.setFocus(self.getControl(GAME_LIST))
 
@@ -1428,9 +1447,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.filter_lists = utilmod.load_filter(
                     SETTINGS_FOLDER, 'filter_' + files[ret] + '.txt'
                 )
-                c = self.ggdb.define_filter(self.filter_lists)
+                #c = self.ggdb.define_filter(self.filter_lists)
                 self.getControl(LABEL_STATUS).setLabel(
-                    "%s filtered items" % (c,)
+                    "%s filtered items" % (self.ggdb.define_filter(self.filter_lists),)
                 )
                 self.act_filter = files[ret]
                 self.getControl(FILTER_CONTENT_LIST_ACTIVE).reset()
@@ -1507,8 +1526,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Read settings for UMSA from Kodi
 
         - read settings
-        - imports check_snapshot
-        - checks if chdman is in mame directory
+        - checks if chdman is in mame directory if empty
         - set playvideo
         - set cab_path
         """
@@ -1527,11 +1545,6 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.other_artwork = __addon__.getSetting('otherart')
         self.ssaver = __addon__.getSetting('ssaver')
 
-        # import check_snapshot for screensaver
-        self.util = Check()
-        if self.util.pil:
-            xbmc.log("UMSA read_settings: PIL library found")
-
         # check chdman
         if self.chdman_exe == "":
             # split self.mame_exe
@@ -1547,6 +1560,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # auto play videos
         if __addon__.getSetting('playvideo') == 'true':
             self.playvideo = True
+        # needed as settings can be changed and reread
         else:
             self.playvideo = None
 
@@ -1558,9 +1572,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
         xbmc.log("UMSA close_filterlist")
         # update filter
         if not no_update:
-            c = self.ggdb.define_filter(self.filter_lists)
+            #c = self.ggdb.define_filter(self.filter_lists)
             self.getControl(LABEL_STATUS).setLabel(
-                "%s filtered items" % (c,)
+                "%s filtered items" % (self.ggdb.define_filter(self.filter_lists),)
             )
         self.setFocus(self.getControl(SOFTWARE_BUTTON))
 
@@ -1568,14 +1582,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Get different emulator"""
 
         if source:
-            x = self.ggdb.get_emulator(source=source)
+            emus = self.ggdb.get_emulator(source=source)
             text = 'source %s' % (source,)
         else:
-            x = self.ggdb.get_emulator(swl_name=swl_name)
+            emus = self.ggdb.get_emulator(swl_name=swl_name)
             text = 'swl %s' % (swl_name, )
 
         elist = ['Kodi Retroplayer', 'Different emulator']
-        for i in x.keys():
+        for i in emus.keys():
             elist.insert(0, i)
 
         ret = self.dialog.select('Emulator: '+text, elist)
@@ -1584,9 +1598,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         if elist[ret] == 'Different emulator':
 
-            x = self.ggdb.get_all_emulators()
-            if x:
-                dlist = ['New emulator'] + x.keys()
+            emus = self.ggdb.get_all_emulators()
+            if emus:
+                dlist = ['New emulator'] + emus.keys()
                 ret2 = self.dialog.select('Emulator: '+text, dlist)
                 if dlist[ret2] == 'New emulator':
                     if source:
@@ -1596,15 +1610,15 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 else:
                     if source:
                         self.ggdb.connect_emulator(
-                            x[dlist[ret2]]['id'], # id of emu entry
+                            emus[dlist[ret2]]['id'], # id of emu entry
                             source=source
                         )
                     else:
                         self.ggdb.connect_emulator(
-                            x[dlist[ret2]]['id'], # id of emu entry
+                            emus[dlist[ret2]]['id'], # id of emu entry
                             swl_name=swl_name
                         )
-                    self.run_emulator(x[dlist[ret2]])
+                    self.run_emulator(emus[dlist[ret2]])
                     return
 
             elif source:
@@ -1615,7 +1629,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         elif elist[ret] == "Kodi Retroplayer":
             self.run_emulator({'exe': 'kodi', 'zip': None})
         else:
-            self.run_emulator(x[elist[ret]])
+            self.run_emulator(emus[elist[ret]])
 
     def get_new_emulator(self, source=None, swl_name=None):
         """Dialog to configure new emulator
@@ -1626,13 +1640,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """
 
         # get filename
-        fn = self.dialog.browse(1, 'Emulator executable', 'files')
-        if not fn:
+        emu_exe = self.dialog.browse(1, 'Emulator executable', 'files')
+        if not emu_exe:
             return
 
         # get working dir
-        wd = self.dialog.browse(0, 'Working directory', 'files')
-        if not wd:
+        work_dir = self.dialog.browse(0, 'Working directory', 'files')
+        if not work_dir:
             return
 
         # zip support
@@ -1645,14 +1659,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
             return
 
         if source:
-            self.ggdb.save_emulator(name, fn, wd, zip_support, source=source)
+            self.ggdb.save_emulator(name, emu_exe, work_dir, zip_support, source=source)
         else:
-            self.ggdb.save_emulator(name, fn, wd, zip_support, swl_name=swl_name)
+            self.ggdb.save_emulator(name, emu_exe, work_dir, zip_support, swl_name=swl_name)
 
         self.run_emulator(
             {
-                'exe' : fn,
-                'dir' : wd,
+                'exe' : emu_exe,
+                'dir' : work_dir,
                 'zip' : zip_support
             }
         )
@@ -1677,8 +1691,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # update umsa.db
         if what == 'db':
 
-            pd = xbmcgui.DialogProgress()
-            pd.create('Updating UMSA database', 'downloading zip...')
+            progress_dialog = xbmcgui.DialogProgress()
+            progress_dialog.create('Updating UMSA database', 'downloading zip...')
             # close db before update
             if self.ggdb:
                 self.ggdb.close_db()
@@ -1694,9 +1708,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
             db_zip_size = int(url.info()['Content-Length'])*1.0
             while len(db_zip) < db_zip_size:
                 db_zip.extend(url.read(102400))
-                pd.update(int((len(db_zip)/db_zip_size)*80))
+                progress_dialog.update(int((len(db_zip)/db_zip_size)*80))
             # extract
-            pd.update(80, 'unzip file...')
+            progress_dialog.update(80, 'unzip file...')
             zipfile.ZipFile(BytesIO(db_zip)).extractall(SETTINGS_FOLDER)
             #except:
             #    xbmc.executebuiltin(
@@ -1707,7 +1721,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             # re-connect to db
             if self.ggdb:
-                pd.update(90, 'copy artwork and dats back to new database...')
+                progress_dialog.update(90, 'copy artwork and dats back to new database...')
                 self.ggdb.open_db(SETTINGS_FOLDER)
             # first run
             else:
@@ -1717,58 +1731,56 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     self.pref_country,
                 )
 
-            pd.close()
+            progress_dialog.close()
 
         # update dats database
         elif what == 'dat':
             self.setFocus(self.getControl(SOFTWARE_BUTTON))
-            self.pd.create('Scan DAT files', 'scanning files...')
+            self.progress_dialog.create('Scan support files', 'warm up')
 
-            xbmc.log("UMSA update: start dat scan thread")
             # create thread
-            x = Thread(
+            scan_dat_thread = Thread(
                 target=self.ggdb.scan_dats,
                 args=(self.datdir, SETTINGS_FOLDER)
                 )
-            x.start()
-
+            scan_dat_thread.start()
             self.ggdb.scan_perc = 0
             self.ggdb.scan_what = ''
             while self.ggdb.scan_perc < 100:
-            #TODO while x.isAlive:
+            #TODO while scan_dat_thread.isAlive:
                 xbmc.sleep(1000)
-                self.pd.update(
+                self.progress_dialog.update(
                     self.ggdb.scan_perc,
-                    'Scan DAT files',
-                    'scanning {0}...'.format(self.ggdb.scan_what),
+                    'Scan support files',
+                    'scanning {}'.format(self.ggdb.scan_what),
                 )
-            self.pd.update(100, 'Scan DAT files', 'copy to umsa.db...')
+            self.progress_dialog.update(100, 'Scan support files', 'saving')
             self.ggdb.add_dat_to_db(SETTINGS_FOLDER)
-            self.pd.close()
+            self.progress_dialog.close()
 
         # update art database
         elif what == 'art':
             self.setFocus(self.getControl(SOFTWARE_BUTTON))
-            self.pd.create('Scan Artwork folders', 'scanning dirs...')
-            x = Thread(
+            self.progress_dialog.create('Scan artwork folders', 'warm up')
+
+            scan_art_thread = Thread(
                 target=self.ggdb.scan_artwork,
                 args=((self.progetto, self.other_artwork), SETTINGS_FOLDER)
                 )
-            x.start()
-
+            scan_art_thread.start()
             self.ggdb.scan_perc = 0
             self.ggdb.scan_what = ''
             while self.ggdb.scan_what != "done":
-            #while x.isAlive():
+            #while scan_art_thread.isAlive():
                 xbmc.sleep(1000)
-                self.pd.update(
+                self.progress_dialog.update(
                     self.ggdb.scan_perc,
-                    'Scan Artwork folders',
-                    'scanning {0}...'.format(self.ggdb.scan_what),
+                    'Scan artwork folders',
+                    'scanning {}'.format(self.ggdb.scan_what),
                 )
-            self.pd.update(100, 'Scan Artwork folders', 'copy to umsa.db...')
+            self.progress_dialog.update(100, 'Scan artwork folders', 'saving')
             self.ggdb.add_art_to_db(SETTINGS_FOLDER)
-            self.pd.close()
+            self.progress_dialog.close()
 
     def choose_media(self):
         """Dialog to choose video or manual to show"""
@@ -1798,17 +1810,16 @@ class UMSA(xbmcgui.WindowXMLDialog):
                          }
                     )
 
-        xbmc.log("UMSA choose_media: video {}, man {}".format(len(video), len(manual)))
         # only 1 video
         if len(video) == 2 and len(manual) == 1:
             #if self.Player.isPlayingVideo():
             #    self.Player.stop()
             #    xbmc.sleep(200)
-            li = xbmcgui.ListItem(video[1]['id'])
-            li.setInfo('video', {'Title': video[1]['name'],})
+            list_item = xbmcgui.ListItem(video[1]['id'])
+            list_item.setInfo('video', {'Title': video[1]['name'],})
             self.Player.play(
                 video[1]['id'],
-                listitem=li,
+                listitem=list_item,
                 windowed=True
             )
         # only 1 manual
@@ -1818,13 +1829,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # more
         else:
             if len(video) == 1:
-                x = manual
+                media_list = manual
             elif len(manual) == 1:
-                x = video
+                media_list = video
             else:
-                x = video + manual
+                media_list = video + manual
 
-            self.popup_gamelist(x, 1, 'Choose Media', [], [])
+            self.popup_gamelist(media_list, 'Choose Media', pos=1)
 
     def show_rec(self):
         """Shows recommended section from mameinfo.dat in gamelist"""
@@ -1837,22 +1848,18 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 if 'Rec' in self.all_dat[i]:
                     text = self.all_dat[i]['Rec']
                     break
-        ll = []
+        rec_list = []
         pos = 0
-        for i in text.split('[CR]'):
-            if i == '':
+        for rec_gamename in text.split('[CR]'):
+            if rec_gamename == '':
                 continue
-            if i[0] == '-':
-                x = {'name'    : i,
-                     'id'      : 0,
-                     'year'    : '',
-                     'maker'   : '',
-                    }
+            if rec_gamename[0] == '-':
+                rec_item = {'name': rec_gamename, 'id': 0, 'year': '', 'maker': '',}
                 pos += 1
             else:
-                x = self.ggdb.search_single(i)
-            ll.append(x)
-        self.popup_gamelist(ll, pos, 'Recommended', [], [])
+                rec_item = self.ggdb.search_single(rec_gamename)
+            rec_list.append(rec_item)
+        self.popup_gamelist(rec_list, 'Recommended', pos=pos)
 
     def update_gamelist(self, item):
         """Update gamelist"""
@@ -1942,12 +1949,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         elif item == M_LSSAVER:
             results = []
             for i in utilmod.load_lastsaver(SETTINGS_FOLDER):
-                y = self.ggdb.get_info_by_set_and_swl(i[0], i[1])
+                saver_list = self.ggdb.get_info_by_set_and_swl(i[0], i[1])
                 results.append(
-                    {'name': y['name'],
-                     'id': str(y['software_id']),
-                     'year': y['year'],
-                     'maker': y['maker'],
+                    {'name': saver_list['name'],
+                     'id': str(saver_list['software_id']),
+                     'year': saver_list['year'],
+                     'maker': saver_list['maker'],
                     }
                 )
             gl_label = 'last screensaver session'
@@ -1958,7 +1965,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             results = self.ggdb.get_series(self.last[self.lastptr])
             if results:
-                self.popup_gamelist(results, 0, 'Series', [], [])
+                self.popup_gamelist(results, 'Series')
             #self.getControl(GAME_LIST_TEXT).setText('')
             return
 
@@ -2002,9 +2009,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
             return
 
         if self.ggdb.use_filter:
-            fl = ['filter: on', 'filter: off']
+            use_filter = ['filter: on', 'filter: off']
         else:
-            fl = ['filter: off', 'filter: on']
+            use_filter = ['filter: off', 'filter: on']
         # TODO: also set sort method: name, year, maker
 
         time2 = time.time()
@@ -2013,9 +2020,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         )
 
         # now show gamelist with gathered info from above
-        self.popup_gamelist(
-            results, pos, gl_label, fl, gl_options
-        )
+        self.popup_gamelist(results, gl_label, pos=pos, sort=use_filter, options=gl_options)
         # build submenu with lists in it
         self.build_sublist_menu()
 
@@ -2023,26 +2028,33 @@ class UMSA(xbmcgui.WindowXMLDialog):
         xbmc.log('UMSA update_gamelist: popup in gui: {:.0f}ms'.format((time3-time2)*1000))
         xbmc.log('UMSA update_gamelist: time overall: {:.0f}ms'.format((time3-time1)*1000))
 
-    def popup_gamelist(self, gamelist, pos, label, sort, options):
+    def popup_gamelist(self, gamelist, label, pos=0, sort=None, options=None):
         """Pop up gamelist
 
         TODO
          3 pic modes in skin 4:3 3:4 normal like left pic
         """
 
-        xl = []
+        list_items = []
         for i in gamelist:
+            if not i:
+                # TODO should not happen, check recommended list
+                xbmc.log("UMSA popup_gamelist: item in gamelist {} broken: {}".format(
+                    label, i))
+                continue
             listitem = xbmcgui.ListItem(i['name'], str(i['id']))
             listitem.setInfo('video', {'Writer': i['year'], 'Studio': i['maker']})
-            xl.append(listitem)
+            list_items.append(listitem)
 
         self.getControl(GAME_LIST_LABEL).setLabel(label)
         self.getControl(GAME_LIST_OPTIONS).reset()
-        self.getControl(GAME_LIST_OPTIONS).addItems(options)
+        if options:
+            self.getControl(GAME_LIST_OPTIONS).addItems(options)
         self.getControl(GAME_LIST_SORT).reset()
-        self.getControl(GAME_LIST_SORT).addItems(sort)
+        if sort:
+            self.getControl(GAME_LIST_SORT).addItems(sort)
         self.getControl(GAME_LIST).reset()
-        self.getControl(GAME_LIST).addItems(xl)
+        self.getControl(GAME_LIST).addItems(list_items)
         self.getControl(GAME_LIST).selectItem(pos)
 
         self.setFocus(self.getControl(GAME_LIST))
@@ -2083,7 +2095,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         filter_content_id = 0
         f_select = 0
         f_element = 0
-        c = 0
+        count = 0
 
         # only for action in list, not for inital fill
         if update == 'active':
@@ -2098,25 +2110,25 @@ class UMSA(xbmcgui.WindowXMLDialog):
             )
 
         # fill lists
-        for e in self.ggdb.get_all_dbentries(cat):
+        for entry in self.ggdb.get_all_dbentries(cat):
 
             # label: swl (count), id
-            x = xbmcgui.ListItem("{0} ({1})".format(e[1], e[2]), str(e[0]))
+            list_item = xbmcgui.ListItem("{0} ({1})".format(entry[1], entry[2]), str(entry[0]))
 
-            if str(e[0]) in self.filter_lists[cat]:
-                active.append(x)
+            if str(entry[0]) in self.filter_lists[cat]:
+                active.append(list_item)
                 # check for selected item id, so we can select this in the other list
                 if update == 'inactive':
-                    if e[0] == filter_content_id:
-                        f_select = c
-                    c += 1
+                    if entry[0] == filter_content_id:
+                        f_select = count
+                    count += 1
             else:
-                inactive.append(x)
+                inactive.append(list_item)
                 # check for selected item id, so we can select this in the other list
                 if update == 'active':
-                    if e[0] == filter_content_id:
-                        f_select = c
-                    c += 1
+                    if entry[0] == filter_content_id:
+                        f_select = count
+                    count += 1
 
         # reset lists and refill
         self.setFocus(self.getControl(FILTER_CATEGORY_LIST))
@@ -2198,12 +2210,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # else:
         #     self.getControl(SHADOW_SET).setVisible(True)
 
-        l = []
+        set_list_items = []
         for i in self.info[pos]:
 
             count += 1
             label = ""
-            x = xbmcgui.ListItem()
+            list_item = xbmcgui.ListItem()
 
             # set label
             if i['category'] != 'Not Classified' or i['nplayers'] != '???':
@@ -2236,21 +2248,21 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     length
                 )
 
-            x.setLabel(label)
+            list_item.setLabel(label)
 
             # set other labels in skin over setlist
-            x.setProperty(
+            list_item.setProperty(
                 # strip detail from gamename
                 'Titel', i['gamename'][:len(i['gamename'])
                                        - len(i['detail'])].strip()
             )
-            x.setProperty('Year', i['year'])
-            x.setProperty('Maker', i['publisher'])
-            x.setProperty('Machine', i['machine_label'])
+            list_item.setProperty('Year', i['year'])
+            list_item.setProperty('Maker', i['publisher'])
+            list_item.setProperty('Machine', i['machine_label'])
 
-            l.append(x)
+            set_list_items.append(list_item)
 
-        self.getControl(SET_LIST).addItems(l)
+        self.getControl(SET_LIST).addItems(set_list_items)
 
     def select_software(self, software_id):
         """Get all machines and sets for a software and fill skin"""
@@ -2299,23 +2311,23 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.getControl(SET_LIST).selectItem(pos_set)
 
         # fill MACHINE_WRAPLIST
-        x = 0
-        l = []
+        count = 0
+        list_items = []
         for i in self.info:
 
             # check if we are at selected machine
             # to use the correct selected set
             set_no = 0
-            if pos_machine == x:
+            if pos_machine == count:
                 set_no = pos_set
-            x += 1
+            count += 1
 
             # set picture
-            y = xbmcgui.ListItem()
-            y.setArt({'icon': self.get_machine_pic(use_set=i[set_no])})
-            l.append(y)
+            list_item = xbmcgui.ListItem()
+            list_item.setArt({'icon': self.get_machine_pic(use_set=i[set_no])})
+            list_items.append(list_item)
 
-        self.getControl(SYSTEM_WRAPLIST).addItems(l)
+        self.getControl(SYSTEM_WRAPLIST).addItems(list_items)
         self.getControl(SYSTEM_WRAPLIST).selectItem(pos_machine)
 
         # set border for machines
@@ -2375,10 +2387,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
                         (self.Player.isPlayingVideo() and
                          video_file != self.Player.getPlayingFile())):
 
-                    li = xbmcgui.ListItem(video_rand['label'])
+                    list_item = xbmcgui.ListItem(video_rand['label'])
                     self.Player.play(
                         video_file,
-                        listitem=li,
+                        listitem=list_item,
                         windowed=True
                     )
 
@@ -2405,72 +2417,63 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """
 
         imagelist = []
-
         if set_info['swl_name'] == 'mame':
-            newpath = os.path.join(
+            snap_dir = os.path.join(
                 self.mame_ini['snapshot_directory'],
                 set_info['name']
             )
         else:
-            newpath = os.path.join(
+            snap_dir = os.path.join(
                 self.mame_ini['snapshot_directory'],
                 set_info['swl_name'], set_info['name']
             )
-        if os.path.isdir(newpath):
-            for ni in os.listdir(newpath):
-                image = os.path.join(newpath, ni)
+        if os.path.isdir(snap_dir):
+            for snap_file in os.listdir(snap_dir):
                 imagelist.append(
                     self.create_gui_element_from_snap(
-                        set_info, image=image
+                        set_info, os.path.join(snap_dir, snap_file)
                     )
                 )
-
         return imagelist
 
-    def create_gui_element_from_snap(self, set_info, image, typeof=None):
-        """Returns Kodi element for a snapshot"""
+    def create_gui_element_from_snap(self, set_info, image, art_type='unset'):
+        """Returns Kodi ListItem element for a snapshot"""
 
         if image:
-            x = os.path.dirname(image).split('/')
-            if len(x) < 2:
-                art = typeof
+            dir_split = os.path.dirname(image).split('/')
+            if len(dir_split) < 2:
+                art = art_type
             else:
-                art = x[-2]
+                art = dir_split[-2]
                 # dir is the same as swl, then set filename as art
                 if art == set_info['swl_name']:
                     art = os.path.basename(image)[:-4]
         else:
-            art = typeof
+            art = art_type
 
-        x = xbmcgui.ListItem()
-        x.setLabel(
-            '%s: %s (%s)' % (
-                art, set_info['detail'], set_info['swl_name']
-            )
-        )
-        x.setArt({'icon': image})
-
+        list_item = xbmcgui.ListItem()
+        list_item.setLabel("{}: {} ({})".format(
+            art, set_info['detail'], set_info['swl_name']))
+        list_item.setArt({'icon': image})
         # label to later set
-        x.setProperty(
-            'detail',
-            "{}: {} {}".format(art, set_info['swl_name'], set_info['detail'])
-        )
+        list_item.setProperty('detail', "{}: {} {}".format(
+            art, set_info['swl_name'], set_info['detail']))
 
         aspect = check_image_aspect(set_info)
         if aspect == 'Vertical':
-            x.setProperty('Vertical', '1')
-            x.setProperty('Horizontal', '')
-            x.setProperty('NotScaled', '')
+            list_item.setProperty('Vertical', '1')
+            list_item.setProperty('Horizontal', '')
+            list_item.setProperty('NotScaled', '')
         elif aspect == 'Horizontal':
-            x.setProperty('Vertical', '')
-            x.setProperty('Horizontal', '1')
-            x.setProperty('NotScaled', '')
+            list_item.setProperty('Vertical', '')
+            list_item.setProperty('Horizontal', '1')
+            list_item.setProperty('NotScaled', '')
         elif aspect == 'NotScaled':
-            x.setProperty('Vertical', '')
-            x.setProperty('Horizontal', '')
-            x.setProperty('NotScaled', '1')
+            list_item.setProperty('Vertical', '')
+            list_item.setProperty('Horizontal', '')
+            list_item.setProperty('NotScaled', '1')
 
-        return x
+        return list_item
 
 
     def create_artworklist(self):
@@ -2483,74 +2486,70 @@ class UMSA(xbmcgui.WindowXMLDialog):
         vid = 0
         man = 0
 
-        for m in self.info:
-            for s in m:
+        for machine in self.info:
+            for set_info in machine:
 
-                s['right_pics'] = []
-                s['left_pics'] = []
+                set_info['right_pics'] = []
+                set_info['left_pics'] = []
 
                 # sum up lp
-                if s['last_played']:
-                    self.played['count'] += s['last_played']['play_count']
-                    self.played['played'] += s['last_played']['time_played2']
+                if set_info['last_played']:
+                    self.played['count'] += set_info['last_played']['play_count']
+                    self.played['played'] += set_info['last_played']['time_played2']
 
                 # mame snaps
-                s['localsnaps'] = self.search_snaps(s)
+                set_info['localsnaps'] = self.search_snaps(set_info)
 
                 # progettosnaps
-                if  s['id'] not in self.all_art:
+                if set_info['id'] not in self.all_art:
                     continue
-                for a in self.all_art[s['id']]:
+                for art in self.all_art[set_info['id']]:
 
-                    if a[2]:
+                    if art['path']:
                         path = self.progetto
                     else:
                         path = self.other_artwork
 
                     # create complete filename
-                    if s['swl_name'] == 'mame':
+                    if set_info['swl_name'] == 'mame':
                         filename = os.path.join(
-                            path, a[0], a[0], s['name']+'.'+a[1]
+                            path, art['type'], art['type'], set_info['name']+'.'+art['extension']
                         )
                     else:
                         filename = os.path.join(
-                            path, a[0], s['swl_name'], s['name']+'.'+a[1]
+                            path, art['type'], set_info['swl_name'],
+                            "{}.{}".format(set_info['name'], art['extension'])
                         )
 
-                    if a[0] in RIGHT_IMAGELIST:
-                        x = xbmcgui.ListItem()
-                        x.setLabel(
-                            '%s: %s (%s)' % (
-                                a[0], s['detail'], s['swl_name']
-                            )
-                        )
-                        x.setProperty(
-                            'detail',
-                            "{}: {} {}".format(a[0], s['swl_name'], s['detail'])
-                        )
-                        x.setArt({'icon': filename})
-                        s['right_pics'].append(x)
-                    elif a[0] in LEFT_IMAGELIST:
-                        s['left_pics'].append(
+                    if art['type'] in RIGHT_IMAGELIST:
+                        list_item = xbmcgui.ListItem()
+                        list_item.setLabel("{}: {} ({})".format(
+                            art['type'], set_info['detail'], set_info['swl_name']))
+                        list_item.setProperty('detail', "{}: {} {}".format(
+                            art['type'], set_info['swl_name'], set_info['detail']))
+                        list_item.setArt({'icon': filename})
+                        set_info['right_pics'].append(list_item)
+                    elif art['type'] in LEFT_IMAGELIST:
+                        set_info['left_pics'].append(
                             self.create_gui_element_from_snap(
-                                s, filename, a
+                                set_info, filename, art
                             )
                         )
-                    elif a[0] == 'videosnaps':
-                        s['video'] = filename[:-4]+'.'+a[1]
+                    elif art['type'] == 'videosnaps':
+                        set_info['video'] = filename[:-4]+'.'+art['extension']
                         vid += 1
-                    elif a[0] == 'manuals':
-                        s['manual'] = filename[:-4]+'.'+a[1]
+                    elif art['type'] == 'manuals':
+                        set_info['manual'] = filename[:-4]+'.'+art['extension']
                         man += 1
                     else:
                         xbmc.log(
-                            "UMSA create_artworklist: cant identify artwork type = {}".format(a)
+                            "UMSA create_artworklist: cant identify artwork type = {}".format(art)
                         )
 
         self.vidman = (vid, man)
-        m, s = divmod(self.played['played'], 60)
-        h, m = divmod(m, 60)
-        self.played['played'] = "%d:%02d" % (h, m)
+        minutes, seconds = divmod(self.played['played'], 60)
+        hours, minutes = divmod(minutes, 60)
+        self.played['played'] = "%d:%02d" % (hours, minutes)
 
     def show_artwork(self, howmuch='all'):
         """Show artwork
@@ -2582,28 +2581,22 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             # set count/sets
             count = 1
-            ll = []
+            list_items = []
             for i in rlist:
                 # get detail from setlist property and set label new
-                i.setLabel(
-                    "{} ({}/{})".format(
-                        i.getProperty('detail'),
-                        count,
-                        len(rlist)
-                    )
-                )
-                ll.append(i)
+                i.setLabel("{} ({}/{})".format(
+                    i.getProperty('detail'), count, len(rlist)))
+                list_items.append(i)
                 count += 1
-
             self.getControl(IMAGE_BIG_LIST).reset()
-            self.getControl(IMAGE_BIG_LIST).addItems(ll)
+            self.getControl(IMAGE_BIG_LIST).addItems(list_items)
 
         else:
-            x = xbmcgui.ListItem()
-            x.setProperty('NotEnabled', '1')
-            #x.setArt({'icon' : 'blank.png'})
+            list_item = xbmcgui.ListItem()
+            list_item.setProperty('NotEnabled', '1')
+            #list_item.setArt({'icon' : 'blank.png'})
             self.getControl(IMAGE_BIG_LIST).reset()
-            self.getControl(IMAGE_BIG_LIST).addItem(x)
+            self.getControl(IMAGE_BIG_LIST).addItem(list_item)
 
         # fill pic left
         if len(llist) > 0:
@@ -2612,7 +2605,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             # set count/sets
             count = 1
-            ll = []
+            list_items = []
             for i in llist:
                 # get detail from setlist property and set label new
                 # TODO: check if i.getProperty works when used in i.setLabel
@@ -2625,17 +2618,17 @@ class UMSA(xbmcgui.WindowXMLDialog):
                         len(llist)
                     )
                 )
-                ll.append(i)
+                list_items.append(i)
                 count += 1
             self.getControl(IMAGE_LIST).reset()
-            self.getControl(IMAGE_LIST).addItems(ll)
+            self.getControl(IMAGE_LIST).addItems(list_items)
 
         else:
-            x = xbmcgui.ListItem()
-            x.setProperty('NotEnabled', '1')
-            #x.setArt({'icon' : 'blank.png'})
+            list_item = xbmcgui.ListItem()
+            list_item.setProperty('NotEnabled', '1')
+            #list_item.setArt({'icon' : 'blank.png'})
             self.getControl(IMAGE_LIST).reset()
-            self.getControl(IMAGE_LIST).addItem(x)
+            self.getControl(IMAGE_LIST).addItem(list_item)
 
         # show infos from datfiles only when changed
         if self.oldset == (self.actset['swl_name'], self.actset['name']):
@@ -2647,16 +2640,16 @@ class UMSA(xbmcgui.WindowXMLDialog):
         stattext = ''
         if self.played['count'] > 0:
             if self.actset['last_played']:
-                bd = self.actset['last_played']['last_nice']+' ago'
+                played_text = self.actset['last_played']['last_nice']+' ago'
             else:
-                bd = "never"
+                played_text = "never"
             stattext = "%s, %sh, %sx[CR]" % (
-                bd,
+                played_text,
                 self.played['played'],
                 self.played['count']
             )
 
-        ll = []
+        list_items = []
         count = 0
         if self.actset['id'] in self.all_dat:
             for k in sorted(self.all_dat[self.actset['id']]):
@@ -2666,23 +2659,23 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 if k == 'History':
                     moretext = stattext
 
-                x = xbmcgui.ListItem()
-                x.setLabel(k)
-                x.setProperty(
+                list_item = xbmcgui.ListItem()
+                list_item.setLabel(k)
+                list_item.setProperty(
                     'text',
                     moretext + self.all_dat[self.actset['id']][k]
                 )
-                ll.append(x)
+                list_items.append(list_item)
                 count += 1
 
-        if len(ll) == 0:
-            x = xbmcgui.ListItem()
-            x.setLabel("no information...")
-            x.setProperty('text', stattext)
-            ll.append(x)
+        if len(list_items) == 0:
+            list_item = xbmcgui.ListItem()
+            list_item.setLabel("no information...")
+            list_item.setProperty('text', stattext)
+            list_items.append(list_item)
 
         self.getControl(TEXTLIST).reset()
-        self.getControl(TEXTLIST).addItems(ll)
+        self.getControl(TEXTLIST).addItems(list_items)
 
         # shadow pointer
         if count > 1:
@@ -2705,30 +2698,30 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def find_roms(self, swl_name, set_name):
         """Find roms in MAME rom paths for different emulators"""
 
-        c = False
+        is_chd = False
         if swl_name == 'mame':
-            l = set_name + '.zip'
+            zip_name = set_name + '.zip'
         else:
-            l = swl_name + '/' + set_name + '.zip'
+            zip_name = swl_name + '/' + set_name + '.zip'
 
             # this is for chds:
             # get disk name from db over parts
             disk = self.ggdb.get_disk(swl_name, set_name)
             if disk:
-                c = os.path.join(swl_name, set_name, disk + '.chd')
+                is_chd = os.path.join(swl_name, set_name, disk + '.chd')
 
-        for p in self.mame_ini['rompath']:
+        for rom_path in self.mame_ini['rompath']:
 
             # check for chd
-            if c:
-                chd = os.path.join(p, c)
-                if os.path.isfile(chd):
-                    return chd
+            if is_chd:
+                chd_file = os.path.join(rom_path, is_chd)
+                if os.path.isfile(chd_file):
+                    return chd_file
             # check for zip
             else:
-                z = os.path.join(p, l)
-                if os.path.isfile(z):
-                    return z
+                zip_file = os.path.join(rom_path, zip_name)
+                if os.path.isfile(zip_file):
+                    return zip_file
         return None
 
     def extract_rom(self, rom_file, swl_name, set_name):
@@ -2752,8 +2745,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 # TODO also check the files
                 return folder, [chd_name+file_ext]
             os.mkdir(folder)
-            pd = xbmcgui.DialogProgress()
-            pd.create('Extract CHD...', chd_name)
+            progress_dialog = xbmcgui.DialogProgress()
+            progress_dialog.create('Extract CHD...', chd_name)
             params = [self.chdman_exe,
                       'extractcd',
                       '-i', rom_file,
@@ -2768,21 +2761,21 @@ class UMSA(xbmcgui.WindowXMLDialog):
             # routine to show progress in kodi
             perc = 0
             while proc.returncode is None:
-                pd.update(perc)
-                x = proc.stderr.read(34)
-                rpos = x[::-1].find('%') # reversed str
+                progress_dialog.update(perc)
+                chdman_progress = proc.stderr.read(34)
+                rpos = chdman_progress[::-1].find('%') # reversed str
                 if rpos > -1:
-                    pos = len(x)-rpos-1
-                    str_perc = x[pos-4:pos]
+                    pos = len(chdman_progress)-rpos-1
+                    str_perc = chdman_progress[pos-4:pos]
                     xbmc.log("UMSA extract_rom: chd extract progress = {}".format(str_perc))
                     try:
-                        perc = int(float(x[pos-4:pos]))
+                        perc = int(float(chdman_progress[pos-4:pos]))
                     except:
                         pass
                 proc.poll()
                 xbmc.sleep(100)
-            pd.update(100)
-            pd.close()
+            progress_dialog.update(100)
+            progress_dialog.close()
             self.emurunning = False
             xbmc.log(
                 "UMSA extract_rom: chd extract: proc.returncode = {0}".format(proc.returncode)
@@ -2809,8 +2802,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
             }
 
             # extract zipfile
-            pd = xbmcgui.DialogProgressBG()
-            pd.create('Extracting ZIP', 'extracting ZIP')
+            progress_dialog = xbmcgui.DialogProgressBG()
+            progress_dialog.create('Extracting ZIP', 'extracting ZIP')
 
             os.mkdir(folder)
             zfile = zipfile.ZipFile(rom_file)
@@ -2850,12 +2843,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 # rest is sorted by name
                 else:
                     xbmc.log("UMSA extract_rom: joining rom files: {}".format(zfiles))
-                    sf = sorted(zfiles)
-                    xbmc.log("UMSA extract_rom: sorted: {}".format(sf))
-                    with open(os.path.join(folder, sf[0]), "ab") as file1, open(os.path.join(folder, sf[1]), "rb") as file2:
+                    zfiles_sort = sorted(zfiles)
+                    xbmc.log("UMSA extract_rom: sorted: {}".format(zfiles_sort))
+                    with open(os.path.join(folder, zfiles_sort[0]), "ab") as file1, open(os.path.join(folder, zfiles_sort[1]), "rb") as file2:
                         file1.write(file2.read())
                     file1.close()
-                    os.remove(os.path.join(folder, sf[1]))
+                    os.remove(os.path.join(folder, zfiles_sort[1]))
                 zfiles = os.listdir(folder)
 
             # rename
@@ -2869,16 +2862,16 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     )
                 zfiles = os.listdir(folder)
 
-            pd.update(100)
-            pd.close()
+            progress_dialog.update(100)
+            progress_dialog.close()
 
         # dialog when we have still more than one file,
         # like home computer software with many discs
         if len(zfiles) > 1:
-            wf = self.dialog.select('Select file: ', zfiles)
-            nf = zfiles[wf]
-            zfiles[wf] = zfiles[0]
-            zfiles[0] = nf
+            which_file = self.dialog.select('Select file: ', zfiles)
+            this_file = zfiles[which_file]
+            zfiles[which_file] = zfiles[0]
+            zfiles[0] = this_file
 
         return folder, zfiles
 
@@ -3052,7 +3045,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # start emulator:
 
         # TODO give option for no PIPEs and/or os.exec
-        # or is id pd.dialog? test
+        # or is id progress_dialog.dialog? test
         if 'demul' in params[0] or self.actset['swl_name'] == 'dc':
             # no mem prob due to excessive std* logs
             proc = subprocess.Popen(params, cwd=path)
@@ -3108,30 +3101,27 @@ class UMSA(xbmcgui.WindowXMLDialog):
         else:
             notif = None
 
-        # show emulator output if we have an error
+        # show emulator output if we have an error as tab in TEXTLIST
         if proc.returncode != 0:
 
             xbmc.log("UMSA run_emulator: returncode not 0, creating error msg")
-            # errors go to TEXTLIST
-            x = True
+            no_emu_out = True
 
             # check if item already exists
             for i in range(0, self.getControl(TEXTLIST).size()):
-                y = self.getControl(TEXTLIST).getListItem(i)
-                if y.getLabel() == 'Emulator output':
-                    x = False
+                if self.getControl(TEXTLIST).getListItem(i).getLabel() == 'Emulator output':
+                    no_emu_out = False
                     break
             # not: then create
-            if x and (out or err):
-                y = xbmcgui.ListItem()
-                y.setLabel('Emulator output')
-                self.getControl(TEXTLIST).addItem(y)
+            if no_emu_out and (out or err):
+                emu_out_item = xbmcgui.ListItem()
+                emu_out_item.setLabel('Emulator output')
+                self.getControl(TEXTLIST).addItem(emu_out_item)
 
             # when we have output
             if out or err:
-                y.setProperty(
-                    'text',
-                    'cmd: {0}\nerr {1}: {2}\nout: {3}'.format(
+                emu_out_item.setProperty(
+                    'text', 'cmd: {0}\nerr {1}: {2}\nout: {3}'.format(
                         ' '.join(params), proc.returncode, err, out
                     )
                 )
@@ -3181,8 +3171,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     if not os.path.isdir(set_dir):
                         # create set_name dir
                         os.mkdir(set_dir)
-                        # mv all files
 
+                    # move all files
                     # get all files (machine_name), iterate over
                     for snap_file in os.listdir(original_dir):
                         # while file exists in swl_name
@@ -3200,11 +3190,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
                     # remove original set and machine dir
                     os.rmdir(original_dir)
-                    os.rmdir(
-                        os.path.join(
-                            self.mame_ini['snapshot_directory'], self.actset['machine_name']
-                        )
-                    )
+                    try:
+                        os.rmdir(os.path.join(
+                            self.mame_ini['snapshot_directory'], self.actset['machine_name']))
+                    except OSError:
+                        xbmc.log("UMSA run_emulator: move snaps, not empty: {}".format(
+                            os.path.join(
+                                self.mame_ini['snapshot_directory'], self.actset['machine_name'])))
 
             # update local snapshots
             xbmc.sleep(100)

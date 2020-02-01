@@ -74,18 +74,19 @@ def search(short_name='', long_name='', version=''):
     # cadashs (Cadash (Spain, version 1)) #1st : 116155 Jarl (100%)
     info = re.findall(r'<LI>\n(.*?) \((.*)\) (#.*?) : (.*?) (.*?) \((.*)\)\n', t_dl)
 
-    # TODO: rework and make dict not list
+    # TODO: rework and make dict not list for return
     ret = []
+    # we need range number for dl_ver
     for i in range(0, len(info)):
-        # setname can contain *set or set-*
-        x = info[i][0]
-        if x[0] == '*':
-            x = x[1:]
-        z = x.find('-')
-        if z > 0:
-            x = x[:z]
+        set_name = info[i][0]
+        # set_name can contain *set or set-*, remove them
+        if set_name[0] == '*':
+            set_name = set_name[1:]
+        find_dash = set_name.find('-')
+        if find_dash > 0:
+            set_name = set_name[:find_dash]
 
-        ret.append([x] + list(info[i]) + list(dl_ver[i]))
+        ret.append([set_name] + list(info[i]) + list(dl_ver[i]))
 
     # full list so it can be presented by umsa
     return ret
