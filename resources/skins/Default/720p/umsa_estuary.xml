@@ -22,7 +22,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <height>720</height>
             <texture>backg.png</texture>
         </control>
-        
+
         <!-- list for big right image -->
         <control type="wraplist" id="2233">
             <posx>595</posx>
@@ -31,7 +31,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <height>18</height>
             <!-- <visible>!Player.HasVideo</visible> -->
             <viewtype>list</viewtype>
-            <autoscroll delay="200" time="5000" repeat="200">true</autoscroll> 
+            <autoscroll delay="200" time="5000" repeat="200">true</autoscroll>
             <itemlayout></itemlayout>
             <focusedlayout>
                 <control type="label">
@@ -47,7 +47,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
                 </control>
             </focusedlayout>
         </control>
-        
+
         <!-- big right multi image TODO fallback pics, see http://kodi.tv/new-multiimage-control-code-allows-background-loading/ -->
         <control type="multiimage" id="2232">
             <animation condition="Player.HasVideo" type="Conditional">
@@ -141,11 +141,10 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <texture>arrow.png</texture>
             <visible>Control.HasFocus(4033)</visible>
         </control>
-        
+
         <!-- Software name -->
-        <!-- <control type="Label" id="4000"> -->
         <control type="Button" id="4000">
-            <onup>4901</onup>
+            <onup>4033</onup>
             <ondown>4005</ondown>
             <posx>40</posx>
             <posy>0</posy>
@@ -167,7 +166,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <font>font-19</font>
         </control>
 
-        <!-- System name -->
+        <!-- machine name -->
         <control type="Label" id="4002">
             <posx>45</posx>
             <posy>67</posy>
@@ -179,7 +178,6 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
         </control>
 
         <!-- List of Sets -->
-        <!-- TODO: make with flag images -->
         <control type="list" id="4003">
             <onup>4005</onup>
             <ondown>4033</ondown>
@@ -224,7 +222,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <height>94</height>
             <visible>true</visible>
         </control>
-        
+
         <control type="Image" id="4210">
             <posx>528</posx>
             <posy>106</posy>
@@ -297,9 +295,38 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
 
         <!-- left side bottom: snap, title textbox for info -->
 
+        <!-- series, media, compilation info on left side -->
+        <control type="Label" id="2301">
+            <posx>5</posx>
+            <posy>240</posy>
+            <width>15</width>
+            <height>15</height>
+            <label>S</label>
+            <textcolor>FF00FF00</textcolor>
+            <font>font-17</font>
+        </control>
+        <control type="Label" id="2302">
+            <posx>5</posx>
+            <posy>255</posy>
+            <width>15</width>
+            <height>15</height>
+            <label>C</label>
+            <textcolor>FF00FF00</textcolor>
+            <font>font-17</font>
+        </control>
+        <control type="Label" id="2303">
+            <posx>5</posx>
+            <posy>270</posy>
+            <width>15</width>
+            <height>15</height>
+            <label>M</label>
+            <textcolor>FF00FF00</textcolor>
+            <font>font-17</font>
+        </control>
+
         <!-- Multiimage Solution: List with autoscroll
              and with this also a Label for the Multiimage is possible ((: -->
-        
+
         <!-- snapshot image horizontal 4:3 -->
         <control type="image" id="2222">
             <posx>50</posx>
@@ -395,7 +422,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
                 </control>
             </focusedlayout>
         </control>
-        
+
         <control type="textbox" id="2003">
             <description>history</description>
             <posx>20</posx>
@@ -408,7 +435,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <autoscroll delay="4200" time="2600" repeat="7000"></autoscroll>
             <label>$INFO[Container(4033).ListItem.Property(text)]</label>
         </control>
-        
+
         <!-- video window and title label -->
         <control type="videowindow" id="2004">
             <description>VIDEO WINDOW FOR VIDEOSNAP</description>
@@ -420,7 +447,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <visible>Player.HasVideo</visible>
             <aspectratio>stretch</aspectratio>
         </control>
-        
+
         <control type="Label" id="2005">
             <description>VIDEO INFO LABEL</description>
             <!-- <animation effect="fade" start="20" time="1000" pulse="true" condition="Player.HasVideo">Conditional</animation> -->
@@ -434,10 +461,10 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <label>$INFO[VideoPlayer.Title]</label>
             <font>font10</font>
         </control>
-        
+
         <!-- Game list for all -->
         <control type="group" id="407">
-            
+
             <control type="image" id="4107">
                 <description>filter background image</description>
                 <posx>400</posx>
@@ -560,7 +587,6 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <control type="fixedlist" id="4007">
                 <description>games list</description>
                 <visible allowhiddenfocus="true">ControlGroup(407).HasFocus</visible>
-                <onleft>4902</onleft>
                 <onright>4118</onright>
                 <posx>380</posx>
                 <posy>100</posy>
@@ -633,7 +659,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
                     </control>
                 </focusedlayout>
             </control>
-            
+
             <control type="textbox" id="4114">
                 <description>info text</description>
                 <posx>420</posx>
@@ -645,7 +671,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
                 <visible>ControlGroup(407).HasFocus</visible>
                 <label>$INFO[Container(4007).ListItem.Property(text)]</label>
             </control>
-            
+
             <control type="image" id="4115">
                 <description>snap</description>
                 <posx>1030</posx>
@@ -655,29 +681,28 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
                 <visible>ControlGroup(407).HasFocus</visible>
                 <texture>$INFO[Container(4007).ListItem.Icon]</texture>
             </control>
-            
+
             <control type="image">
                 <description>sub gamelist bg</description>
                 <animation effect="slide" end="0,-500" delay="0" time="400" tween="quadratic" easing="out" condition="Control.HasFocus(4902)">Conditional</animation>
                 <animation effect="slide" end="0,500" delay="0" time="400" tween="quadratic" easing="out" condition="!Control.HasFocus(4902)">Conditional</animation>
-                <posx>300</posx>
-                <posy>1000</posy>
-                <width>200</width>
-                <height>280</height>
+                <posx>180</posx>
+                <posy>865</posy>
+                <width>220</width>
+                <height>310</height>
                 <texture>popup.png</texture>
                 <visible>Control.HasFocus(4902)</visible>
                 <colordiffuse>FFFFFFFF</colordiffuse>
             </control>
-            
+
             <control type="list" id="4902">
                 <description>sub gamelist menu</description>
                 <animation effect="slide" end="0,-500" delay="0" time="400" tween="quadratic" easing="out" condition="Control.HasFocus(4902)">Conditional</animation>
                 <animation effect="slide" end="0,500" delay="0" time="400" tween="quadratic" easing="out" condition="!Control.HasFocus(4902)">Conditional</animation>
-                <onleft>4000</onleft>
-                <posx>300</posx>
-                <posy>1000</posy>
-                <width>200</width>
-                <height>280</height>
+                <posx>180</posx>
+                <posy>865</posy>
+                <width>220</width>
+                <height>310</height>
                 <visible>true</visible>
                 <orientation>vertical</orientation>
                 <itemlayout width="300" height="30">
@@ -704,9 +729,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
                     </control>
                 </focusedlayout>
             </control>
-            
         </control>
-        
 
         <!-- Filter Window with 3 vertical lists,
          1   filter categories (swl and cat),
@@ -810,7 +833,6 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             <control type="list" id="4008">
                 <description>filter category list</description>
                 <visible allowhiddenfocus="true">ControlGroup(408).HasFocus</visible>
-                <onleft>4000</onleft>
                 <onright>4088</onright>
                 <posx>300</posx>
                 <posy>100</posy>
@@ -941,13 +963,13 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
                 </focusedlayout>
             </control>
         </control>
-        
+
         <control type="group" id="490">
             <posx>-300</posx>
             <posy>300</posy>
             <animation effect="slide" end="300,0" delay="0" time="400" tween="quadratic" easing="out" condition="ControlGroup(490).HasFocus">Conditional</animation>
             <animation effect="slide" end="-300,0" delay="0" time="400" tween="quadratic" easing="out" condition="!ControlGroup(490).HasFocus">Conditional</animation>
-            
+
             <control type="image">
                 <animation effect="zoom" start="0,0,0,0" end="0,0,300,350" time="400" tween="quadratic" easing="out" condition="ControlGroup(490).HasFocus">Conditional</animation>
                 <description>filter background image</description>
@@ -960,7 +982,6 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
             </control>
             <control type="list" id="4901">
                 <description>main menu</description>
-                <onleft>4000</onleft>
                 <posx>0</posx>
                 <posy>0</posy>
                 <width>300</width>
@@ -991,7 +1012,7 @@ cat umsa_estuary.xml | sed 's/font10/font-15c/' | sed 's/font37/font-28/' > umsa
                 </focusedlayout>
             </control>
         </control>
-            
+
         <!-- 2 bottom labels for status text and music info -->
         <control type="label" id="4100">
             <description>music info</description>

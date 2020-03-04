@@ -40,11 +40,11 @@ msgid "2nd Artwork path"
 msgstr ""
 
 msgctxt "#30202"
-msgid "Dat files path"
+msgid "Support files path"
 msgstr ""
 
 msgctxt "#30251"
-msgid "AspectRatio of Screen"
+msgid "AspectRatio of your screen"
 msgstr ""
 
 msgctxt "#30252"
@@ -64,7 +64,7 @@ msgid "PDF Viewer for Manuals"
 msgstr ""
 
 msgctxt "#30256"
-msgid "CHDMAN (for converting chd to cue/bin)"
+msgid "CHDMAN (for converting chd files)"
 msgstr ""
 
 msgctxt "#31000"
@@ -72,11 +72,15 @@ msgid "Misc"
 msgstr ""
 
 msgctxt "#31013"
-msgid "Use PIL library (for image detection)"
+msgid "Emulation start"
 msgstr ""
 
 msgctxt "#31014"
-msgid "Delete DB files"
+msgid "Delete UMSA database"
+msgstr ""
+
+msgctxt "#31015"
+msgid "Delete status database"
 msgstr ""
 
 msgctxt "#32000"

@@ -16,11 +16,12 @@
     </category>
     <category label="31000">
         <setting id="pref_country" type="select" label="30253" values="Euro|USA|Japan" />
-        <setting id="playvideo" type="bool" label="30254" default="false" />
-        <setting id="pil" type="bool" label="31013" default="false" />
-        <setting id="deldb" type="action" label="31014" action="RunScript(special://home/addons/script.umsa.mame.surfer/deldb.py)" />
+        <setting id="play_video" type="bool" label="30254" default="false" />
+        <setting id="emulation_start" type="select" label="31013" values="Normal|Watch|Fallback" default="Normal" />
+        <setting id="delete_database" type="action" label="31014" action="RunScript(special://home/addons/script.umsa.mame.surfer/addon.py,del_db)" />
+        <setting id="delete_status" type="action" label="31015" action="RunScript(special://home/addons/script.umsa.mame.surfer/addon.py,del_status)" />
     </category>
     <category label="32000">
-        <setting id="ssaver" type="select" label="32010" values="Random|Videos|Snaps" default="Random" />
+        <setting id="ssaver_type" type="select" label="32010" values="Random|Videos|Snaps" default="Random" />
     </category>
 </settings>

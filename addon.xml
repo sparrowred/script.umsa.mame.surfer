@@ -3,7 +3,7 @@
   <requires>
     <import addon="xbmc.python" version="2.25.0"/>
   </requires>
-  <extension point="xbmc.python.script" library="default.py">
+  <extension point="xbmc.python.script" library="addon.py">
     <provides>game</provides>
   </extension>
   <extension point="xbmc.addon.metadata">
@@ -19,9 +19,11 @@ Thanks to MAMEdev, all support and artwork file authors especially AntoPisa, Kod
     <license>GPL 3.0</license>
     <source>https://github.com/sparrowred/script.umsa.mame.surfer</source>
     <assets>
-      <icon>icon.png</icon>
-      <fanart>fanart.jpg</fanart>
-      <screenshot>screenshot.png</screenshot>
+      <icon>resources/icon.png</icon>
+      <fanart>resources/fanart.jpg</fanart>
+      <screenshot>resources/screenshot1.png</screenshot>
+      <screenshot>resources/screenshot2.png</screenshot>
+      <screenshot>resources/screenshot3.png</screenshot>
     </assets>
   </extension>
 </addon>

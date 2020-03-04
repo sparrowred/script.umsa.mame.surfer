@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-""" Utilities for UMSA
+"""Utilities for UMSA
 
-    - parse mame.ini
-    - load last screensaver list
-    - load/save filters
-    - load/save last games viewed
+ - parse mame.ini
+ - load last screensaver list
+ - load/save filters
+ - load/save last games viewed
 
-    TODO:
-    - filter categories need to come from parent? """
+TODO the list for filter categories need to come from importer
+"""
 
 import os
 from io import open
@@ -82,11 +82,18 @@ def save_filter(settings_folder, filter_file, filter_lists):
     except IOError:
         pass
     if fobj:
-        fobj.write(','.join(filter_lists['Softwarelists'])+'\n')
-        fobj.write(','.join(filter_lists['Game Categories'])+'\n')
-        fobj.write(','.join(filter_lists['Machine Categories'])+'\n')
-        fobj.write(','.join(filter_lists['Years'])+'\n')
-        fobj.write(','.join(filter_lists['Players'])+'\n')
+        # PY2: remove encode and decode for py3 only
+        fobj.write(','.join(
+            [str(x) for x in filter_lists['Softwarelists']]).encode('utf-8').decode('utf-8')+'\n')
+        fobj.write(','.join(
+            [str(x) for x in filter_lists['Game Categories']]).encode('utf-8').decode('utf-8')+'\n')
+        fobj.write(','.join(
+            [str(x) for x in filter_lists[
+                'Machine Categories']]).encode('utf-8').decode('utf-8')+'\n')
+        fobj.write(','.join(
+            [str(x) for x in filter_lists['Years']]).encode('utf-8').decode('utf-8')+'\n')
+        fobj.write(','.join(
+            [str(x) for x in filter_lists['Players']]).encode('utf-8').decode('utf-8')+'\n')
         fobj.close()
 
 def load_lastsaver(settings_folder):
@@ -132,7 +139,7 @@ def save_software_list(settings_folder, filename, software_list):
 
     if fobj:
         fobj.write(
-            # PY2: remove encode,decode for py3 only
+            # PY2: remove encode and decode for py3 only
             ','.join([str(x) for x in software_list]).encode('utf-8').decode('utf-8')
         )
         fobj.close()
