@@ -43,6 +43,18 @@ msgctxt "#30202"
 msgid "Support files path"
 msgstr ""
 
+msgctxt "#30204"
+msgid "eXoDOS path"
+msgstr ""
+
+msgctxt "#30205"
+msgid "GameBase64 path"
+msgstr ""
+
+msgctxt "#30206"
+msgid "WHDLoad path"
+msgstr ""
+
 msgctxt "#30251"
 msgid "AspectRatio of your screen"
 msgstr ""
@@ -67,6 +79,10 @@ msgctxt "#30256"
 msgid "CHDMAN (for converting chd files)"
 msgstr ""
 
+msgctxt "#30257"
+msgid "Terminal (for Fallback Emulation start)"
+msgstr ""
+
 msgctxt "#31000"
 msgid "Misc"
 msgstr ""
@@ -84,9 +100,73 @@ msgid "Delete status database"
 msgstr ""
 
 msgctxt "#32000"
-msgid "ScreenSaver"
+msgid "Screensaver"
+msgstr ""
+
+msgctxt "#33000"
+msgid "Outside MAME"
 msgstr ""
 
 msgctxt "#32010"
 msgid "Show"
+msgstr ""
+
+msgctxt "#30054"
+msgid "Titles - Rows to show: between"
+msgstr ""
+
+msgctxt "#30055"
+msgid "and"
+msgstr ""
+
+msgctxt "#30066"
+msgid "Snaps - Rows to show: between"
+msgstr ""
+
+msgctxt "#30056"
+msgid "Show game info"
+msgstr ""
+
+msgctxt "#30058"
+msgid "Videos"
+msgstr ""
+
+msgctxt "#30059"
+msgid "Wall"
+msgstr ""
+
+msgctxt "#30065"
+msgid "Slide"
+msgstr ""
+
+msgctxt "#30068"
+msgid "Crossover"
+msgstr ""
+
+msgctxt "#30060"
+msgid "Random"
+msgstr ""
+
+msgctxt "#30067"
+msgid "Modes:"
+msgstr ""
+
+msgctxt "#30061"
+msgid "Show music info"
+msgstr ""
+
+msgctxt "#30062"
+msgid "Wall Options:"
+msgstr ""
+
+msgctxt "#30063"
+msgid "Snaps or Titles?"
+msgstr ""
+
+msgctxt "#30064"
+msgid "How much free tiles?"
+msgstr ""
+
+msgctxt "#30010"
+msgid "Amount of seconds to display each image"
 msgstr ""

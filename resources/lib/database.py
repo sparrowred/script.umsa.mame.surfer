@@ -1,23 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Module for umsa.info sqlite3 database
+"""Module for umsa.info sqlite3 database.
 
 TODO
- - remove usage of detail, use tools.split_gamename
+ - move utilities here: begin with filter: needed for screensaver
+ - remove usage of detail, use split_gamename
  - optimize logic for filters
- - move scanning to tools
- - get rid of xbmc dependency
+ - move artwork scanning to tools
 """
 
 import os
 import time
-import sqlite3
-from sys import version_info
-import xbmc
-import xbmcvfs
-from tools import scan_dat
-
-if version_info < (3, 0):
-    from codecs import open as codecs_open
+import sqlite3 # connect, Row, OperationalError
+from re import search, findall
+import xbmc # TODO remove, only log usage
+import xbmcvfs # TODO remove, only listdir usage
+from support import scan_dat, scan_history, scan_exodos, scan_gb64_nfo
 
 # new db for pics
 # listdir recursive for progetto
@@ -44,23 +41,60 @@ COUNTRIES = {
     #'uk', 'ger', 'fra', 'spa', 'ita', 'ned', 'aus'],
 }
 
+def split_gamename(complete_name):
+    """Split the complete name of a MAME description into the name and details plus version.
+
+    Return: gamename, detail
+
+    TODO
+    - only save complete mame set name and split when needed (not here)
+      ^ can remove 2 columns from maston_variant db table (2 or 1?)
+    - make util function for web and kodi add-on
+    """
+
+    gamename, detail, details = '', '', []
+    # dont be greedy, exlucde ( from detail
+    for name, detail in findall(r'(.*?) (\([^(]*?\))', complete_name):
+        gamename += name.strip()
+        details.append(detail[1:-1]) # remove ()
+    detail = ', '.join(details)
+    # check as above does not match when () is missing
+    if not gamename:
+        gamename = complete_name
+
+    # TODO rework finding version in gamename
+    # might need version finding without v or V
+    # find versions like 1.1 at the end of gamename
+    version = search(r'([vV]\d+\.\d+)', gamename)
+    if version:
+        if not detail:
+            detail = version.group()
+        else:
+            detail = '{} {}'.format(version.group(), detail)
+
+    return gamename, detail
+
 class DBMod:
     """Database class for umsa.info sqlite3 database"""
 
-    def __init__(self, db_path, filter_lists=None, pref_country='US'):
+    def __init__(self, db_path, nonmame=None, filter_lists=None, pref_country='US'):
 
+        self.nonmame = nonmame
         self.pref_country = pref_country
         self.use_filter = True
         self.order = 'name'
         self.scan_perc = 0
         self.scan_what = 'nothing'
+        self.scan_status = True
         self.join = ''
         self.where = ''
+        if not filter_lists:
+            filter_lists = {}
 
         # connect to umsa db
         self.gdb = sqlite3.connect(os.path.join(db_path, "umsa.db"))
         self.gdb.row_factory = sqlite3.Row
-        self.gdb.text_factory = str # PY2
+        #self.gdb.text_factory = str # PY2
         self.gdbc = self.gdb.cursor()
 
         # sanity
@@ -71,12 +105,11 @@ class DBMod:
         # connect to status db
         self.sdb = sqlite3.connect(os.path.join(db_path, "status.db"))
         self.sdb.row_factory = sqlite3.Row
-        self.sdb.text_factory = str # PY2
+        #self.sdb.text_factory = str # PY2
         self.sdbc = self.sdb.cursor()
 
         # defines filter with self.filter_tables, self.filter_where
-        if filter_lists:
-            self.define_filter(filter_lists)
+        self.define_filter(filter_lists)
 
         # create db layout (first run)
         self.sdbc.execute(
@@ -145,7 +178,7 @@ class DBMod:
         # connect to umsa db
         self.gdb = sqlite3.connect(os.path.join(db_path, "umsa.db"))
         self.gdb.row_factory = sqlite3.Row
-        self.gdb.text_factory = str # PY2
+        #self.gdb.text_factory = str # PY2
         self.gdbc = self.gdb.cursor()
 
         # creat additonal tables
@@ -191,16 +224,24 @@ class DBMod:
     def create_art_tables(self, db_cursor):
         """create art tables"""
 
+        # TODO for exo,gb64,whd,+
+        # change path to complete path from base incl filename
+        # when empty use progettosnaps
+        # TODO add options to scan gb64 or exodos seperatly
+        # - only delete other tables when rebuilding mame dat or art
+
         # id = sets.id
         # type = videosnap, cover, snap, titles, ...
         # path = 0 = progettosnaps, 1 = other
+        # filename = complete filename for nonmame
         db_cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS art_set(
                 id          INTEGER,
                 type        VARCHAR(20),
                 extension   VARCHAR(10),
-                path        BOOLEAN
+                path        BOOLEAN,
+                filename    TEXT
             )
             """
         )
@@ -209,6 +250,70 @@ class DBMod:
         """close database"""
         self.gdb.close()
         #self.sdb.close()
+
+    def scan_gb64_to_db(self, empty, db_path):
+        """Read GameBase64 info from zip and artwork."""
+
+        gb64_sets = {}
+        gb64_name = {}
+
+        # connect to db
+        db_conn = sqlite3.connect(os.path.join(db_path, "umsa.db"))
+        dbc = db_conn.cursor()
+
+        dbc.execute("SELECT sets.id, sets.name, sets.gamename \
+                     FROM sets JOIN swl ON sets.swllink_id=swl.id \
+                     WHERE swl.name LIKE 'gb64_%'")
+        for i in dbc.fetchall():
+            gb64_sets[i[1]] = i[0]
+            # TODO hack, only first id
+            if i[2] not in gb64_name:
+                gb64_name[i[2]] = i[0]
+        db_conn.close()
+
+        # connect to db
+        db_conn3 = sqlite3.connect(os.path.join(db_path, "dat.db"))
+        dbc = db_conn3.cursor()
+        db_conn2 = sqlite3.connect(os.path.join(db_path, "artwork.db"))
+        abc = db_conn2.cursor()
+        scan_gb64_nfo(gb64_sets, gb64_name, self.nonmame['gb64'], dbc, abc, self)
+        db_conn3.commit()
+        db_conn3.close()
+        db_conn2.commit()
+        db_conn2.close()
+        self.scan_status = False
+
+    def scan_exodos_to_db(self, empty, db_path):
+        """Read eXoDOS xml and artwork."""
+
+        exodos_sets = {}
+        exodos_sets_names = {}
+
+        # connect to db
+        db_conn = sqlite3.connect(os.path.join(db_path, "umsa.db"))
+        #db_conn.text_factory = str # PY2
+        dbc = db_conn.cursor()
+
+        dbc.execute("SELECT sets.id, sets.gamename, sets.name \
+                     FROM sets JOIN swl ON sets.swllink_id=swl.id \
+                     WHERE swl.name = 'exodos'")
+        for i in dbc.fetchall():
+            exodos_sets_names[i[2]] = i[0]
+            exodos_sets[i[1].replace(':','_').replace('\'','_').replace('?','_').lower()] = i[0]
+        db_conn.close()
+        # connect to db
+        db_conn3 = sqlite3.connect(os.path.join(db_path, "dat.db"))
+        dbc = db_conn3.cursor()
+        db_conn2 = sqlite3.connect(os.path.join(db_path, "artwork.db"))
+        abc = db_conn2.cursor()
+
+        scan_exodos(self.nonmame['exodos'],
+                    exodos_sets, exodos_sets_names, dbc, abc, self)
+        db_conn3.commit()
+        db_conn3.close()
+        db_conn2.commit()
+        db_conn2.close()
+        self.scan_status = False
 
     def scan_dats(self, datdir, db_path):
         """Read all MAME dat files from a directory
@@ -227,7 +332,7 @@ class DBMod:
         self.scan_what = 'files'
         # connect to db
         db_conn = sqlite3.connect(os.path.join(db_path, "dat.db"))
-        db_conn.text_factory = str # PY2
+        #db_conn.text_factory = str # PY2
         dbc = db_conn.cursor()
 
         # create tables for first run
@@ -235,6 +340,7 @@ class DBMod:
         db_conn.commit()
 
         # clean table
+        # TODO except exodos, gb64*
         dbc.execute("DELETE FROM dat")
         dbc.execute("DELETE FROM dat_set")
         db_conn.commit()
@@ -257,30 +363,25 @@ class DBMod:
         files_in_datdir = os.listdir(datdir)
         count = 1.0
         for datfile in files_in_datdir:
-            if datfile[-4:] != '.dat':
-                continue
-            # PY2: remove codecs.open part
-            if version_info < (3, 0):
-                try:
-                    fobj = codecs_open(os.path.join(datdir, datfile), 'r')
-                except IOError:
-                    fobj = False
-            else:
-                try:
-                    fobj = open(
-                        os.path.join(datdir, datfile), 'r', encoding='utf-8', errors='ignore'
-                    )
-                except IOError:
-                    fobj = False
+            try:
+                fobj = open(
+                    os.path.join(datdir, datfile), 'r', encoding='utf-8', errors='ignore'
+                )
+            except IOError:
+                fobj = False
             if fobj:
                 self.scan_what = datfile
                 self.scan_perc = int(count/len(files_in_datdir)*100)
 
-                scan_dat(fobj, all_sets, datfile, dbc)
+                if datfile == 'history.xml':
+                    scan_history(fobj.read(), all_sets, dbc)
+                else:
+                    scan_dat(fobj, all_sets, datfile, dbc)
                 db_conn.commit()
                 fobj.close()
             count += 1
         db_conn.close()
+        self.scan_status = False
 
     def add_dat_to_db(self, db_path):
         """add dat to database"""
@@ -302,14 +403,61 @@ class DBMod:
         gdb.close()
 
     def scan_artwork(self, paths, db_path):
-        """scan artwork"""
+        """ Scan paths for artwork files and more.
 
-        # create list with all swls from path
-        # and save types of artwork in them
-        # [{swl : {cab, fly, cov, snap}},]
-        # get all set names with ids from db for swl
-        # listdir for all types of given swl
-        # save in db
+        TODO: split out to support.py, see scan_dat with dbc
+
+        TODO:
+        - support zip
+        - support different dir structs
+
+        old:
+        TODO check pleasuredome dir struct
+        TODO check how mame does it
+        /type/type/set.png
+        /type/type.zip/set.png
+        /type/swl/set.png
+        /type/swl.zip/set.png
+
+        new:
+        /swl/set/type.png
+        /swl/set.zip/type.png
+        /type.zip/set.png
+
+        - support extension: png,jpg,pdf,txt,ips,bps
+        - types: snap,title,+ ,manual,maps,patch
+          - mame: flyer,cabinet,cpanel,artpreview,marquee,pcb
+          - swl : cover,media
+
+        flow:
+        - get all swls
+        - get dirs/zips in path/ so ignore non *.zip files in path/
+          dirs, files = xbmcvfs.listdir(path)
+        - if dir/zip = swl:
+            get sets for swl
+            get dirs/zips
+            if set = dir/zip:
+                get files and save with file = type, dir = set
+        - else assume dir = type
+            get dirs/zips
+            if swl:
+                get sets for swl
+                get files
+                if set = file: save with dir = type, file = set
+            else:
+                get mame sets
+                get files
+                if set = file: save
+
+
+
+        create list with all swls from path
+        and save types of artwork in them
+        [{swl : {cab, fly, cov, snap}},]
+        get all set names with ids from db for swl
+        listdir for all types of given swl
+        save in db
+        """
 
         # connect to db
         db_conn = sqlite3.connect(os.path.join(db_path, "artwork.db"))
@@ -332,6 +480,7 @@ class DBMod:
         c_dirs = 0
         first_path = True # only 2 paths allowed
         for path in paths:
+            # scan all art types
             for art_type in xbmcvfs.listdir(path)[0]:
                 c_dirs += 1
                 for swl in xbmcvfs.listdir(os.path.join(path, art_type))[0]:
@@ -372,7 +521,6 @@ class DBMod:
                     if art_type == 'icons':
                         continue
                     self.scan_what = "{0}/{1}".format(swl, art_type)
-                    # TODO remove xbmcvfs
                     if swl == 'mame':
                         files = xbmcvfs.listdir(
                             os.path.join(path, art_type, art_type))[1]
@@ -406,8 +554,7 @@ class DBMod:
 
         db_conn.close()
         gdb.close()
-        self.scan_what = "done"
-        self.scan_perc = 100
+        self.scan_status = False
 
     def add_art_to_db(self, db_path):
         """add artwork to database
@@ -458,7 +605,7 @@ class DBMod:
         """get artwork for a list of sets"""
 
         self.gdbc.execute(
-            "SELECT id, type, extension, path FROM art_set WHERE id in ({})".format(
+            "SELECT id, type, extension, path, filename FROM art_set WHERE id in ({})".format(
                 ','.join(set_ids)
             )
         )
@@ -469,7 +616,7 @@ class DBMod:
             if i['id'] not in art_set:
                 art_set[i['id']] = []
             art_set[i['id']].append(
-                {'type': i['type'], 'extension': i['extension'], 'path': i['path']})
+                {'type': i['type'], 'extension': i['extension'], 'path': i['path'], 'filename': i['filename']})
         return art_set
 
     def get_dat_for_set(self, set_id):
@@ -517,6 +664,14 @@ class DBMod:
     def get_random_art(self, art_types):
         """Get 1 random artwork
 
+        TODO
+        - check where get_random_art is used and if machine, left is always needed
+           if not make optional
+        - get machine pic, see screensaver/get_machine_pic
+        - get bottom left, type video/snap/title = cover/flyer
+                           type cover/flyer = snap
+          needs fetch info for snap from db for aspect ratio
+
         Takes a list of artwork types
         Returns a dictonary with informations or None if nothing is found
         """
@@ -526,7 +681,8 @@ class DBMod:
 
         # get with filter if on
         if self.use_filter:
-            statement = "SELECT sets.id, art_set.extension, art_set.path, art_set.type \
+            # TODO: doesnt work when filter = everything but filter = on
+            statement = "SELECT sets.id, art_set.extension, art_set.path, art_set.type, art_set.filename \
                          FROM art_set JOIN sets ON sets.id = art_set.id {} \
                          WHERE type IN ({}) AND {} \
                          ORDER BY RANDOM() LIMIT 1".format(
@@ -537,7 +693,7 @@ class DBMod:
             rand_art = self.gdbc.fetchone()
         # and without filter if we haven't found anything
         if not rand_art:
-            statement = "SELECT sets.id, art_set.extension, art_set.path, art_set.type \
+            statement = "SELECT sets.id, art_set.extension, art_set.path, art_set.type, art_set.filename \
                         FROM art_set JOIN sets ON sets.id = art_set.id \
                         WHERE type IN ({}) \
                         ORDER BY RANDOM() LIMIT 1".format("'"+"','".join(art_types)+"'")
@@ -550,9 +706,9 @@ class DBMod:
 
         # get needed infos
         self.gdbc.execute(
-            "SELECT sets.name, swl.name as swl, gamename, \
+            "SELECT sets.name, swl.name as swl_name, gamename, \
                     year.name as year, maker.name as maker, softwarelink_id as s_id, \
-                    swl.system_id as swl_system_id, cat.name as cat \
+                    swl.system_id as swl_system_id, cat.name as category, cat.flag as is_machine \
              FROM sets, swl, year, maker, category cat \
              WHERE sets.id = ? \
              AND sets.year_id = year.id AND sets.publisher_id = maker.id \
@@ -561,10 +717,12 @@ class DBMod:
         )
         art_info = self.gdbc.fetchone()
         end_result.update(art_info)
+        end_result.update(
+            {'machine_name': self.get_machine_name(end_result['swl_system_id'])[0]})
 
         # snap/title: get display
         if 'snap' in art_types or 'titles' in art_types:
-            if end_result['swl'] == 'mame':
+            if end_result['swl_name'] == 'mame':
                 machine = rand_art['id']
             else:
                 machine = end_result['swl_system_id']
@@ -577,7 +735,39 @@ class DBMod:
         else:
             end_result.update({'display_rotation': 0, 'display_type': ''})
 
+        # get left pic if swl is nonmame
+        if (end_result['swl_name'] == 'exodos') or (end_result['swl_name'][:5] == 'gb64_'):
+            if end_result['type'] in ('snap', 'titles', 'videosnaps'):
+                lefttype = 'covers'
+            else:
+                lefttype = 'snap'
+            self.gdbc.execute(
+                "SELECT art_set.filename \
+                FROM art_set WHERE art_set.id = ? AND type = ?",
+                (rand_art['id'],lefttype)
+            )
+            leftpic = self.gdbc.fetchone()
+            if leftpic:
+                end_result.update({'left_pic': leftpic['filename']})
+
         return end_result
+
+    def get_random_vgm(self, db_path):
+        """Return random vgm entry from sets."""
+
+        # connect to db
+        db_conn = sqlite3.connect(os.path.join(db_path, "umsa.db"))
+        #db_conn.text_factory = str # PY2
+        dbc = db_conn.cursor()
+
+        dbc.execute("SELECT id FROM swl WHERE name = 'vgmplay'")
+        vgmplay_swl_id = dbc.fetchone()[0]
+
+        dbc.execute("SELECT name, gamename FROM sets \
+            WHERE swllink_id = ? ORDER BY RANDOM() LIMIT 1", (vgmplay_swl_id,))
+        random_vgm = dbc.fetchone()
+
+        return {'name': random_vgm[0], 'gamename': random_vgm[1]}
 
     def get_set_ids_for_software(self, software_id):
         """Return all set ids for given software id"""
@@ -683,20 +873,31 @@ class DBMod:
 
         return 0
 
-    def make_time_nice(self, timestamp):
-        """Return a nice time string from a timestamp"""
+    def make_time_nice(self, timestamp, now=None):
+        """Return hours and minutes as 1 string.
 
+        Parameters: timestamp
+        Optional: now = now-(Y-m-d H:M)
+        """
+
+        # TODO remove and test
         if not timestamp:
             return ""
-        minute = divmod(
-            int(time.time() - time.mktime(time.strptime(timestamp, "%Y-%m-%d %H:%M"))), 60
-        )[0]
+        if now:
+            minute = divmod(
+                int(time.time() - time.mktime(time.strptime(timestamp, "%Y-%m-%d %H:%M"))), 60
+            )[0]
+        else:
+            minute = divmod(int(timestamp), 60)[0]
         hour, minute = divmod(minute, 60)
         day, hour = divmod(hour, 24)
-        if day > 0:
+        year, day = divmod(day, 365)
+        if year > 0 and day > 0:
+            last_nice = "%dy %dd" % (year, day)
+        elif day > 0:
             last_nice = "%dd" % (day)
         elif hour == 0:
-            last_nice = "%dm" % (minute,)
+            last_nice = "%dm" % (minute)
         else:
             last_nice = "%d:%02dh" % (hour, minute)
         return last_nice
@@ -721,7 +922,7 @@ class DBMod:
             'time_played2'  : i[2],
             'play_count'    : i[3],
             'options'       : i[4],
-            'last_nice'     : self.make_time_nice(i[1]),
+            'last_nice'     : self.make_time_nice(i[1], now=True),
         }
         return status
 
@@ -902,7 +1103,7 @@ class DBMod:
         self.filter_join = []
         self.filter_where = []
         # swl
-        if filter_lists['Softwarelists']:
+        if 'Softwarelists' in filter_lists and filter_lists['Softwarelists']:
             self.gdbc.execute("SELECT COUNT(id) FROM swl")
             swl_count = self.gdbc.fetchone()[0]
             if swl_count > len(filter_lists['Softwarelists']):
@@ -912,7 +1113,8 @@ class DBMod:
             else:
                 xbmc.log("UMSA dbmod define_filter: all swls, no filter used")
         # game categories, machines
-        if filter_lists['Game Categories'] or filter_lists['Machine Categories']:
+        if (('Game Categories' in filter_lists and filter_lists['Game Categories']) or
+                ('Machine Categories' in filter_lists and filter_lists['Machine Categories'])):
             self.gdbc.execute("SELECT COUNT(id) FROM category")
             cat_count = self.gdbc.fetchone()[0]
             xbmc.log("UMSA filter categories {}, {}".format(
@@ -925,7 +1127,7 @@ class DBMod:
             else:
                 xbmc.log("UMSA dbmod define_filter: all categories, no filter used")
         # players
-        if filter_lists['Players']:
+        if 'Players' in filter_lists and filter_lists['Players']:
             self.gdbc.execute("SELECT COUNT(id) FROM nplayers")
             players_count = self.gdbc.fetchone()[0]
             xbmc.log("UMSA filter players {}, {}".format(
@@ -938,7 +1140,7 @@ class DBMod:
             else:
                 xbmc.log("UMSA dbmod define_filter: all players, no filter used")
         # years
-        if filter_lists['Years']:
+        if 'Years' in filter_lists and filter_lists['Years']:
             self.gdbc.execute("SELECT COUNT(id) FROM year")
             year_count = self.gdbc.fetchone()[0]
             if year_count > len(filter_lists['Years']):
@@ -1168,8 +1370,25 @@ class DBMod:
     def get_by_maker(self, maker, set_id):
         """Return list of software based on maker"""
 
+        # get parent if maker is clone
+        self.gdbc.execute("SELECT cloneof_id FROM maker WHERE maker.name = ?", (maker,))
+        cloneof_id = self.gdbc.fetchone()[0]
+        if not cloneof_id:
+            self.gdbc.execute("SELECT id FROM maker WHERE maker.name = ?", (maker,))
+            cloneof_id = self.gdbc.fetchone()[0]
+        # get all maker ids
+        all_maker_ids = []
+        if cloneof_id:
+            self.gdbc.execute("SELECT id FROM maker \
+                WHERE cloneof_id = ? OR id = ?", (cloneof_id, cloneof_id))
+            for i in self.gdbc.fetchall():
+                all_maker_ids.append(str(i['id']))
+        # set join and where
         self.join = 'JOIN maker ON maker.id = sets.publisher_id'
-        self.where = 'maker.name = "{}"'.format(maker)
+        if all_maker_ids:
+            self.where = 'maker.id IN ({})'.format(','.join(all_maker_ids))
+        else:
+            self.where = 'maker.name = "{}"'.format(maker)
         return self.execute_statement(set_id)
 
     def get_by_swl(self, swl_name, set_id):
@@ -1182,7 +1401,8 @@ class DBMod:
     def get_maker(self):
         """Return list of makers"""
 
-        self.gdbc.execute("SELECT name as id, name FROM maker ORDER BY name")
+        self.gdbc.execute("SELECT name as id, name FROM maker \
+            WHERE cloneof_id IS NULL ORDER BY name")
         return self.gdbc.fetchall()
 
     def get_swl(self):
@@ -1224,7 +1444,7 @@ class DBMod:
         # get status for sets
         self.sdbc.execute(
             "SELECT id, last_played, play_count, time_played FROM sets \
-             ORDER BY {} DESC LIMIT 100".format(order))
+             WHERE time_played > 0 ORDER BY {} DESC LIMIT 250".format(order))
         # get software info for sets from status.db
         for i in self.sdbc.fetchall():
             self.gdbc.execute(
@@ -1236,12 +1456,12 @@ class DBMod:
                  WHERE sets.id = ?", (i['id'],))
             software = self.gdbc.fetchone()
             # put in dict to summarize sets
-            if software['id'] in software_dict.keys():
+            if software and software['id'] in software_dict.keys():
                 software_dict[software['id']]["play_count"] += i['play_count']
                 software_dict[software['id']]["time_played"] += i['time_played']
                 if software_dict[software['id']]["last_played"] < i['last_played']:
                     software_dict[software['id']]["last_played"] = i['last_played']
-            else:
+            elif software:
                 software_dict[software['id']] = {
                     "time_played": i['time_played'],
                     "last_played": i['last_played'],
@@ -1258,7 +1478,7 @@ class DBMod:
             hour, minute = divmod(minute, 60)
             time_played = "%d:%02d" % (hour, minute)
 
-            last_nice = self.make_time_nice(status['last_played'])
+            last_nice = self.make_time_nice(status['last_played'], now=True)
 
             if order == "time_played":
                 last = '{}x, {}'.format(
@@ -1299,7 +1519,7 @@ class DBMod:
         return self.gdbc.fetchall()
 
     def get_disks(self, swl_name, set_name):
-        """Return first disk from a given set and softwarelist"""
+        """Return disks from a given set and softwarelist"""
 
         self.gdbc.execute(
             "SELECT sets.id FROM sets \
@@ -1501,7 +1721,7 @@ class DBMod:
 
         return self.gdbc.fetchall()
 
-    def search_single(self, search):
+    def search_single(self, my_search):
         """search single"""
 
         self.gdbc.execute(
@@ -1511,7 +1731,7 @@ class DBMod:
                 JOIN maker ON software.developer_id = maker.id \
                 JOIN sets ON software.id = sets.softwarelink_id \
              WHERE sets.gamename LIKE ? \
-             ORDER BY software.name LIMIT 1", (search+'%',))
+             ORDER BY software.name LIMIT 1", (my_search+'%',))
         return self.gdbc.fetchone()
 
     def get_artwork_by_software_id(self, software_id, artwork):
@@ -1527,12 +1747,20 @@ class DBMod:
 
         # get all machines
         all_machines = []
+        # get abbreviation
+        # TODO change sql to join and order by year.name
         self.gdbc.execute(
-            "SELECT gamename FROM sets WHERE sets.id IN \
-             ( SELECT DISTINCT system_id FROM swl, sets \
-               WHERE sets.softwarelink_id = ? AND sets.swllink_id = swl.id )",
+            "SELECT DISTINCT system_abbr FROM swl, sets \
+               WHERE sets.softwarelink_id = ? AND sets.swllink_id = swl.id",
             (software_id,)
         )
+        # get full
+        #self.gdbc.execute(
+        #    "SELECT gamename FROM sets WHERE sets.id IN \
+        #     ( SELECT DISTINCT system_id FROM swl, sets \
+        #       WHERE sets.softwarelink_id = ? AND sets.swllink_id = swl.id )",
+        #    (software_id,)
+        #)
         for j in self.gdbc.fetchall():
             all_machines.append(j[0])
 
@@ -1563,7 +1791,7 @@ class DBMod:
 
         return result
 
-    def get_searchresults(self, search):
+    def get_searchresults(self, my_search):
         """get search results
 
         TODO:
@@ -1581,7 +1809,7 @@ class DBMod:
             "SELECT COUNT(DISTINCT software.id) \
                 FROM sets \
                     JOIN software ON software.id = sets.softwarelink_id \
-             WHERE sets.gamename LIKE ?", ("%"+search+"%",))
+             WHERE sets.gamename LIKE ?", ("%"+my_search+"%",))
         results_count = self.gdbc.fetchone()[0]
         # fetch
         self.gdbc.execute(
@@ -1591,12 +1819,12 @@ class DBMod:
                     JOIN maker ON maker.id = software.developer_id \
                     JOIN sets ON sets.softwarelink_id = software.id \
                 WHERE sets.gamename LIKE ? \
-             ORDER BY software.name LIMIT 100", ("%"+search+"%",))
+             ORDER BY software.name LIMIT 100", ("%"+my_search+"%",))
         results = self.gdbc.fetchall()
         count, pos = 0, 0
         for i in results:
             # check if search is in beginning of s.name and set pos
-            if search.lower() == i[1][:len(search)].lower():
+            if my_search.lower() == i[1][:len(my_search)].lower():
                 pos = count
                 break
             count += 1
@@ -2028,126 +2256,3 @@ class DBMod:
             'label'         : "{} - {}, {}".format(db_fetch[2], db_fetch[1], db_fetch[3]),
         }
         return result
-
-    def get_info_by_filename(self, filename, dirname, progetto_path, media_folder):
-        """get info by filename
-
-        used by picture screensaver
-
-        TODO: remove when screensaver module is finished
-        """
-
-        name = ''
-        swl = None
-        info = ''
-        machinepic = None
-        snapshot = None
-        snaporientation = 'horizontal'
-
-        #check if directory is softwarelist based
-        self.gdbc.execute(
-            "SELECT swl.id, v.name \
-             FROM swl, sets v \
-             WHERE swl.name = ? AND swl.system_id = v.id", (dirname,))
-        swl_id = self.gdbc.fetchone()
-        # if not then we have a picture from mame
-        if swl_id is None:
-            # so set mame as swl and snapshot path
-            self.gdbc.execute(
-                'SELECT swl.id, v.name \
-                 FROM swl, sets v \
-                 WHERE swl.name = "mame" AND swl.system_id = v.id'
-            )
-            swl_id = self.gdbc.fetchone()
-            # set snapshot paths
-            snapshot = os.path.join(progetto_path, 'snap/snap', filename+'.png')
-            if not os.path.isfile(snapshot):
-                snapshot = None
-
-        # use variant game name or software name (v.gamename without detail like mame launcher?)
-        self.gdbc.execute(
-            "SELECT v.gamename, y.name, m.name, swl.name, c.name, \
-                    v.display_type, v.display_rotation, c.flag \
-            FROM software s, sets v, year y, \
-                 maker m, swl, category c \
-            WHERE v.name = ? AND swl.id = ? \
-                  AND v.softwarelink_id = s.id AND v.year_id = y.id \
-                  AND v.publisher_id = m.id AND v.classification_id = c.id \
-                  AND v.swllink_id = swl.id", (filename, swl_id[0])
-        )
-        result = self.gdbc.fetchone()
-
-        # got no result in variants then try in machines
-        # (should be obsolete as all mess machines are now in mame)
-        # left for devices from mess until changed
-        if not result:
-            self.gdbc.execute(
-                "SELECT s.name, y.name, m.name \
-                 FROM sets s, year y, maker m \
-                 WHERE s.name = ? AND s.year_id = y.id \
-                       AND s.publisher_id = m.id ", (filename,))
-            result = self.gdbc.fetchone()
-            if result:
-                name = result[0]
-                info = result[1] + ', ' + result[2] + ' (' + dirname + ')'
-            else:
-                name = "unknown"
-                info = filename + ' - ' + dirname
-        # got result, set vars
-        else:
-            name = result[0]
-            info = result[1] + ', ' + result[2] + ' (' + result[4] + ')'
-            swl = result[3]
-
-            # TODO: also in gui.py, make one function
-            # set snaporientation
-            if result[6] in [90, 270]:
-                snaporientation = "vertical"
-            # set aspect ratio to keep for lcd, otherwise scale
-            if result[5] and result[5] == "lcd":
-                snaporientation = "keep"
-            if result[4] in ("Electromechanical / Pinball", "Handheld Game"):
-                snaporientation = "keep"
-            if swl in ["gameboy", "vboy", "vectrex"]: # TODO: expand
-                snaporientation = "keep"
-
-            # TODO: duplicated from gui.py, select_id
-            # make util function out of it
-            if swl_id[1] == 'mame':
-                machinepic = os.path.join(media_folder, 'arcade.png')
-                if result[7] == 1: # classification is not a game
-                    machinepic = os.path.join(
-                        progetto_path,
-                        'cabinets/cabinets',
-                        swl_id[1]+'.png'
-                    )
-                elif result[4] == 'Electromechanical / Pinball':
-                    machinepic = os.path.join(media_folder, "pinball.png")
-                elif result[4] == 'Electromechanical / Reels':
-                    machinepic = os.path.join(media_folder, "reels.png")
-                else:
-                    # use for mame/arcade swl or classifiaction flag = 0
-                    machinepic = os.path.join(media_folder, "arcade.png")
-            else:
-                machinepic = os.path.join(
-                    progetto_path,
-                    'cabinets/cabinets',
-                    swl_id[1] + '.png'
-                )
-            # mainly for result[7] == 1
-            # some machines don't have a cab
-            if not os.path.isfile(machinepic):
-                machinepic = None
-
-            # no snap when machine is a clone as only parents have a shot
-            if not snapshot:
-                white_machinepic = os.path.join(
-                    progetto_path,
-                    'snap',
-                    dirname,
-                    filename + '.png'
-                )
-                if os.path.isfile(white_machinepic):
-                    snapshot = white_machinepic
-
-        return name, swl, info, machinepic, snapshot, snaporientation

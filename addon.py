@@ -4,11 +4,12 @@
 import os
 import sys
 import xbmc
+import xbmcvfs
 import xbmcaddon
 
 xbmc.log("UMSA MAME surfer: startup - sys.argv: {}".format(sys.argv))
 
-FOLDER = xbmc.translatePath('special://profile/addon_data/script.umsa.mame.surfer/')
+FOLDER = xbmcvfs.translatePath(xbmcaddon.Addon().getAddonInfo('profile'))
 
 if len(sys.argv) == 1:
     # TODO: check what we really need from these infos
@@ -16,7 +17,7 @@ if len(sys.argv) == 1:
     __addonid__ = __addon__.getAddonInfo('id')
     __cwd__ = __addon__.getAddonInfo('path')
     __language__ = __addon__.getLocalizedString
-    __resource__ = xbmc.translatePath(os.path.join(__cwd__, 'resources', 'lib'))
+    __resource__ = xbmcvfs.translatePath(os.path.join(__cwd__, 'resources', 'lib'))
     # shared resources
     addonPath = ''
     addon = xbmcaddon.Addon(id='script.umsa.mame.surfer')

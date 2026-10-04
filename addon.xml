@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="script.umsa.mame.surfer" name="UMSA MAME surfer" version="0.0.1" provider-name="sparrowred">
   <requires>
-    <import addon="xbmc.python" version="2.25.0"/>
+    <import addon="xbmc.python" version="3.0.0"/>
+    <import addon="plugin.image.pdfreader" optional="true"/>
+    <import addon="plugin.video.youtube" optional="true"/>
+    <!-- comment in below for Kodi 17/18 -->
+    <!-- <import addon="xbmc.python" version="2.25.0"/> -->
   </requires>
   <extension point="xbmc.python.script" library="addon.py">
-    <provides>game</provides>
+    <provides>executable game</provides>
   </extension>
   <extension point="xbmc.addon.metadata">
     <summary lang="en">Frontend for MAME with the UMSA twist</summary>
