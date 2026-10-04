@@ -3,6 +3,9 @@
 
 import os
 import socket
+import gzip
+import struct
+import zlib
 from platform import platform
 from time import sleep as time_sleep
 from zipfile import ZipFile, BadZipfile
@@ -26,6 +29,35 @@ EXTENSIONS = {
     'sms'      : '.sms'
 }
 NONMAME = ('exodos','gb64_quik','gb64_cart','gb64_cass','gb64_flop','whdload_games','whdload_demos')
+
+def vgm_header_info(zip_path, member):
+    """Return VGM header stats (total/loop/intro seconds) for a zip member.
+
+    Used for experiment logging only; returns None on any parse failure.
+    """
+
+    try:
+        with ZipFile(zip_path) as zobj:
+            data = zobj.read(member)
+        if data[:2] == b'\x1f\x8b':
+            data = gzip.decompress(data)
+        if data[0:4] != b'Vgm ' or len(data) < 0x28:
+            return None
+        rate = struct.unpack_from('<I', data, 0x24)[0] or 44100
+        total = struct.unpack_from('<I', data, 0x18)[0]
+        loop_off = struct.unpack_from('<I', data, 0x1c)[0]
+        loop_cnt = struct.unpack_from('<I', data, 0x20)[0]
+        info = {
+            'total_s': round(total / rate, 2),
+            'loop_s': round(loop_cnt / rate, 2) if loop_cnt else 0.0,
+            'intro_s': round((total - loop_cnt) / rate, 2) if loop_off and loop_cnt else None,
+            'has_loop': bool(loop_off and loop_cnt),
+        }
+        return info
+    except (BadZipfile, OSError, EOFError, struct.error, ValueError, zlib.error) as err:
+        log(f'UMSA: vgm header parse failed: {err}', level='debug')
+        return None
+
 
 def update_dialog(dialog, percent, msg):
     """Helper for emulator dialog from Kodi."""
@@ -280,6 +312,15 @@ class Emulation:
                 random_track = randint(1, len(vgm_tracklist))
                 play_vgm = f'{random_vgm["name"]}:{random_track:03d}'
                 vgm_nice = f'Song {vgm_tracklist[random_track-1][:-4].title()} from {random_vgm["gamename"]}'
+                vgm_hdr = vgm_header_info(vgm_zipfile, vgm_tracklist[random_track - 1])
+                if vgm_hdr:
+                    log(
+                        f'UMSA VGM: {play_vgm} | {vgm_tracklist[random_track - 1]} | '
+                        f'total={vgm_hdr["total_s"]}s loop={vgm_hdr["loop_s"]}s '
+                        f'intro={vgm_hdr["intro_s"]}s has_loop={vgm_hdr["has_loop"]}',
+                        level='info')
+                else:
+                    log(f'UMSA VGM: {play_vgm} | {vgm_tracklist[random_track-1]} | header=?', level='info')
                 # TODO check if screenserver running then set vgm info
                 if self.monitor and self.monitor.saver.running != "no":
                     try:

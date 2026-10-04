@@ -971,19 +971,24 @@ class Monitor(xbmc.Monitor):
     def onScreensaverDeactivated(self):
         """Clear running argument, but let video run."""
 
-        xbmc.log("UMSA Monitor: screensaver deactivated")
-        # was started after run_emulator
+        xbmc.log("UMSA Monitor: screensaver deactivated", xbmc.LOGINFO)
+        # TOD was started after run_emulator, will this ever happen?
         if self.saver.running == 'emu':
-            self.parent.emu_dialog.close()
+            xbmc.log("UMSA Monitor: Emulator running, trying to close emu_dialog, why? TODO", xbmc.LOGWARNING)
+            if hasattr(self.umsa, 'emu_dialog') and self.umsa.emu_dialog:
+                xbmc.log("UMSA Monitor: trying to close dialog", xbmc.LOGERROR)
+                self.umsa.emu_dialog.close()
+            else:
+                xbmc.log("UMSA Monitor: self.umsa has no emu_dialog ERROR", xbmc.LOGERROR)
         elif self.saver.running == 'videos':
-            xbmc.log("UMSA Monitor: video screensaver stays active")
+            xbmc.log("UMSA Monitor: video screensaver stays active", xbmc.LOGINFO)
         elif self.vgmaction:
+            xbmc.log("UMSA Monitor: only vgm command send, screensaver stays active", xbmc.LOGDEBUG)
             self.vgmaction = False
-            xbmc.log("UMSA Monitor: only vgm command send, screensaver stays active")
         elif self.emulation.playrandomvgm:
-            xbmc.log("UMSA Monitor: dont stop as random vgm plays and it could be a command", xbmc.LOGINFO)
+            xbmc.log("UMSA Monitor: dont stop as random vgm plays and it could be a command", xbmc.LOGDEBUG)
         else:
-            xbmc.log("UMSA Monitor: no vgm playing, stopping screensaver", xbmc.LOGINFO)
+            xbmc.log("UMSA Monitor: no vgm playing, stopping screensaver", xbmc.LOGDEBUG)
             self.reallyDeactivateScreensaver()
 
             # TODO only when started by screensaver

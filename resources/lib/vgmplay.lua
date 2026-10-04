@@ -22,6 +22,17 @@ print(
 )
 
 --
+-- Enhanced diagnostics
+--
+local DIAG_SILENCE_LOG = true
+local DIAG_ENERGY_LOG = false  -- verbose
+local diag_last_rms = 0
+local diag_last_energy = 0
+local diag_loop_check_count = 0
+local diag_rms_min = 1e9
+local diag_rms_max = 0
+
+--
 -- Tunables (silence + loop detection)
 --
 
@@ -100,7 +111,9 @@ local function exit_now(reason)
         socket:close()
     end
 
-    print(reason)
+    print(string.format(
+        "EXIT_NOW: %s (t=%.3f, rms=%.6f, min=%.6f, max=%.6f)",
+        reason, emu.time(), diag_last_rms, diag_rms_min, diag_rms_max))
     manager.machine:exit()
 end
 
@@ -270,6 +283,14 @@ local function check_for_loop(now)
     end
 
     last_loop_check = now
+    diag_loop_check_count = diag_loop_check_count + 1
+    if diag_loop_check_count % 10 == 0 then
+        print(string.format(
+            "LOOP_CHECK: t=%.3f hist=%d rms=%.6f min=%.6f max=%.6f",
+            now, #history, diag_last_rms, diag_rms_min, diag_rms_max))
+        diag_rms_min = 1e9
+        diag_rms_max = 0
+    end
 
     if #history < LOOP_MIN_HISTORY_SECONDS / FINGERPRINT_SECONDS then
         return false
@@ -310,12 +331,15 @@ local function check_for_loop(now)
         loop_matches = loop_matches + 1
 
         print(string.format(
-            "Possible audio loop: %.2fs correlation %.3f (%d/%d)",
+            "LOOP_CAND: t=%.3f period=%.2fs corr=%.3f matches=%d/%d hist=%d",
+            now,
             best_period,
             best_correlation,
             loop_matches,
-            LOOP_CONFIRMATIONS
+            LOOP_CONFIRMATIONS,
+            #history
         ))
+
 
         if loop_matches >= LOOP_CONFIRMATIONS then
 
@@ -331,6 +355,14 @@ local function check_for_loop(now)
     else
 
         -- A failed check breaks the confirmation sequence.
+        if loop_matches > 0 then
+            print(string.format(
+                "LOOP_RESET: t=%.3f corr=%.3f after %d matches",
+                now,
+                best_correlation,
+                loop_matches
+            ))
+        end
         loop_matches = 0
     end
 
@@ -375,6 +407,13 @@ emu.register_sound_update(function(samples)
     end
 
     local rms = math.sqrt(sum / count)
+    diag_last_rms = rms
+    if rms < diag_rms_min then
+        diag_rms_min = rms
+    end
+    if rms > diag_rms_max then
+        diag_rms_max = rms
+    end
 
     local now = emu.time()
 
@@ -386,6 +425,9 @@ emu.register_sound_update(function(samples)
 
         if not silence_start then
             silence_start = now
+            if DIAG_SILENCE_LOG then
+                print(string.format("SILENCE_START: t=%.3f rms=%.6f", now, rms))
+            end
         elseif now - silence_start >= SILENCE_SECONDS then
 
             exit_now(string.format(
@@ -398,6 +440,13 @@ emu.register_sound_update(function(samples)
 
     else
 
+        if silence_start and DIAG_SILENCE_LOG and now - silence_start > 0.2 then
+            print(string.format(
+                "SILENCE_END: t=%.3f after %.2fs (not silent long enough)",
+                now,
+                now - silence_start
+            ))
+        end
         silence_start = nil
     end
 
@@ -429,6 +478,11 @@ emu.register_sound_update(function(samples)
             )
         else
             energy = 0
+        end
+
+        diag_last_energy = energy
+        if DIAG_ENERGY_LOG then
+            print(string.format("FP: t=%.3f rms=%.6f energy=%.6f hist=%d", now, diag_last_rms, energy, #history))
         end
 
 

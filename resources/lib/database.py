@@ -151,7 +151,9 @@ class DBMod:
             """
         )
         self.sdb.commit()
-        # update from version without
+
+        # update from older database versions
+
         # emu.mode
         try:
             self.sdbc.execute('SELECT EXISTS(SELECT 1 FROM emu WHERE mode="mode")')
@@ -167,6 +169,12 @@ class DBMod:
             self.sdbc.execute('SELECT EXISTS(SELECT 1 FROM sets WHERE youtube="youtube")')
         except sqlite3.OperationalError:
             self.sdbc.execute('ALTER TABLE sets ADD COLUMN youtube TEXT')
+        # art_set.filename
+        # TODO sqlite3.OperationalError: no such table: art_set
+        #try:
+        #    self.sdbc.execute('SELECT EXISTS(SELECT 1 FROM art_set WHERE filename="filename")')
+        #except sqlite3.OperationalError:
+        #    self.sdbc.execute('ALTER TABLE art_set ADD COLUMN filename TEXT')
         self.sdb.commit()
 
     def open_db(self, db_path):
@@ -736,7 +744,7 @@ class DBMod:
             end_result.update({'display_rotation': 0, 'display_type': ''})
 
         # get left pic if swl is nonmame
-        if (end_result['swl_name'] == 'exodos') or (end_result['swl_name'][:5] == 'gb64_'):
+        if (end_result['swl_name'] == 'exodos') or (end_result['swl_name'].startswith('gb64_')):
             if end_result['type'] in ('snap', 'titles', 'videosnaps'):
                 lefttype = 'covers'
             else:
