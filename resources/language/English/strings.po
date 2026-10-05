@@ -83,6 +83,10 @@ msgctxt "#30257"
 msgid "Terminal (for Fallback Emulation start)"
 msgstr ""
 
+msgctxt "#30258"
+msgid "VGMPlayer (optional, otherwise normal MAME is used)"
+msgstr ""
+
 msgctxt "#31000"
 msgid "Misc"
 msgstr ""

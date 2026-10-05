@@ -263,7 +263,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # initalize Emulation class
         self.emulation = Emulation(
             self.temp_dir, self.mameini, self.mame_dir, self.mame_exe, self.chdman_exe,
-            None, None, self.nonmame, terminal=self.terminal)
+            None, None, self.nonmame, terminal=self.terminal, vgmplay_exe=self.vgmplay_exe )
 
         # load filters
         self.filter_lists = utilities.load_filter(SETTINGS_FOLDER, 'filter_default.txt')
@@ -1408,6 +1408,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.pdfviewer = __addon__.getSetting('pdfviewer')
         self.chdman_exe = __addon__.getSetting('chdman')
         self.terminal = __addon__.getSetting('terminal')
+        self.vgmplay_exe = __addon__.getSetting('vgmplay')
         es_dict = {'Normal': 0, 'Watch': 1, 'Fallback': 2}
         self.emulation_start = es_dict[__addon__.getSetting('emulation_start')]
         self.nonmame = {

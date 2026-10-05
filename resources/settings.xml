@@ -106,6 +106,17 @@
                 		<heading>30256</heading>
                 	</control>
                 </setting>
+                <setting id="vgmplay" type="path" label="30258" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="file">
+                		<heading>30258</heading>
+                	</control>
+                </setting>
                 <setting id="terminal" type="path" label="30257" help="">
                 	<level>0</level>
                 	<default/>

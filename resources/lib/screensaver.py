@@ -214,7 +214,7 @@ class Saver(WindowXMLDialog):
     def onInit(self):
         """Kodi onInit"""
 
-        xbmc.log("UMSA Saver: onInit")
+        xbmc.log("UMSA SSaver: onInit", xbmc.LOGDEBUG)
         self.playlist.clear()
         # correct aspect ratio for snap in bottom left position
         _4to3 = self.getControl(PIC_4TO3).getWidth()
@@ -229,7 +229,7 @@ class Saver(WindowXMLDialog):
     def onAction(self, action):
         """Kodi onAction"""
 
-        xbmc.log("UMSA Saver: onAction {}".format(self.running))
+        xbmc.log(f"UMSA SSaver: onAction {self.running}", xbmc.LOGDEBUG)
         # monitor in video mode?
         if self.running == 'videos':
             if action.getId() in ACTION_PLAY_NEXTITEM+ACTION_MOVEMENT_RIGHT:
@@ -260,15 +260,15 @@ class Saver(WindowXMLDialog):
                 if action.getId() == 88:
                     self.parent.vgmaction = True
                     self.parent.umsa.monitor.emulation.send_vgmaction(b'volume_up')
-                    xbmc.log("UMSA Saver: sound volume + dont end saver", xbmc.LOGDEBUG)
+                    xbmc.log("UMSA SSaver: sound volume + dont end saver", xbmc.LOGDEBUG)
                 elif action.getId() == 89:
                     self.parent.vgmaction = True
                     self.parent.umsa.monitor.emulation.send_vgmaction(b'volume_down')
-                    xbmc.log("UMSA Saver: sound volume - dont end saver", xbmc.LOGDEBUG)
+                    xbmc.log("UMSA SSaver: sound volume - dont end saver", xbmc.LOGDEBUG)
                 elif action.getId() in ACTION_PLAY_NEXTITEM+ACTION_MOVEMENT_RIGHT:
                     self.parent.vgmaction = True
                     self.parent.umsa.monitor.emulation.send_vgmaction(b'exit')
-                    xbmc.log("UMSA next song, dont end saver", xbmc.LOGDEBUG)
+                    xbmc.log("UMSA SSaver: next song - dont end saver", xbmc.LOGDEBUG)
                 elif action.getId() == 13:
                     self.parent.emulation.playrandomvgm = False
                     self.parent.vgmaction = True
@@ -344,8 +344,7 @@ class Saver(WindowXMLDialog):
                 try:
                     imgmd5 = md5(img.tobytes()).hexdigest()
                 except IOError as error:
-                    xbmc.log("UMSA Saver: {} error md5sum: {}".format(
-                        snapshot, error), xbmc.LOGWARNING)
+                    xbmc.log(f"UMSA SSaver: {snapshot} error md5sum: {error}", xbmc.LOGWARNING)
                     ret = False
                 else:
                     imgv = ImageStat.Stat(img).var
@@ -419,34 +418,33 @@ class Saver(WindowXMLDialog):
     def add_video_to_playlist(self):
         """Add a new video to the playlist"""
 
-        xbmc.log("UMSA Saver: add video to playlist")
+        xbmc.log("UMSA SSaver: add video to playlist", xbmc.LOGDEBUG)
         rand_vid = self.parent.umsa.ggdb.get_random_art(['videosnaps'])
         if not rand_vid:
-            xbmc.log("UMSA Saver: did not find any videos")
+            xbmc.log("UMSA SSaver: did not find any videos", xbmc.LOGWARNING)
             xbmc.executebuiltin('XBMC.Notification(Screensaver,no videos found,3000)')
-            #self.dialog.notification('Screensaver', 'no videos found', time=4000)
             self.parent.player.stop()
             self.running = 'no'
             self.close()
             self.snapshot_crossover(['covers', 'flyers'])
             return
         if rand_vid['swl_name'] == 'exodos':
-            xbmc.log("videoadd: found exodos video")
+            xbmc.log("UMSA SSaver: videoadd: found exodos video", xbmc.LOGDEBUG)
             # TODO zip://zipfile/videofile does not work
             # seems like kodi can't cope with Videos/MS-DOS/video.mp4
             zip_file, video_file = rand_vid['filename'][6:].split('.zip')
             temp_dir = translatePath("special://temp/")
-            xbmc.log(f"videoadd: extracting {video_file} from {zip_file}.zip")
+            xbmc.log(f"UMSA SSaver: videoadd: extracting {video_file} from {zip_file}.zip", xbmc.LOGDEBUG)
             with ZipFile(f"{zip_file}.zip", "r") as z:
-                xbmc.log(f"videoadd: namelist in zip: {z.namelist()}")
+                #xbmc.log(f"videoadd: namelist in zip: {z.namelist()}", xbmc.LOGDEBUG)
                 if video_file not in z.namelist():
-                    xbmc.log("videoadd: video not found")
+                    xbmc.log("UMSA SSaver: videoadd: video not found", xbmc.LOGWARNING)
                     return False
                 else:
                     filename = path.join(temp_dir, path.basename(video_file))
                     with z.open(video_file) as src, open(filename, "wb") as dst:
                         dst.write(src.read())
-                    xbmc.log(f"videoadd: extracted to {filename}")
+                    xbmc.log(f"UMSA SSaver: videoadd: extracted to {filename}", xbmc.LOGDEBUG)
         else:
             filename = path.join(
                 self.path[rand_vid['path']],
@@ -454,7 +452,7 @@ class Saver(WindowXMLDialog):
                 rand_vid['swl_name'].replace('mame', 'videosnaps'),
                 "{}.{}".format(rand_vid['name'], rand_vid['extension'])
             )
-            xbmc.log(f"videoadd: added {filename}")
+            xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
         machine_pic = self.get_machine_pic(rand_vid)
         # get left pic
         # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
@@ -467,7 +465,7 @@ class Saver(WindowXMLDialog):
             snapshot = path.join(
                 self.path[rand_vid['path']], 'covers', rand_vid['swl_name'],
                 "{}.png".format(rand_vid['name']))
-        xbmc.log("umsa {}".format(snapshot), xbmc.LOGDEBUG)
+        xbmc.log("UMSA SSaver {}".format(snapshot), xbmc.LOGDEBUG)
         video_item = ListItem(rand_vid['gamename'])
         video_item.setInfo('video', {
             'Title': rand_vid['gamename'],
@@ -476,8 +474,7 @@ class Saver(WindowXMLDialog):
             'Director': snapshot,
             'Votes': rand_vid['s_id']})
         self.playlist.add(url=filename, listitem=video_item)
-        xbmc.log("UMSA Saver: playlist size {}, pos {}".format(
-            self.playlist.size(), self.playlist.getposition()))
+        xbmc.log(f"UMSA SSaver: playlist size {self.playlist.size()}, pos {self.playlist.getposition()}", xbmc.LOGDEBUG)
         return True
 
     def get_art_and_call_saver(self):
@@ -496,7 +493,7 @@ class Saver(WindowXMLDialog):
                 self.create_wall()
         # prepare run
         if self.running == 'videos':
-                xbmc.log("screensaver: video")
+                xbmc.log("UMSA SSaver: screensaver: video", xbmc.LOGDEBUG)
                 self.add_video_to_playlist()
                 self.add_video_to_playlist()
                 self.parent.player.play(self.playlist)
@@ -560,7 +557,7 @@ class Saver(WindowXMLDialog):
                     snapshot = path.join(
                         self.path[art['path']], 'covers', art['swl_name'],
                         "{}.{}".format(art['name'], art['extension']))
-                xbmc.log(snapshot, xbmc.LOGDEBUG)
+                #xbmc.log(snapshot, xbmc.LOGDEBUG)
                 self.getControl(PIC_1TO1).setImage(snapshot, False)
                 self.getControl(PIC_4TO3).setImage('')
                 self.getControl(PIC_3TO4).setImage('')
@@ -570,8 +567,8 @@ class Saver(WindowXMLDialog):
                     self.path[1], 'snap',
                     art['swl_name'].replace('mame', 'snap'),
                     "{}.{}".format(art['name'], 'png'))
-                xbmc.log("UMSA screensaver: bottom left snap - %s" % (snapshot), xbmc.LOGDEBUG)
-                xbmc.log("UMSA screensaver: real filename    - %s" % (filename), xbmc.LOGDEBUG)
+                #xbmc.log("UMSA screensaver: bottom left snap - %s" % (snapshot), xbmc.LOGDEBUG)
+                #xbmc.log("UMSA screensaver: real filename    - %s" % (filename), xbmc.LOGDEBUG)
                 snapctrl = PIC_4TO3
                 if self.check_snapshot(snapshot):
                     self.getControl(snapctrl).setImage(snapshot, False)
@@ -674,13 +671,13 @@ class Saver(WindowXMLDialog):
 
             # set wait_time
             if self.running == 'videos':
-                xbmc.log("UMSA isPlayingVideo {}".format(self.parent.player.isPlayingVideo()), xbmc.LOGDEBUG)
+                xbmc.log(f"UMSA SSaver isPlayingVideo {self.parent.player.isPlayingVideo()}", xbmc.LOGDEBUG)
                 while not self.parent.player.isPlayingVideo():
                     xbmc.sleep(250)
-                    xbmc.log("UMSA isPlayingVideo {}".format(self.parent.player.isPlayingVideo()), xbmc.LOGDEBUG)
+                    xbmc.log(f"UMSA SSaver isPlayingVideo {self.parent.player.isPlayingVideo()}", xbmc.LOGDEBUG)
                 # get total time in sec
                 wait_time = int(self.parent.player.getTotalTime())+1
-                xbmc.log("UMSA wait_time {}".format(wait_time), xbmc.LOGDEBUG)
+                xbmc.log("UMSA SSaver wait_time {wait_time}", xbmc.LOGDEBUG)
             else:
                 wait_time = self.settings['time']
             # wait_loop
@@ -717,7 +714,7 @@ class Saver(WindowXMLDialog):
         #self.clearProperties()
         #self.clearList()
         self.close()
-        xbmc.log("UMSA Saver - call screensaver deactivate", xbmc.LOGINFO)
+        xbmc.log("UMSA SSaver - call screensaver deactivate", xbmc.LOGINFO)
         self.parent.onScreensaverDeactivated()
 
     def create_wall(self):
@@ -738,7 +735,7 @@ class Saver(WindowXMLDialog):
                 rows = self.settings['wall']['trows']
                 rows_b = self.settings['wall']['trows_b']
         else:
-            xbmc.log("UMSA Saver: create_wall error rows.", xbmc.LOGWARNING)
+            xbmc.log("UMSA SSaver: create_wall error rows.", xbmc.LOGWARNING)
 
         # generate image and position list
         # TODO: make vars from spacing and other numbers
@@ -817,10 +814,10 @@ class Player(xbmc.Player):
         """Reacts to Kodi event 'onPlayBackStarted'"""
 
         try:
-            xbmc.log("UMSA Player: onPlayBackStarted")
+            xbmc.log("UMSA SSaver Player: onPlayBackStarted", xbmc.LOGINFO)
             # when video ssaver runs
             if self.parent.saver.running == 'videos':
-                xbmc.log("UMSA Player: monitor mode is video")
+                xbmc.log("UMSA SSaver Player: monitor mode is video", xbmc.LOGINFO)
                 # clear video label
                 self.parent.saver.setProperty('LabelView.Fade', '1')
                 # get total time in sec
@@ -842,8 +839,7 @@ class Player(xbmc.Player):
                     timecount2 = total_time-1
                 self.runp = True
                 count_seconds = 0
-                xbmc.log("UMSA Player: time: {}, start {}, end {}".format(
-                    total_time, timecount1, timecount2))
+                xbmc.log(f"UMSA SSaver Player: time: {total_time}, start {timecount1}, end {timecount2}", xbmc.LOGINFO)
                 # set labels
                 self.parent.saver.getControl(INFO_LABEL).setLabel(
                     self.getVideoInfoTag().getTitle()
@@ -854,7 +850,7 @@ class Player(xbmc.Player):
                 self.parent.saver.getControl(PIC_MACHINE).setImage(
                     self.getVideoInfoTag().getTrailer()
                 )
-                xbmc.log("umsa director {}".format(self.getVideoInfoTag().getDirector()), xbmc.LOGDEBUG)
+                xbmc.log(f"UMSA SSaver director {self.getVideoInfoTag().getDirector()}", xbmc.LOGINFO)
                 self.parent.saver.getControl(PIC_1TO1).setImage(
                     self.getVideoInfoTag().getDirector()
                 )
@@ -872,23 +868,23 @@ class Player(xbmc.Player):
                         continue
                     xbmc.sleep(1000)
                     count_seconds += 1
-            xbmc.log("UMSA Player: onPlayBackStarted: routine ended")
+            xbmc.log("UMSA SSaver Player: onPlayBackStarted: routine ended", xbmc.LOGINFO)
         except SystemExit as err:
-            xbmc.log("UMSA SystemExit onPlayBackStarted: {}".format(err), xbmc.LOGWARNING)
+            xbmc.log(f"UMSA SSaver SystemExit onPlayBackStarted: {err}", xbmc.LOGWARNING)
 
     def onPlayBackEnded(self):
         """Reacts to Kodi event 'onPlayBackEnded'"""
 
         try:
-            xbmc.log("UMSA Player: onPlayBackEnded")
+            xbmc.log("UMSA SSaver Player: onPlayBackEnded", xbmc.LOGINFO)
             #self.parent.saver.setProperty('LabelView.Fade', '1')
             self.runp = False
 
             if self.parent.saver.running == 'videos':
-                xbmc.log("UMSA Player: add video to playlist")
+                xbmc.log("UMSA SSaver Player: add video to playlist", xbmc.LOGINFO)
                 self.parent.saver.add_video_to_playlist()
         except SystemExit as err:
-            xbmc.log("UMSA SystemExit onPlayBackStarted: {}".format(err), xbmc.LOGWARNING)
+            xbmc.log(f"UMSA SystemExit onPlayBackStarted: {err}", xbmc.LOGWARNING)
 
         # when alreadyplaying is stopped set playvideo according to settings
         # TODO: test, maybe have to use "def OnStop(self):"
@@ -899,7 +895,7 @@ class Player(xbmc.Player):
         #else:
         #    pass
             # multiimage not supported
-            # xbmc.log("### revert right image size")
+            # xbmc.log("UMSA SSaver ### revert right image size", xbmc.LOGDEBUG)
             # self.parent.getControl(IMAGE_RIGHT).setPosition(600,35)
             # self.parent.getControl(IMAGE_RIGHT).setHeight(650)
 
@@ -946,7 +942,7 @@ class Monitor(xbmc.Monitor):
     #def onScreensaverActivated(self):
         """Start screensaver when emulator is not running."""
 
-        xbmc.log("UMSA Monitor: screensaver activated")
+        xbmc.log("UMSA SSaver Monitor: screensaver activated", xbmc.LOGINFO)
         # only when not already running and no emulator running
         if self.saver.running == "no":
             # no videos when audio is running
@@ -959,36 +955,36 @@ class Monitor(xbmc.Monitor):
                 if self.saver.settings['type']:
                     self.saver.running = choice(self.saver.settings['type'])
                 else:
-                    xbmc.log("UMSA Monitor: no screensaver mode active, can't start.")
+                    xbmc.log("UMSA SSaver Monitor: no screensaver mode active, can't start.", xbmc.LOGWARNING)
                     return
             self.saver.art_types = None
             set_log(lambda *args, level='debug': xbmc.log(' '.join(map(str, args)),
                 {'debug': xbmc.LOGDEBUG, 'info': xbmc.LOGINFO, 'warning': xbmc.LOGWARNING}
                 .get(level, xbmc.LOGDEBUG)))
             self.saver.doModal()
-        xbmc.log("UMSA Monitor: onScreensaverActivated routine stop")
+        xbmc.log("UMSA SSaver Monitor: onScreensaverActivated routine stop", xbmc.LOGINFO)
 
     def onScreensaverDeactivated(self):
         """Clear running argument, but let video run."""
 
-        xbmc.log("UMSA Monitor: screensaver deactivated", xbmc.LOGINFO)
+        xbmc.log("UMSA SSaver Monitor: screensaver deactivated", xbmc.LOGINFO)
         # TOD was started after run_emulator, will this ever happen?
         if self.saver.running == 'emu':
-            xbmc.log("UMSA Monitor: Emulator running, trying to close emu_dialog, why? TODO", xbmc.LOGWARNING)
+            xbmc.log("UMSA SSaver Monitor: Emulator running, trying to close emu_dialog, why? TODO", xbmc.LOGWARNING)
             if hasattr(self.umsa, 'emu_dialog') and self.umsa.emu_dialog:
-                xbmc.log("UMSA Monitor: trying to close dialog", xbmc.LOGERROR)
+                xbmc.log("UMSA SSaver Monitor: trying to close dialog", xbmc.LOGERROR)
                 self.umsa.emu_dialog.close()
             else:
-                xbmc.log("UMSA Monitor: self.umsa has no emu_dialog ERROR", xbmc.LOGERROR)
+                xbmc.log("UMSA SSaver Monitor: self.umsa has no emu_dialog ERROR", xbmc.LOGERROR)
         elif self.saver.running == 'videos':
-            xbmc.log("UMSA Monitor: video screensaver stays active", xbmc.LOGINFO)
+            xbmc.log("UMSA SSaver Monitor: video screensaver stays active", xbmc.LOGINFO)
         elif self.vgmaction:
-            xbmc.log("UMSA Monitor: only vgm command send, screensaver stays active", xbmc.LOGDEBUG)
+            xbmc.log("UMSA SSaver Monitor: only vgm command send, screensaver stays active", xbmc.LOGDEBUG)
             self.vgmaction = False
         elif self.emulation.playrandomvgm:
-            xbmc.log("UMSA Monitor: dont stop as random vgm plays and it could be a command", xbmc.LOGDEBUG)
+            xbmc.log("UMSA SSaver Monitor: dont stop as random vgm plays and it could be a command", xbmc.LOGDEBUG)
         else:
-            xbmc.log("UMSA Monitor: no vgm playing, stopping screensaver", xbmc.LOGDEBUG)
+            xbmc.log("UMSA SSaver Monitor: no vgm playing, stopping screensaver", xbmc.LOGDEBUG)
             self.reallyDeactivateScreensaver()
 
             # TODO only when started by screensaver
@@ -1003,7 +999,7 @@ class Monitor(xbmc.Monitor):
 
     def reallyDeactivateScreensaver(self):
 
-        xbmc.log("UMSA Monitor: now really deactive screensaver")
+        xbmc.log("UMSA SSaver Monitor: now really deactive screensaver", xbmc.LOGINFO)
         self.saver.running = 'no'
         del self.saver
         __addon__ = Addon(id='script.umsa.mame.surfer')
@@ -1028,7 +1024,7 @@ class Screensaver():
         if path.isfile(path.join(self.settings_folder, 'umsa.db')):
             self.ggdb = DBMod(self.settings_folder)
         else:
-            xbmc.log("No UMSA database for Screensaver run.")
+            xbmc.log("UMSA SSaver: No UMSA database for Screensaver run.", xbmc.LOGWARNING)
         # get mame exe and dir needed by monitor init for vgm play which needs emulation init
         self.mame_exe = __addon__.getSetting('mame')
         self.mame_dir = __addon__.getSetting('mamedir')
