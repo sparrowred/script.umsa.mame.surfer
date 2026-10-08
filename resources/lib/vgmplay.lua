@@ -103,10 +103,9 @@ local RX_MAX_BYTES = 4096
 -- Enhanced diagnostics
 --
 local DIAG_RMS_LOG = true
-local diag_last_rms = 0
 
 --
--- Shared state
+-- Socket / Exit state
 --
 local exiting = false
 local rx = ""
@@ -131,19 +130,25 @@ local preexit_at = 0       -- emulated time at which the final logs are sent
 -- deliberately not initialised here: assigning nil on every execution would
 -- defeat the reuse. A fresh lua state simply starts with nil.
 
--- Volume measurement accumulators
+--
+-- Audio statistics
+--
+local diag_last_rms = 0
 local total_energy_sum = 0      -- Sum of (rms^2) across all fingerprint windows
 local total_energy_samples = 0  -- Total fingerprint samples (sum of fingerprint_samples per window)
 local peak_energy = 0           -- Peak RMS observed in any fingerprint window
 local fingerprint_count = 0     -- Number of fingerprint windows completed
 
+--
 -- Dynamic leveling state
+--
 local level_win_energy_list = {}  -- recent window energy (RMS of 100ms window) values
 local level_win_time_list = {}    -- timestamps of those windows (emulated seconds)
 local level_total_valid_sec = 0   -- total valid measurement seconds accumulated from windows
 local level_last_adj_sec = -1e12  -- time of last adjustment
 local level_current_gain_db = 0.0
 local level_manual_override = false
+local level_baseline_vol = nil
 
 -- Leveling cutoff state (see LEVEL_LOCK_* config): once level_locked is set
 -- the gain is frozen for the rest of the run. The dither anchor is the gain
@@ -191,7 +196,6 @@ local function linear_to_db(linear)
     return 20.0 * log10(linear)
 end
 
-local level_baseline_vol = nil
 local function apply_gain(new_gain_db)
     level_current_gain_db = new_gain_db
     if level_baseline_vol == nil then
@@ -761,11 +765,12 @@ end)
 --
 -- Sound callback - measures audio level
 --
+-- Sound callback / fingerprint state
 local fingerprint_start = nil
 local fingerprint_sum = 0
 local fingerprint_samples = 0
 
--- Start-of-VGM silence detection state (config at the top of the file).
+-- Silence detection state (config at the top of the file).
 local silence_start = nil
 local silence_audio_seen = false
 
