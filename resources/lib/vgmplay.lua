@@ -1,43 +1,14 @@
 -- license:BSD-3-Clause
 -- copyright-holders: sparrowred
 
--- VGMPlay driver script: audio volume measurement with socket control.
--- Lua measures actual audio level and logs at exit. Loop/stuck-buffer
--- detectors stay removed - playback duration is header-driven.
+-- VGMPlay driver script.
+-- Measures audio levels, controls playback through the socket,
+-- and reports playback statistics.
 --
--- Termination conditions:
+-- Playback terminates on:
 --   1. "exit" received on the control socket
---   2. -seconds_to_run N timeout (N set by Python based on VGM header)
---   3. 2 seconds of digital silence before any audible audio (start-of-VGM
---      only: the first audible sample disarms silence detection for good)
---
--- Final statistics (RMS_STATS, VGM_VOLUME, EXIT_NOW) are emitted exactly once
--- per playback. For condition 2 MAME exits on its own, so the final sequence is
--- sent from the periodic callback PREEXIT_MARGIN emulated seconds before the
--- -seconds_to_run limit is reached; MAME still performs the termination.
--- The limit itself is read back from MAME over the Lua API:
---     manager.machine.options.entries["seconds_to_run"]:value()
--- (manager.machine.options.seconds_to_run does not exist - it reads nil).
---
--- Logging
--- -------
--- Diagnostics are sent to the Python addon over the existing control socket as
---   LOG|<LEVEL>|<TEXT>\n
--- emulation.py reads those frames and forwards them to Kodi.log through
--- utilities.log(). The Python -> Lua direction (exit, volume_up, volume_down)
--- is unchanged and stays a separate TCP buffer, so log frames never reach
--- the command parser.
---
--- Logging is best effort and must never stop playback:
---   - messages are one sanitized line, truncated to LOG_MAX_TEXT bytes
---   - a raising or short write disables socket logging for the rest of the
---     session, a write that reports no byte count still counts as sent
---   - a per session byte budget caps what a blocking write could push
---   - once the budget is spent, later messages carry a dropped_messages count
--- Recovery hatch: set LOG_TO_STDOUT = true to also print to stdout.
---
--- Verified against MAME 0.289 headless: socket:write() returns the byte count,
--- so frames leave lua intact and playback stayed at 100% speed.
+--   2. configured playback duration reached
+--   3. start-of-VGM silence detected
 
 local LOG_TO_STDOUT = false
 -- Maximum text bytes per message, one frame stays well below 1 KiB.
@@ -105,7 +76,7 @@ local RX_MAX_BYTES = 4096
 local exiting = false
 local rx = ""
 local socket = nil
-local log_socket_ok = false  -- socket connected and writable
+local log_socket_ok = false  -- socket logging enabled
 local log_bytes_sent = 0
 local log_dropped = 0
 
@@ -180,7 +151,6 @@ local function log10(x)
 end
 
 local function db_to_linear(db)
-    -- convert dB to linear gain
     return 10.0 ^ (db / 20.0)
 end
 
@@ -211,7 +181,7 @@ local function compute_recent_rms_db()
     -- average energies linearly: rms_recent = sqrt(mean(rms_win_i^2))
     local now = emu.time()
     local cutoff = now - LEVEL_ROLL_SEC
-    -- clean old entries (from end of list? we append to end; older at front)
+    -- Remove expired entries; oldest timestamps are first.
     while #level_win_time_list > 0 and level_win_time_list[1] < cutoff - 1e-9 do
         table.remove(level_win_time_list, 1)
         table.remove(level_win_energy_list, 1)
@@ -268,11 +238,9 @@ local function update_leveling()
     if level_last_adj_sec < 0 then
         level_last_adj_sec = 0
     end
-    -- start adjusting after roughly 0.5 seconds of valid measurements
     if level_total_valid_sec < LEVEL_START_DELAY then
         return
     end
-    -- re-evaluate approximately every 0.5 seconds
     if now - level_last_adj_sec < LEVEL_REEVAL_INT - 1e-9 then
         return
     end
@@ -313,7 +281,6 @@ local function update_leveling()
     end
 
     local proposed = level_current_gain_db + step
-    -- configurable maximum positive gain
     if proposed > LEVEL_MAX_GAIN_DB then
         proposed = LEVEL_MAX_GAIN_DB
     end
@@ -341,8 +308,7 @@ local function update_leveling()
     level_last_adj_sec = now
 end
 
--- Best effort log: sends over the control socket, never raises, never blocks
--- longer than one write, and silently drops when logging is unavailable.
+-- Best-effort log output; socket failures disable further socket writes.
 local function log(level, text)
     -- keep room for the drop counter so it survives truncation
     local suffix = ""
@@ -563,7 +529,6 @@ local function emit_final_logs(reason)
 
     local now = emu.time()
 
-    -- Calculate final average RMS from accumulated energy
     local avg_rms = 0
     if total_energy_samples > 0 then
         avg_rms = math.sqrt(total_energy_sum / total_energy_samples)
@@ -594,13 +559,10 @@ local function emit_final_logs(reason)
         peak_dbfs = -math.huge
     end
 
-    -- Format -inf nicely for logging
     local avg_dbfs_str = (avg_dbfs == -math.huge) and "-inf" or string.format("%.2f", avg_dbfs)
     local peak_dbfs_str = (peak_dbfs == -math.huge) and "-inf" or string.format("%.2f", peak_dbfs)
 
-    -- Header volume metadata (set by Python via initial log, but we include what we can)
-    -- Note: Python logs header metadata separately in "UMSA VGM PLAN" line
-    -- We include placeholder values here; Python post-processing can correlate
+    -- Python logs header metadata separately; Lua uses placeholders here.
     local header_modifier = 0  -- Not directly available in Lua without args
     local header_gain = 1.0
     local has_extra_header = false
@@ -634,13 +596,10 @@ local function emit_final_logs(reason)
         reason, now, diag_last_rms, avg_rms, peak_energy
     ))
 
-    -- The master volume is deliberately NOT restored to the start value here:
-    -- a restore would run PREEXIT_MARGIN (~1 s) before the end and snap the
-    -- volume back up during playback, and it would fight a fade-out at the
-    -- end of the song. MAME persists the final volume into cfg/vgmplay.cfg,
-    -- but a non-zero -volume (see emulation.py) disables the cfg load
-    -- entirely (sound.cpp: "if(!machine().options().volume())"), which pins
-    -- the start level deterministically without any end-of-run restore.
+    -- Do not restore the baseline here: this runs before MAME's own termination
+    -- and would snap the volume up during playback, fighting any fade-out.
+    -- MAME persists volume in cfg; Python's non-zero -volume pins the next run
+    -- instead of relying on that saved value.
 end
 
 --
@@ -765,7 +724,7 @@ local fingerprint_start = nil
 local fingerprint_sum = 0
 local fingerprint_samples = 0
 
--- Silence detection state (config at the top of the file).
+-- Silence detection stays disabled after the first audible sample.
 local silence_start = nil
 local silence_audio_seen = false
 
@@ -889,16 +848,13 @@ emu.register_sound_update(function(samples)
 
     local fingerprint_complete = accumulate_fingerprint(rms, now)
 
-    -- Finish fingerprint approximately every 100ms
     if fingerprint_complete then
         local energy = calculate_fingerprint_energy(fingerprint_sum, fingerprint_samples)
 
         update_audio_statistics(energy)
 
-        -- update rolling window for dynamic leveling (reuse existing 100ms windows)
         update_level_window(energy, now)
 
-        -- update leveling
         update_leveling()
 
         fingerprint_start = now
