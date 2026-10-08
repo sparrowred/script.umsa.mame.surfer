@@ -63,6 +63,24 @@ LUA_READER_JOIN_TIMEOUT = 1.0
 # Lua truncates each message (~480 bytes), this only guards against garbage.
 LUA_LOG_MAX_LINE_BYTES = 8192
 
+VGMPLAY_DEFAULT_PORT = 1234
+
+
+def _parse_vgmplay_port(value):
+    """Return a valid VGMPlay port, or None for a set invalid value."""
+    if value is None:
+        return VGMPLAY_DEFAULT_PORT
+    if not value.isascii() or not value.isdigit():
+        return None
+    significant_value = value.lstrip('0') or '0'
+    if len(significant_value) > 5:
+        return None
+    port = int(significant_value)
+    if not 1 <= port <= 65535:
+        return None
+    return port
+
+
 def parse_lua_log_line(line):
     """Parse one Lua log frame, pure function, socket independent.
 
@@ -166,6 +184,7 @@ class Emulation:
         self.lua_server = None
         self.lua_log_thread = None
         self.lua_log_stop = None
+        self.vgm_port_env = None
         self.lua_script = vgmlua_script
         self.monitor = monitor_self
         self.nonmame = nonmame
@@ -197,13 +216,17 @@ class Emulation:
         else:
             log(f"UMSA Emulation, run: unknown type for args = {type(self.emurun['args'])}", level='warning')
         log(f"UMSA Emulation args: {args}", level='debug')
+        popen_env = {}
+        if 'env' in self.emurun:
+            popen_env['env'] = self.emurun['env']
         # run executable depending on emulation start
         if self.emurun['emulation_start'] == 1: # Watch
             self.process = Popen(
-                args, stdout=PIPE, stderr=PIPE, cwd=self.emurun['working_dir'])
+                args, stdout=PIPE, stderr=PIPE, cwd=self.emurun['working_dir'],
+                **popen_env)
         elif self.emurun['emulation_start'] == 0: # Normal
             self.process = Popen(
-                args, cwd=self.emurun['working_dir'])
+                args, cwd=self.emurun['working_dir'], **popen_env)
         elif self.emurun['emulation_start'] == 2: # Fallback
             # TODO make os.system a daemon thread so it does not stop the script?
             # TODO use subprocess.run?
@@ -241,12 +264,18 @@ class Emulation:
     def _start_vgm_server(self):
         """Create and start listening socket for vgmplay.lua (client)."""
         self._close_vgm_sockets()
+        self.vgm_port_env = os.environ.get('VGMPLAY_PORT')
+        port = _parse_vgmplay_port(self.vgm_port_env)
+        if port is None:
+            self.lua_server = None
+            self.lua_socket = None
+            return
         self.lua_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             self.lua_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         except Exception:
             pass
-        self.lua_server.bind(("127.0.0.1", 1234))
+        self.lua_server.bind(("127.0.0.1", port))
         self.lua_server.listen(1)
         self.lua_socket = None
 
@@ -422,6 +451,7 @@ class Emulation:
             'emu_exe': self.vgmplay_exe or self.mame_exe,
             'emulation_start': 0,
             'working_dir': self.mame_dir,
+            'env': self._vgm_process_env(),
         }
         log(f"UMSA emu: vgmplay_exe = {self.vgmplay_exe}")
         log(f"UMSA Emu: check if vgmplay_exe is selected: {self.emurun['emu_exe']}", level='debug') 
@@ -439,6 +469,15 @@ class Emulation:
             self._close_vgm_sockets()
         else:
             self._close_accepted_conn()
+
+    def _vgm_process_env(self):
+        """Pass the port captured for this listener only to the MAME process."""
+        env = os.environ.copy()
+        if self.vgm_port_env is None:
+            env.pop('VGMPLAY_PORT', None)
+        else:
+            env['VGMPLAY_PORT'] = self.vgm_port_env
+        return env
 
     def play_random_vgm_thread(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
         """Play random vgm until ordered to stop playing.

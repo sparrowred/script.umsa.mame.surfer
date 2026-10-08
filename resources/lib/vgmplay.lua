@@ -418,9 +418,29 @@ if VGMPLAY_SOCKET then
     log_socket_ok = true
 else
     local socket_obj = emu.file("", 3)
+    local configured_port = os.getenv("VGMPLAY_PORT")
+    local socket_port = "1234"
+    local err
+
+    if configured_port ~= nil then
+        local port_number
+        if configured_port:match("^%d+$") then
+            local significant_port = configured_port:gsub("^0+", "")
+            if #significant_port <= 5 then
+                port_number = tonumber(significant_port)
+            end
+        end
+        if not port_number or port_number < 1 or port_number > 65535 then
+            err = "Invalid VGMPLAY_PORT: " .. configured_port
+        else
+            socket_port = tostring(port_number)
+        end
+    end
 
     -- open() returns nil on success, or the error message as a string
-    local err = socket_obj:open("socket.127.0.0.1:1234")
+    if not err then
+        err = socket_obj:open("socket.127.0.0.1:" .. socket_port)
+    end
 
     if err then
         log("WARN", "SOCKET FAILED: " .. tostring(err))
