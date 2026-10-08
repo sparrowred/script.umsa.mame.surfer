@@ -793,25 +793,7 @@ local function calculate_callback_rms(channels)
     return math.sqrt(sum / count)
 end
 
-emu.register_sound_update(function(samples)
-    if exiting then
-        return
-    end
-
-    local channels = samples[":mixer"]
-    if not channels or not channels[1] then
-        return
-    end
-
-    local rms = calculate_callback_rms(channels)
-    if rms == nil then
-        return
-    end
-
-    diag_last_rms = rms
-
-    local now = emu.time()
-
+local function update_silence_detection(rms, now)
     --
     -- Start-of-VGM silence detection: armed at t=0, permanently
     -- disarmed by the first audible sample. Only a VGM that never
@@ -834,11 +816,38 @@ emu.register_sound_update(function(samples)
                     "SILENCE_START: t=%.3f rms=%.6f", now, rms))
             end
         elseif now - silence_start >= SILENCE_SECONDS then
-            exit_now(string.format(
-                "VGM SILENCE DETECTED: %.2f seconds",
-                now - silence_start))
-            return
+            return now - silence_start
         end
+    end
+
+    return nil
+end
+
+emu.register_sound_update(function(samples)
+    if exiting then
+        return
+    end
+
+    local channels = samples[":mixer"]
+    if not channels or not channels[1] then
+        return
+    end
+
+    local rms = calculate_callback_rms(channels)
+    if rms == nil then
+        return
+    end
+
+    diag_last_rms = rms
+
+    local now = emu.time()
+
+    local silence_duration = update_silence_detection(rms, now)
+    if silence_duration then
+        exit_now(string.format(
+            "VGM SILENCE DETECTED: %.2f seconds",
+            silence_duration))
+        return
     end
 
     -- Build ~100ms audio fingerprint
