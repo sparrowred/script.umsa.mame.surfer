@@ -100,11 +100,6 @@ local PREEXIT_MARGIN = 1.0
 local RX_MAX_BYTES = 4096
 
 --
--- Enhanced diagnostics
---
-local DIAG_RMS_LOG = true
-
---
 -- Socket / Exit state
 --
 local exiting = false
@@ -902,16 +897,6 @@ emu.register_sound_update(function(samples)
 
         -- update leveling
         update_leveling()
-
-        if DIAG_RMS_LOG and fingerprint_count % 50 == 0 then
-            log("DEBUG", string.format(
-                "RMS_STATS: t=%.3f fingerprint=%.3f avg_rms_so_far=%.6f peak_rms=%.6f windows=%d",
-                now, energy,
-                total_energy_samples > 0 and math.sqrt(total_energy_sum / total_energy_samples) or 0,
-                peak_energy,
-                fingerprint_count
-            ))
-        end
 
         fingerprint_start = now
         fingerprint_sum = 0
