@@ -845,6 +845,18 @@ local function update_audio_statistics(energy)
     fingerprint_count = fingerprint_count + 1
 end
 
+local function update_level_window(energy, now)
+    table.insert(level_win_energy_list, energy)
+    table.insert(level_win_time_list, now)
+    level_total_valid_sec = level_total_valid_sec + FINGERPRINT_SECONDS
+
+    local cutoff_roll = now - LEVEL_ROLL_SEC
+    while #level_win_time_list > 0 and level_win_time_list[1] < cutoff_roll - 1e-9 do
+        table.remove(level_win_time_list, 1)
+        table.remove(level_win_energy_list, 1)
+    end
+end
+
 emu.register_sound_update(function(samples)
     if exiting then
         return
@@ -886,16 +898,7 @@ emu.register_sound_update(function(samples)
         update_audio_statistics(energy)
 
         -- update rolling window for dynamic leveling (reuse existing 100ms windows)
-        table.insert(level_win_energy_list, energy)
-        table.insert(level_win_time_list, now)
-        level_total_valid_sec = level_total_valid_sec + FINGERPRINT_SECONDS
-
-        -- trim rolling window to last LEVEL_ROLL_SEC
-        local cutoff_roll = now - LEVEL_ROLL_SEC
-        while #level_win_time_list > 0 and level_win_time_list[1] < cutoff_roll - 1e-9 do
-            table.remove(level_win_time_list, 1)
-            table.remove(level_win_energy_list, 1)
-        end
+        update_level_window(energy, now)
 
         -- update leveling
         update_leveling()
