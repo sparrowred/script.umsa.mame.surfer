@@ -834,6 +834,17 @@ local function accumulate_fingerprint(rms, now)
     return now - fingerprint_start >= FINGERPRINT_SECONDS
 end
 
+local function update_audio_statistics(energy)
+    total_energy_sum = total_energy_sum + fingerprint_sum
+    total_energy_samples = total_energy_samples + fingerprint_samples
+
+    if energy > peak_energy then
+        peak_energy = energy
+    end
+
+    fingerprint_count = fingerprint_count + 1
+end
+
 emu.register_sound_update(function(samples)
     if exiting then
         return
@@ -872,17 +883,7 @@ emu.register_sound_update(function(samples)
             energy = 0
         end
 
-        -- Accumulate energy for overall average RMS
-        -- We accumulate sum of squares (fingerprint_sum) and count
-        total_energy_sum = total_energy_sum + fingerprint_sum
-        total_energy_samples = total_energy_samples + fingerprint_samples
-
-        -- Track peak energy
-        if energy > peak_energy then
-            peak_energy = energy
-        end
-
-        fingerprint_count = fingerprint_count + 1
+        update_audio_statistics(energy)
 
         -- update rolling window for dynamic leveling (reuse existing 100ms windows)
         table.insert(level_win_energy_list, energy)
