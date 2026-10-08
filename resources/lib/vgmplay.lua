@@ -829,6 +829,14 @@ local function accumulate_fingerprint(rms, now)
     return now - fingerprint_start >= FINGERPRINT_SECONDS
 end
 
+local function calculate_fingerprint_energy(sum, samples)
+    if samples > 0 then
+        return math.sqrt(sum / samples)
+    else
+        return 0
+    end
+end
+
 local function update_audio_statistics(energy)
     total_energy_sum = total_energy_sum + fingerprint_sum
     total_energy_samples = total_energy_samples + fingerprint_samples
@@ -883,12 +891,7 @@ emu.register_sound_update(function(samples)
 
     -- Finish fingerprint approximately every 100ms
     if fingerprint_complete then
-        local energy
-        if fingerprint_samples > 0 then
-            energy = math.sqrt(fingerprint_sum / fingerprint_samples)
-        else
-            energy = 0
-        end
+        local energy = calculate_fingerprint_energy(fingerprint_sum, fingerprint_samples)
 
         update_audio_statistics(energy)
 
