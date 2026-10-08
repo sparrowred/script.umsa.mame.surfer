@@ -1678,7 +1678,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             scan_art_thread = Thread(
                 target=self.ggdb.scan_artwork,
-                args=((self.progetto, self.other_artwork), SETTINGS_FOLDER)
+                args=((self.progetto, self.other_artwork), SETTINGS_FOLDER, xbmcvfs.listdir)
                 )
             scan_art_thread.start()
             self.ggdb.scan_perc = 0
