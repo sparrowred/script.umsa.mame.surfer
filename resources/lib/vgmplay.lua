@@ -774,17 +774,7 @@ local fingerprint_samples = 0
 local silence_start = nil
 local silence_audio_seen = false
 
-emu.register_sound_update(function(samples)
-    if exiting then
-        return
-    end
-
-    local channels = samples[":mixer"]
-    if not channels or not channels[1] then
-        return
-    end
-
-    -- Calculate RMS of this sound callback
+local function calculate_callback_rms(channels)
     local sum = 0
     local count = 0
 
@@ -797,10 +787,27 @@ emu.register_sound_update(function(samples)
     end
 
     if count == 0 then
+        return nil
+    end
+
+    return math.sqrt(sum / count)
+end
+
+emu.register_sound_update(function(samples)
+    if exiting then
         return
     end
 
-    local rms = math.sqrt(sum / count)
+    local channels = samples[":mixer"]
+    if not channels or not channels[1] then
+        return
+    end
+
+    local rms = calculate_callback_rms(channels)
+    if rms == nil then
+        return
+    end
+
     diag_last_rms = rms
 
     local now = emu.time()
