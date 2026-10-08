@@ -150,10 +150,6 @@ local function log10(x)
     return math.log(x) / math.log(10)
 end
 
-local function db_to_linear(db)
-    return 10.0 ^ (db / 20.0)
-end
-
 local function linear_to_db(linear)
     if linear <= 0 then
         return -math.huge
