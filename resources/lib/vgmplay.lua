@@ -2,12 +2,14 @@
 -- copyright-holders: sparrowred
 
 -- VGMPlay driver script: audio volume measurement with socket control.
--- Silence/loop/stuck-buffer detectors removed - playback duration is header-driven.
--- Lua measures actual audio level and logs at exit.
+-- Lua measures actual audio level and logs at exit. Loop/stuck-buffer
+-- detectors stay removed - playback duration is header-driven.
 --
 -- Termination conditions:
 --   1. "exit" received on the control socket
 --   2. -seconds_to_run N timeout (N set by Python based on VGM header)
+--   3. 2 seconds of digital silence before any audible audio (start-of-VGM
+--      only: the first audible sample disarms silence detection for good)
 --
 -- Final statistics (RMS_STATS, VGM_VOLUME, EXIT_NOW) are emitted exactly once
 -- per playback. For condition 2 MAME exits on its own, so the final sequence is
@@ -49,17 +51,39 @@ local LOG_MAX_TOTAL_BYTES = 65536
 --
 local FINGERPRINT_SECONDS = 0.10  -- ~100ms fingerprint window
 --
+-- Start-of-VGM silence detection configuration
+--
+-- Armed at t=0 and permanently disarmed by the first audible sample
+-- (rms >= SILENCE_THRESHOLD). Only a VGM that never becomes audible is
+-- terminated; mid-track and end-of-track silence are ignored on purpose.
+local SILENCE_THRESHOLD = 0.001  -- RMS below this counts as silence
+local SILENCE_SECONDS = 2.0      -- sustained silence required to exit
+local DIAG_SILENCE_LOG = true    -- SILENCE_START / SILENCE_END diagnostics
+--
 -- Dynamic loudness leveling configuration
 --
+local LEVEL_INITIAL_GAIN_DB = -2.0 -- immediate attenuation applied at t=0
 local LEVEL_TARGET_DB    = -22.0  -- configurable target loudness (dBFS)
 local LEVEL_MAX_GAIN_DB  = 1.0   -- configurable maximum positive gain
 local LEVEL_HEADROOM_DB  = -1.0   -- peak/headroom safety limit
 local LEVEL_NOISE_FLOOR  = -40.0  -- don't boost below noise floor
 local LEVEL_MIN_GAIN_DB  = -24.0 -- runaway floor for negative gain
 local LEVEL_RAMP_DB_PER_ADJ = 1.0 -- max change per adjustment
-local LEVEL_START_DELAY  = 1.0    -- start adjusting after ~1s of valid measurements
-local LEVEL_REEVAL_INT   = 1.0    -- re-evaluate every ~1s
+local LEVEL_START_DELAY  = 0.5    -- start adjusting after ~0.5s of valid measurements
+local LEVEL_REEVAL_INT   = 0.5    -- re-evaluate every ~0.5s
 local LEVEL_ROLL_SEC     = 1.5    -- rolling window ~1-2s for decisions
+
+--
+-- Leveling cutoff (freeze the gain once converged, never adapt forever)
+--
+-- Active leveling is frozen automatically: not before LEVEL_LOCK_MIN_SEC,
+-- as soon as the gain has stayed within LEVEL_LOCK_DITHER_DB of a stable
+-- anchor for LEVEL_LOCK_STABLE_SEC, and always by LEVEL_LOCK_MAX_SEC. After
+-- the lock the gain never changes again; RMS measurement continues.
+local LEVEL_LOCK_MIN_SEC    = 10.0 -- no freeze before 10s
+local LEVEL_LOCK_MAX_SEC    = 15.0 -- hard ceiling: freeze no later than 15s
+local LEVEL_LOCK_STABLE_SEC = 3.0  -- gain must be settled for this long
+local LEVEL_LOCK_DITHER_DB  = 2.0  -- +/- dither counts as settled
 
 
 --
@@ -119,6 +143,14 @@ local level_win_time_list = {}    -- timestamps of those windows (emulated secon
 local level_total_valid_sec = 0   -- total valid measurement seconds accumulated from windows
 local level_last_adj_sec = -1e12  -- time of last adjustment
 local level_current_gain_db = 0.0
+local level_manual_override = false
+
+-- Leveling cutoff state (see LEVEL_LOCK_* config): once level_locked is set
+-- the gain is frozen for the rest of the run. The dither anchor is the gain
+-- at which the stability window started.
+local level_locked = false
+local level_anchor_gain = nil
+local level_anchor_time = 0
 
 
 
@@ -200,18 +232,48 @@ end
 
 local function update_leveling()
     -- No gain change may follow the final statistics sequence
-    if VGMPLAY_FINAL_LOGS_SENT then
+    if VGMPLAY_FINAL_LOGS_SENT or level_manual_override then
         return
     end
     local now = emu.time()
+    -- Freeze the leveled gain once converged: hard ceiling LEVEL_LOCK_MAX_SEC,
+    -- otherwise when the gain has stayed within LEVEL_LOCK_DITHER_DB of its
+    -- anchor for LEVEL_LOCK_STABLE_SEC after LEVEL_LOCK_MIN_SEC. Once locked
+    -- no further adjustment is ever made; RMS measurement continues.
+    if level_locked then
+        return
+    end
+    if now >= LEVEL_LOCK_MAX_SEC then
+        level_locked = true
+        _dbg_log_level(string.format(
+            "LEVEL_LOCKED: t=%.3f reason=max gain=%.2f", now, level_current_gain_db))
+        return
+    end
+    if now >= LEVEL_LOCK_MIN_SEC then
+        if level_anchor_gain == nil then
+            level_anchor_gain = level_current_gain_db
+            level_anchor_time = now
+        elseif math.abs(level_current_gain_db - level_anchor_gain) <= LEVEL_LOCK_DITHER_DB then
+            if now - level_anchor_time >= LEVEL_LOCK_STABLE_SEC then
+                level_locked = true
+                _dbg_log_level(string.format(
+                    "LEVEL_LOCKED: t=%.3f reason=stable gain=%.2f anchor=%.2f",
+                    now, level_current_gain_db, level_anchor_gain))
+                return
+            end
+        else
+            level_anchor_gain = level_current_gain_db
+            level_anchor_time = now
+        end
+    end
     if level_last_adj_sec < 0 then
         level_last_adj_sec = 0
     end
-    -- start adjusting after roughly 1 second of valid measurements
+    -- start adjusting after roughly 0.5 seconds of valid measurements
     if level_total_valid_sec < LEVEL_START_DELAY then
         return
     end
-    -- re-evaluate approximately every 1 second
+    -- re-evaluate approximately every 0.5 seconds
     if now - level_last_adj_sec < LEVEL_REEVAL_INT - 1e-9 then
         return
     end
@@ -450,6 +512,19 @@ if level_baseline_vol > 20 then
 end
 
 --
+-- Initial gain-down: apply a fixed attenuation right at playback start so
+-- loud content never starts hot while leveling gathers its first RMS windows.
+-- Purely additive on the baseline volume; the sound hook samples before
+-- master gain, so the RMS data is unaffected.
+--
+apply_gain(LEVEL_INITIAL_GAIN_DB)
+log("INFO", string.format(
+    "LEVEL_INITIAL: t=%.3f gain_db=%.2f volume_db=%.2f baseline_db=%.2f start_delay=%.1f",
+    emu.time(), level_current_gain_db, manager.machine.sound.volume,
+    level_baseline_vol, LEVEL_START_DELAY
+))
+
+--
 -- seconds_to_run pre-exit plan (initialised once per machine)
 --
 -- The limit is an integer number of emulated seconds (Python passes int()).
@@ -612,14 +687,50 @@ local function handle_command(line)
     if line == "exit" then
         exit_now("EXIT on socket command")
     elseif line == "volume_up" then
+        level_manual_override = true
         manager.machine.sound.volume = manager.machine.sound.volume+1
         log("INFO", "VGM VOLUME UP")
     elseif line == "volume_down" then
+        level_manual_override = true
         manager.machine.sound.volume = manager.machine.sound.volume-1
         log("INFO", "VGM VOLUME DOWN")
     else
         log("WARN", "Unknown command: " .. line)
     end
+end
+
+local function process_socket_input(data)
+    rx = rx .. data
+
+    if #rx > RX_MAX_BYTES then
+        log("WARN", "Socket input overflow, discarding buffer")
+        rx = ""
+        return
+    end
+
+    while true do
+        local nl = rx:find("\n", 1, true)
+        if not nl then
+            break
+        end
+        local line = rx:sub(1, nl - 1)
+        rx = rx:sub(nl + 1)
+        handle_command(line)
+    end
+end
+
+local function poll_socket()
+    if exiting or socket == nil then
+        return
+    end
+
+    local data = socket:read(4096)
+
+    if #data == 0 then
+        return
+    end
+
+    process_socket_input(data)
 end
 
 --
@@ -644,33 +755,7 @@ emu.register_periodic(function()
         end
     end
 
-    if exiting or socket == nil then
-        return
-    end
-
-    local data = socket:read(4096)
-
-    if #data == 0 then
-        return
-    end
-
-    rx = rx .. data
-
-    if #rx > RX_MAX_BYTES then
-        log("WARN", "Socket input overflow, discarding buffer")
-        rx = ""
-        return
-    end
-
-    while true do
-        local nl = rx:find("\n", 1, true)
-        if not nl then
-            break
-        end
-        local line = rx:sub(1, nl - 1)
-        rx = rx:sub(nl + 1)
-        handle_command(line)
-    end
+    poll_socket()
 end)
 
 --
@@ -679,6 +764,10 @@ end)
 local fingerprint_start = nil
 local fingerprint_sum = 0
 local fingerprint_samples = 0
+
+-- Start-of-VGM silence detection state (config at the top of the file).
+local silence_start = nil
+local silence_audio_seen = false
 
 emu.register_sound_update(function(samples)
     if exiting then
@@ -710,6 +799,35 @@ emu.register_sound_update(function(samples)
     diag_last_rms = rms
 
     local now = emu.time()
+
+    --
+    -- Start-of-VGM silence detection: armed at t=0, permanently
+    -- disarmed by the first audible sample. Only a VGM that never
+    -- becomes audible reaches the exit below; once music has been
+    -- heard, silence at any later point is ignored on purpose.
+    --
+    if rms >= SILENCE_THRESHOLD then
+        if silence_start and DIAG_SILENCE_LOG and now - silence_start > 0.2 then
+            log("DEBUG", string.format(
+                "SILENCE_END: t=%.3f after %.2fs (not silent long enough)",
+                now, now - silence_start))
+        end
+        silence_start = nil
+        silence_audio_seen = true
+    elseif not silence_audio_seen then
+        if not silence_start then
+            silence_start = now
+            if DIAG_SILENCE_LOG then
+                log("DEBUG", string.format(
+                    "SILENCE_START: t=%.3f rms=%.6f", now, rms))
+            end
+        elseif now - silence_start >= SILENCE_SECONDS then
+            exit_now(string.format(
+                "VGM SILENCE DETECTED: %.2f seconds",
+                now - silence_start))
+            return
+        end
+    end
 
     -- Build ~100ms audio fingerprint
     if not fingerprint_start then
