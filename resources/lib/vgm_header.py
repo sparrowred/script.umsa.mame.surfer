@@ -49,21 +49,20 @@ class PlaybackPlan:
 
 
 # Constants
-MAX_PLAYBACK_SECONDS = 120          # Hard ceiling
-HEADER_REJECTION_FALLBACK = 30      # Seconds for invalid headers
+MAX_PLAYBACK_SECONDS = 60          # Hard ceiling
+HEADER_REJECTION_FALLBACK = 60      # Seconds for invalid headers
 LOOP_ONLY_INTRO_THRESHOLD = 0.5     # Seconds - fixed, not configurable
-SANITY_MAX_DURATION = 3600          # 1 hour max total duration
+SANITY_MAX_DURATION = 600          # 10 minutes max total duration
 SANITY_MAX_SAMPLE_RATE = 100000
 SANITY_MIN_SAMPLE_RATE = 1000
 
 # Loop-only repetition table (hardcoded)
 LOOP_ONLY_REPS = [
-    (10, 5),   # loop < 10s  -> 5 reps
-    (20, 4),   # loop < 20s  -> 4 reps
-    (40, 3),   # loop < 40s  -> 3 reps
+    (10, 1),   # loop < 10s  -> 5 reps
+    (20, 2),   # loop < 20s  -> 4 reps
+    (40, 2),   # loop < 40s  -> 3 reps
     (float('inf'), 2),  # loop >= 40s -> 2 reps
 ]
-
 
 def _invalid_header(member: str, reason: str) -> VGMHeader:
     """Create an invalid VGMHeader with all required fields."""
@@ -174,7 +173,7 @@ def parse_vgm_header(zip_path: str, member: str) -> VGMHeader:
         return header
         
     except (BadZipFile, OSError, EOFError, struct.error, ValueError, zlib.error) as err:
-        log(f'UMSA: vgm header parse failed for {member}: {err}', level='debug')
+        log(f'UMSA vgm_header: vgm header parse failed for {member}: {err}', level='debug')
         return _invalid_header(member, f"Parse error: {err}")
 
 

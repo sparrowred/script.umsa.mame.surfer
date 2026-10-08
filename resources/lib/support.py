@@ -280,7 +280,7 @@ Region: {region}
             elif set_name.lower() in exodos_sets_names:
                 db_setid = exodos_sets_names[set_name.lower()]
             else:
-                log(f"UMSA exodos: shouldnt happen {set_name}", level='warning')
+                log(f"UMSA support: exodos: shouldnt happen {set_name}", level='warning')
                 continue
 
             dbc.execute(
@@ -288,7 +288,7 @@ Region: {region}
                 (db_setid, lastrow)
             )
         else:
-            log(f"UMSA exodos: cant find entry for dat {set_name}", level='warning')
+            log(f"UMSA support: exodos: cant find entry for dat {set_name}", level='warning')
         other_self.scan_perc = int(count / maxno * 100)
         count += 1
 
@@ -311,7 +311,7 @@ Region: {region}
     # TODO scan from Content/XODOSMetadata.zip and use images from zipfile
     art_path = os.path.join(exodos_path, 'Images', 'MS-DOS')
     art_type_indicator = len(art_path.split('/'))
-    log(f"art path and ind.: {art_path} : {art_type_indicator}", level='debug')
+    log(f"UMSA support: art path and ind.: {art_path} : {art_type_indicator}", level='debug')
     pics = ('.gif','.png','.jpg')
 
     other_self.scan_what = 'scan md5sum for titles...'
@@ -319,7 +319,7 @@ Region: {region}
     titles = []
     alltitles = glob.glob(f"{os.path.join(art_path,'Screenshot - Game Title')}/**", recursive=True)
     maxno = len(alltitles)
-    log(f"found {maxno} title screenshot to scan for md5", level='info')
+    log(f"UMSA support: found {maxno} title screenshot to scan for md5", level='info')
     count = 1.0
     for titlefile in alltitles:
         if os.path.splitext(titlefile)[1].lower() in pics:
@@ -392,11 +392,11 @@ Region: {region}
                             'videosnaps', 'mp4', 0, f'zip://{gamedata_zip}{entry}')
                         )
                     else:
-                        log(f"found {entry} but {exodos_name} not found in exodos_sets", level='warning')
+                        log(f"UMSA support: found {entry} but {exodos_name} not found in exodos_sets", level='warning')
                         allext['mp4notfound'] += 1
         other_self.scan_perc = int(count / maxno * 100)
         count += 1
-    log(allext, level='debug')
+    log(f"UMSA support: {allext}", level='debug')
 
     other_self.scan_what = 'exodos finished!'
     return
@@ -444,7 +444,7 @@ def scan_gb64_nfo(all_gb64_sets, gb64_name, gb64_path, dbc, abc, other_self):
             with ZipFile(filename) as archive:
                 nfo = archive.read('VERSION.NFO').decode('utf-8', 'ignore')
         else:
-            log(f"UMSA gb64: zip not found {filename}", level='warning')
+            log(f"UMSA support: gb64: zip not found {filename}", level='warning')
             continue
         infopart = 'internal'
         gameinfo, versioninfo, notesinfo = [],[],[]

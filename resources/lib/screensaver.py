@@ -914,6 +914,7 @@ class Monitor(xbmc.Monitor):
             mame_ini_file=self.umsa.mameini,
             mame_dir=self.umsa.mame_dir,
             mame_exe=self.umsa.mame_exe,
+            vgmplay_exe=self.umsa.vgmplay_exe,
             vgmlua_script=path.join(
                 translatePath(__addon__.getAddonInfo('path')), 'resources/lib/vgmplay.lua'),
             monitor_self=self,
@@ -959,7 +960,8 @@ class Monitor(xbmc.Monitor):
                     return
             self.saver.art_types = None
             set_log(lambda *args, level='debug': xbmc.log(' '.join(map(str, args)),
-                {'debug': xbmc.LOGDEBUG, 'info': xbmc.LOGINFO, 'warning': xbmc.LOGWARNING}
+                {'debug': xbmc.LOGDEBUG, 'info': xbmc.LOGINFO, 'warning': xbmc.LOGWARNING,
+                 'error': xbmc.LOGERROR}
                 .get(level, xbmc.LOGDEBUG)))
             self.saver.doModal()
         xbmc.log("UMSA SSaver Monitor: onScreensaverActivated routine stop", xbmc.LOGINFO)

@@ -7,10 +7,11 @@ import gzip
 import struct
 import zlib
 from platform import platform
+from select import select as select_wait
 from time import sleep as time_sleep
 from zipfile import ZipFile, BadZipfile
 from random import randint
-from threading import Thread
+from threading import Event, Thread
 from subprocess import PIPE, Popen, run as subrun, check_output, CalledProcessError
 from utilities import log
 from vgm_header import parse_vgm_header, calculate_playback_plan, PlaybackPlan
@@ -30,6 +31,55 @@ EXTENSIONS = {
     'sms'      : '.sms'
 }
 NONMAME = ('exodos','gb64_quik','gb64_cart','gb64_cass','gb64_flop','whdload_games','whdload_demos')
+
+#
+# vgmplay.lua logging protocol
+#
+# Python -> Lua (commands, unchanged): newline terminated plain verbs,
+#   "exit\n", "volume_up\n", "volume_down\n"
+# Lua -> Python (log frames, new):
+#   LOG|<LEVEL>|<TEXT>\n
+# Both directions share the same TCP connection but have their own buffers,
+# so log frames can never end up in the Lua command parser.
+# The Lua side truncates TEXT and replaces CR/LF/tab, so one frame is one line.
+#
+LUA_LOG_TAG = 'LOG'
+# Lua level name -> utilities.log level name (see utilities.log/set_log).
+LUA_LOG_LEVELS = {
+    'DEBUG' : 'debug',
+    'INFO'  : 'info',
+    'WARN'  : 'warning',
+    'ERROR' : 'error',
+}
+# Level used for frames with an unknown/empty level name.
+LUA_LOG_FALLBACK_LEVEL = 'warning'
+# Prefix keeping the origin of forwarded messages visible in Kodi.log.
+LUA_LOG_MSG_PREFIX = 'UMSA Emu lua'
+# Reader poll timeout, keeps reader shutdown bounded and deterministic.
+LUA_READ_POLL_TIMEOUT = 0.2
+# Bounded join when stopping the reader thread.
+LUA_READER_JOIN_TIMEOUT = 1.0
+# Maximum size of an unparsed Lua log line before the buffer is dropped.
+# Lua truncates each message (~480 bytes), this only guards against garbage.
+LUA_LOG_MAX_LINE_BYTES = 8192
+
+def parse_lua_log_line(line):
+    """Parse one Lua log frame, pure function, socket independent.
+
+    Returns (level, text) for "LOG|<LEVEL>|<TEXT>" frames and None for
+    anything else (empty lines, commands, binary junk, truncated frames).
+    Splitting stops after two separators, so "|" inside the text is kept.
+    """
+    if isinstance(line, str):
+        line = line.encode('utf-8', errors='replace')
+    if not isinstance(line, (bytes, bytearray)):
+        return None
+    parts = bytes(line).rstrip().split(b'|', 2)
+    if len(parts) != 3 or parts[0] != LUA_LOG_TAG.encode('ascii'):
+        return None
+    level = parts[1].decode('ascii', errors='replace').strip().upper()
+    text = parts[2].decode('utf-8', errors='replace').strip()
+    return LUA_LOG_LEVELS.get(level, LUA_LOG_FALLBACK_LEVEL), text
 
 def update_dialog(dialog, percent, msg):
     """Helper for emulator dialog from Kodi."""
@@ -114,11 +164,16 @@ class Emulation:
         self.emurun = {}
         self.lua_socket = None
         self.lua_server = None
+        self.lua_log_thread = None
+        self.lua_log_stop = None
         self.lua_script = vgmlua_script
         self.monitor = monitor_self
         self.nonmame = nonmame
         self.terminal = terminal
         self.vgmplay_exe = vgmplay_exe
+        print(f"vgmplay_exe ----{vgmplay_exe}------")
+        print(f"self.vgmplay_exe ----{self.vgmplay_exe}------")
+
         if mame_ini_file:
             self.mame_ini = parse_mame_ini(mame_ini_file)
             # set snap directory
@@ -204,15 +259,121 @@ class Emulation:
         except Exception:
             return False
         if self.lua_socket:
-            try:
-                self.lua_socket.close()
-            except Exception:
-                pass
+            self._close_accepted_conn()
         self.lua_socket = conn
+        # start reading Lua log frames right away, process.wait() below blocks
+        # for the whole track, so nothing else would drain the connection
+        self._start_lua_log_reader(conn)
+        return True
+
+    def _start_lua_log_reader(self, conn):
+        """Start the daemon reader thread for Lua -> Python log frames."""
+        self._stop_lua_log_reader()
+        stop = Event()
+        self.lua_log_stop = stop
+        thread = Thread(target=self._lua_log_reader, args=(conn, stop), daemon=True)
+        self.lua_log_thread = thread
+        thread.start()
+        return thread
+
+    def _stop_lua_log_reader(self):
+        """Signal the reader thread to drain and exit, join with a bounded timeout."""
+        thread = self.lua_log_thread
+        stop = self.lua_log_stop
+        self.lua_log_thread = None
+        self.lua_log_stop = None
+        if not thread:
+            return
+        if stop:
+            stop.set()
+        # bounded, never blocks playback longer than the poll timeout needs
+        thread.join(LUA_READER_JOIN_TIMEOUT)
+        if thread.is_alive():
+            log("UMSA Emu: lua log reader still running after join", level='debug')
+
+    def _lua_log_reader(self, conn, stop):
+        """Drain LOG frames sent by vgmplay.lua. Never raises into the caller."""
+        buf = b''
+        try:
+            while not stop.is_set():
+                try:
+                    readable = select_wait([conn], [], [], LUA_READ_POLL_TIMEOUT)[0]
+                except Exception as err:
+                    # closed socket on shutdown, bad fd, ...: reader is done
+                    log(f"UMSA Emu: lua log reader select: {err}", level='debug')
+                    return
+                if not readable:
+                    continue
+                try:
+                    data = conn.recv(4096)
+                except Exception as err:
+                    log(f"UMSA Emu: lua log reader recv: {err}", level='debug')
+                    return
+                if not data:
+                    # lua closed its side (script exit or mame exit)
+                    return
+                buf += data
+                while b'\n' in buf:
+                    line, _, buf = buf.partition(b'\n')
+                    self._log_lua_line(line)
+                if len(buf) > LUA_LOG_MAX_LINE_BYTES:
+                    log("UMSA Emu: lua log line too long, buffer dropped",
+                        level='warning')
+                    buf = b''
+            # shutdown requested: last drain of already received frames
+            self._drain_lua_log(conn, buf)
+        except Exception as err:
+            # defensive, a reader thread must never bubble up into playback
+            log(f"UMSA Emu: lua log reader error: {err}", level='warning')
+        finally:
+            try:
+                conn.close()
+            except OSError as err:
+                # already closed by _close_accepted_conn, nothing to do
+                log(f"UMSA Emu: lua log reader close: {err}", level='debug')
+
+    def _drain_lua_log(self, conn, buf=b''):
+        """Read frames already buffered by the kernel, non blocking and bounded.
+
+        Returns the number of log frames forwarded.
+        """
+        logged = 0
+        while True:
+            try:
+                readable = select_wait([conn], [], [], 0)[0]
+            except Exception:
+                return logged
+            if not readable:
+                return logged
+            try:
+                data = conn.recv(4096)
+            except Exception:
+                return logged
+            if not data:
+                return logged
+            buf += data
+            while b'\n' in buf:
+                line, _, buf = buf.partition(b'\n')
+                logged += 1 if self._log_lua_line(line) else 0
+
+    def _log_lua_line(self, line):
+        """Forward one Lua log frame to the addon logger, ignore anything else."""
+        parsed = parse_lua_log_line(line)
+        if not parsed:
+            return False
+        level, text = parsed
+        log(f'{LUA_LOG_MSG_PREFIX}: {text}', level=level)
         return True
 
     def _close_accepted_conn(self):
+        # reader first: it drains what lua already sent before shutdown(SHUT_RD)
+        # discards the receive buffer on linux
+        self._stop_lua_log_reader()
         if self.lua_socket:
+            try:
+                self.lua_socket.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
             try:
                 self.lua_socket.close()
             except Exception:
@@ -248,11 +409,12 @@ class Emulation:
     def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True, plan=None):
         """Play vgm."""
 
+        log(f"UMSA emu: play_vgm_thread, vgmplay_exe: {self.vgmplay_exe}")
         self.playvgm = True
         self.playintrovgm = intro
         # Use plan.seconds_to_run if provided, else sec2run (backward compat)
         actual_sec = plan.seconds_to_run if plan else sec2run
-        vgm_args = ['-videodriver', 'dummy', '-video', 'none', '-seconds_to_run', str(int(actual_sec)),
+        vgm_args = ['-videodriver', 'dummy', '-video', 'none', '-volume', '1', '-seconds_to_run', str(int(actual_sec)),
             '-autoboot_script', self.lua_script,
             'vgmplay', '-quik', vgm]
         self.emurun = {
@@ -261,6 +423,8 @@ class Emulation:
             'emulation_start': 0,
             'working_dir': self.mame_dir,
         }
+        log(f"UMSA emu: vgmplay_exe = {self.vgmplay_exe}")
+        log(f"UMSA Emu: check if vgmplay_exe is selected: {self.emurun['emu_exe']}", level='debug') 
         self.run()
         self._accept_vgm_conn()
         # wait until emu is finished
@@ -268,6 +432,8 @@ class Emulation:
             # TODO wait is blocking, not good in a thread? have some poll loop?
             my_rc = self.process.wait()
             log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
+        else:
+            log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
         self.playvgm = False
         if close_server:
             self._close_vgm_sockets()

@@ -512,7 +512,7 @@ class DBMod:
                 if db_swl_id:
                     swl_id = db_swl_id[0]
                 else:
-                    xbmc.log("UMSA dbmod scan_artwork: swl {} not found... next".format(swl))
+                    xbmc.log(f"UMSA database: scan_artwork: swl {swl} not found... next", xbmc.LOGDEBUG)
                     continue
                 swl_dict = {}
                 gdbc.execute(
@@ -540,8 +540,7 @@ class DBMod:
                         try:
                             set_name, file_extension = file_name.split('.')
                         except ValueError:
-                            xbmc.log(
-                                "UMSA dbmod scan_artwork: unknown file = {}".format(file_name))
+                            xbmc.log(f"UMSA database scan_artwork: unknown file = {file_name}", xbmc.LOGDEBUG)
                             continue
                         # if set known write to db
                         if set_name in swl_dict.keys():
@@ -550,10 +549,7 @@ class DBMod:
                                 (swl_dict[set_name], art_type, file_extension, first_path)
                             )
                         else:
-                            xbmc.log(
-                                "UMSA dbmod scan_artwork: set {} not found in swl {}".format(
-                                    set_name, swl
-                                ))
+                            xbmc.log(f"UMSA database scan_artwork: set {set_name} not found in swl {swl}", xbmc.LOGDEBUG)
                     db_conn.commit()
                     count += 1
                     self.scan_perc = int(count/c_dirs*100)
@@ -708,7 +704,7 @@ class DBMod:
             self.gdbc.execute(statement)
             rand_art = self.gdbc.fetchone()
             if not rand_art:
-                xbmc.log("UMSA dbmod get_random art: no artwork for {}".format(art_types))
+                xbmc.log(f"UMSA database get_random art: no artwork for {art_types}", xbmc.LOGWARNING)
                 return None
         end_result.update(rand_art)
 
@@ -801,7 +797,7 @@ class DBMod:
         self.sdbc.execute(select_statement, sets)
 
         status = self.sdbc.fetchone()
-        xbmc.log("UMSA dbmod get_status_for_software: result = {}".format(status))
+        xbmc.log(f"UMSA database get_status_for_software: result = {status}", xbmc.LOGDEBUG)
         return status
 
     def get_series(self, software_id):
@@ -1021,7 +1017,7 @@ class DBMod:
                 "INSERT INTO emu_conn (emu_id, swl) VALUES (?, ?)", (emu_id, swl_name)
             )
         else:
-            xbmc.log("UMSA dbmod: connect_emulator error")
+            xbmc.log("UMSA database: connect_emulator error", xbmc.LOGDEBUG)
         self.sdb.commit()
 
     def delete_emulator_connection(self, emu_conn_id):
@@ -1119,34 +1115,31 @@ class DBMod:
                 self.filter_where.append(
                     "swl.id IN ({})".format(','.join(filter_lists['Softwarelists'])))
             else:
-                xbmc.log("UMSA dbmod define_filter: all swls, no filter used")
+                xbmc.log("UMSA datbase define_filter: all swls, no filter used", xbmc.LOGDEBUG)
         # game categories, machines
         if (('Game Categories' in filter_lists and filter_lists['Game Categories']) or
                 ('Machine Categories' in filter_lists and filter_lists['Machine Categories'])):
             self.gdbc.execute("SELECT COUNT(id) FROM category")
             cat_count = self.gdbc.fetchone()[0]
-            xbmc.log("UMSA filter categories {}, {}".format(
-                cat_count, len(filter_lists['Game Categories']+filter_lists['Machine Categories'])
-            ))
-            if cat_count > len(filter_lists['Game Categories']+filter_lists['Machine Categories']):
+            len_filterlists = len(filter_lists['Game Categories']+filter_lists['Machine Categories'])
+            xbmc.log(f"UMSA database: filter categories {cat_count}, {len_filterlists}", xbmc.LOGDEBUG)
+            if cat_count > len_filterlists:
                 self.filter_join.append("JOIN category ON category.id = sets.classification_id")
                 self.filter_where.append("category.id IN ({})".format(
                     ','.join(filter_lists['Game Categories']+filter_lists['Machine Categories'])))
             else:
-                xbmc.log("UMSA dbmod define_filter: all categories, no filter used")
+                xbmc.log("UMSA database: define_filter: all categories, no filter used", xbmc.LOGDEBUG)
         # players
         if 'Players' in filter_lists and filter_lists['Players']:
             self.gdbc.execute("SELECT COUNT(id) FROM nplayers")
             players_count = self.gdbc.fetchone()[0]
-            xbmc.log("UMSA filter players {}, {}".format(
-                players_count, len(filter_lists['Players'])
-            ))
+            xbmc.log(f"UMSA database: filter players {players_count}, {len(filter_lists['Players'])}", xbmc.LOGDEBUG)
             if players_count > len(filter_lists['Players']):
                 self.filter_join.append("JOIN nplayers ON nplayers.id = sets.nplayers_id")
                 self.filter_where.append("nplayers.id IN ({})".format(
                     ','.join(filter_lists['Players'])))
             else:
-                xbmc.log("UMSA dbmod define_filter: all players, no filter used")
+                xbmc.log("UMSA database: define_filter: all players, no filter used", xbmc.LOGDEBUG)
         # years
         if 'Years' in filter_lists and filter_lists['Years']:
             self.gdbc.execute("SELECT COUNT(id) FROM year")
@@ -1155,7 +1148,7 @@ class DBMod:
                 self.filter_join.append("JOIN year ON year.id = sets.year_id")
                 self.filter_where.append("year.id IN ({})".format(','.join(filter_lists['Years'])))
             else:
-                xbmc.log("UMSA dbmod define_filter: all years, no filter used")
+                xbmc.log("UMSA database: define_filter: all years, no filter used", xbmc.LOGDEBUG)
         # count
         filter_where = ''
         if self.filter_join and self.filter_where:
@@ -1216,7 +1209,7 @@ class DBMod:
             where = "sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
                 self.join, self.where)
         else:
-            xbmc.log("UMSA execute_statement: no join and where clause")
+            xbmc.log("UMSA database: execute_statement: no join and where clause", xbmc.LOGDEBUG)
         # get software name
         if set_id:
             name_statement = "SELECT software.name FROM software \
@@ -1230,7 +1223,7 @@ class DBMod:
             )
             sname = self.gdbc.fetchone()[0]
         else:
-            xbmc.log("UMSA dbmod execute_statement: no set or software id error")
+            xbmc.log("UMSA database: execute_statement: no set or software id error", xbmc.LOGDEBUG)
         # add ordering
         if self.order == 'name':
             order = 'software.name'
@@ -1265,7 +1258,7 @@ class DBMod:
                     i_where = 'WHERE software.name >= "{}"'.format(sname)
                 limit = "ASC LIMIT 100"
             else:
-                xbmc.log("UMSA execute_statement: prevnext error {}".format(prevnext))
+                xbmc.log("UMSA database execute_statement: prevnext error {prevnext}", xbmc.LOGDEBUG)
             # fetch software list
             select_statement = "SELECT DISTINCT \
                     software.id, software.name, year.name as year, maker.name as maker \
@@ -1274,12 +1267,11 @@ class DBMod:
                     JOIN year ON year.id = software.year_id \
                     JOIN maker ON maker.id = software.developer_id \
                 {} ORDER BY {} {}".format(i_where, order, limit)
-            #xbmc.log("UMSA dbmod execute statement: {}".format(select_statement))
             self.gdbc.execute(select_statement)
             slist = self.gdbc.fetchall()
             # no results: try without filter
             if len(slist) == 0:
-                xbmc.log("UMSA db fetch list: no result, retry without filters")
+                xbmc.log("UMSA database: fetch list: no result, retry without filters", xbmc.LOGDEBUG)
                 if self.where:
                     where = "sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
                         self.join, self.where)
@@ -1330,14 +1322,14 @@ class DBMod:
             if len(slist) == 100:
                 slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
         time_rest = time.time()
-        xbmc.log('UMSA dbmod execute_statement: begin {:.0f}ms'.format(
-            (time_rampup - time_start) * 1000))
-        xbmc.log('UMSA dbmod:                   fetch {:.0f}ms'.format(
-            (time_fetch - time_rampup) * 1000))
-        xbmc.log('UMSA dbmod:                   pos   {:.0f}ms'.format(
-            (time_rest - time_fetch) * 1000))
-        xbmc.log('UMSA dbmod:                   all   {:.0f}ms'.format(
-            (time_rest - time_start) * 1000))
+        xbmc.log('UMSA database: execute_statement: begin {:.0f}ms'.format(
+            (time_rampup - time_start) * 1000), xbmc.LOGDEBUG)
+        xbmc.log('UMSA database:                   fetch {:.0f}ms'.format(
+            (time_fetch - time_rampup) * 1000), xbmc.LOGDEBUG)
+        xbmc.log('UMSA database:                   pos   {:.0f}ms'.format(
+            (time_rest - time_fetch) * 1000), xbmc.LOGDEBUG)
+        xbmc.log('UMSA database:                   all   {:.0f}ms'.format(
+            (time_rest - time_start) * 1000), xbmc.LOGDEBUG)
         return slist, pos, result_count
 
     def get_by_software(self, set_id):
@@ -1613,8 +1605,6 @@ class DBMod:
 
         # get all parts for the choosen set
         _part = self.get_parts_for_set_id(set_id)
-        #xbmc.log("origsetid",set_id)
-        #xbmc.log("origparts",_part)
 
         # check if we have a requirement in sharedfeat
         self.gdbc.execute(
@@ -1647,11 +1637,11 @@ class DBMod:
                 # when definition is ok
                 if _swl:
                     # create new cmdline option for requirement
-                    xbmc.log("UMSA dbmod: get_cmd_line_options: set {}, swl {}".format(_set, _swl))
+                    xbmc.log(f"UMSA database: get_cmd_line_options: set {_set}, swl {_swl}", xbmc.LOGDEBUG)
                     _setinfo = self.get_info_by_set_and_swl(_set, _swl)
-                    xbmc.log("UMSA dbmod: get_cmd_line_options: setid {}".format(_setinfo))
+                    xbmc.log(f"UMSA database: get_cmd_line_options: setid {setinfo}", xbmc.LOGDEBUG)
                     _parts2 = self.get_parts_for_set_id(_setinfo['set_id'])
-                    xbmc.log("UMSA dbmod: get_cmd_line_options: parts {}".format(_parts2))
+                    xbmc.log(f"UMSA database: get_cmd_line_options: parts {_parts2}", xbmc.LOGDEBUG)
                     _cmdopt = self.create_cmdline(list(_parts2), _devices, _set)[0]
                     more_options += _cmdopt
                 # else add the requirement set as option
@@ -2038,18 +2028,15 @@ class DBMod:
             for country in COUNTRIES[country_sorted]:
                 if country in detail.lower():
                     # check gamename of machines for country from detail
-                    #xbmc.log("-- check machines for country %s" % (country,))
                     # first try actual best
                     for country2 in COUNTRIES[country_sorted]:
                         if country2 in best_machine['fullname'].lower():
-                            #xbmc.log("-- use best machine")
                             return best_machine
                     # now check all machines
                     for machine in machines:
                         for country2 in COUNTRIES[country_sorted]:
                             if country2 in machine['fullname'].lower():
                                 best_machine = machine
-                                #xbmc.log("-- got machine %s over country" % (best_machine))
                                 return best_machine
         return best_machine
 
@@ -2237,7 +2224,7 @@ class DBMod:
         all_dat = self.get_dat_for_sets(set_ids)
         all_art = self.get_artwork_for_sets(set_ids)
         time2 = time.time()
-        xbmc.log("UMSA dbmod: get_all_for_software: time = {:.0f}ms".format((time2-time1)*1000.0))
+        xbmc.log("UMSA database: get_all_for_software: time = {:.0f}ms".format((time2-time1)*1000.0), xbmc.LOGDEBUG)
 
         return return_list, pos_machine, pos_set, all_dat, all_art
 
