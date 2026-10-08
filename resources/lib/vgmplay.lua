@@ -823,6 +823,17 @@ local function update_silence_detection(rms, now)
     return nil
 end
 
+local function accumulate_fingerprint(rms, now)
+    if not fingerprint_start then
+        fingerprint_start = now
+    end
+
+    fingerprint_sum = fingerprint_sum + rms * rms
+    fingerprint_samples = fingerprint_samples + 1
+
+    return now - fingerprint_start >= FINGERPRINT_SECONDS
+end
+
 emu.register_sound_update(function(samples)
     if exiting then
         return
@@ -850,16 +861,10 @@ emu.register_sound_update(function(samples)
         return
     end
 
-    -- Build ~100ms audio fingerprint
-    if not fingerprint_start then
-        fingerprint_start = now
-    end
-
-    fingerprint_sum = fingerprint_sum + rms * rms
-    fingerprint_samples = fingerprint_samples + 1
+    local fingerprint_complete = accumulate_fingerprint(rms, now)
 
     -- Finish fingerprint approximately every 100ms
-    if now - fingerprint_start >= FINGERPRINT_SECONDS then
+    if fingerprint_complete then
         local energy
         if fingerprint_samples > 0 then
             energy = math.sqrt(fingerprint_sum / fingerprint_samples)
