@@ -507,14 +507,15 @@ class Emulation:
                 plan = calculate_playback_plan(header)
                 log(
                     f'UMSA Emu: VGM PLAN: {play_vgm} | {plan.reason} \n'
-                    f'UMSA Emu: VGM header_valid={header.header_valid} header_sane={header.header_sane} \n'
-                    f'UMSA Emu: VGM loop_only={header.loop_only} has_loop={header.has_loop} \n'
+                    #f'UMSA Emu: VGM header_valid={header.header_valid} header_sane={header.header_sane} \n'
+                    #f'UMSA Emu: VGM loop_only={header.loop_only} has_loop={header.has_loop} \n'
                     f'UMSA Emu: VGM total={header.total_seconds:.1f}s loop={header.loop_seconds:.1f}s \n'
-                    f'UMSA Emu: VGM intro={header.intro_seconds:.1f}s -> run={plan.seconds_to_run:.1f}s reps={plan.loop_repetitions} \n'
-                    f'UMSA Emu: VGM vol_mod={header.volume_modifier} gain={header.header_gain_factor:.4f} gain_db={header.header_gain_db:.2f} \n'
-                    f'UMSA Emu: VGM extra_hdr={header.extra_header_present} chip_vol={header.has_chip_volumes}',
+                    f'UMSA Emu: VGM intro={header.intro_seconds:.1f}s -> run={plan.seconds_to_run:.1f}s reps={plan.loop_repetitions} \n',
+                    #f'UMSA Emu: VGM vol_mod={header.volume_modifier} gain={header.header_gain_factor:.4f} gain_db={header.header_gain_db:.2f} \n'
+                    #f'UMSA Emu: VGM extra_hdr={header.extra_header_present} chip_vol={header.has_chip_volumes}',
                     level='debug')
-                vgm_nice = f'Song "{vgm_tracklist[random_track-1][:-4].title()}" from "{random_vgm["gamename"]}" {plan.seconds_to_run:.1f}s'
+                minutes, seconds = divmod(int(header.total_seconds), 60)
+                vgm_nice = f'Song "{vgm_tracklist[random_track-1][:-4].title()}" from "{random_vgm["gamename"]}" {minutes}:{seconds:02d} ({plan.reason})'
                 # TODO check if screenserver running then set vgm info
                 if self.monitor and self.monitor.saver.running != "no":
                     try:

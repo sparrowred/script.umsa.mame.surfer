@@ -49,8 +49,8 @@ class PlaybackPlan:
 
 
 # Constants
-MAX_PLAYBACK_SECONDS = 60          # Hard ceiling
-HEADER_REJECTION_FALLBACK = 60      # Seconds for invalid headers
+MAX_PLAYBACK_SECONDS = 180           # Hard ceiling
+HEADER_REJECTION_FALLBACK = 120      # Seconds for invalid headers
 LOOP_ONLY_INTRO_THRESHOLD = 0.5     # Seconds - fixed, not configurable
 SANITY_MAX_DURATION = 600          # 10 minutes max total duration
 SANITY_MAX_SAMPLE_RATE = 100000
@@ -58,10 +58,10 @@ SANITY_MIN_SAMPLE_RATE = 1000
 
 # Loop-only repetition table (hardcoded)
 LOOP_ONLY_REPS = [
-    (10, 1),   # loop < 10s  -> 5 reps
-    (20, 2),   # loop < 20s  -> 4 reps
-    (40, 2),   # loop < 40s  -> 3 reps
-    (float('inf'), 2),  # loop >= 40s -> 2 reps
+    (10, 1),   # loop < 10s
+    (20, 1),   # loop < 20s
+    (40, 1),   # loop < 40s
+    (float('inf'), 1),  # loop >= 40s
 ]
 
 def _invalid_header(member: str, reason: str) -> VGMHeader:

@@ -363,7 +363,7 @@
             <description>music info</description>
             <posx>40</posx>
             <posy>10</posy>
-            <width>600</width>
+            <width>1000</width>
             <!-- <visible>Player.HasAudio</visible> -->
             <textcolor>FFB2D4F5</textcolor>
             <shadowcolor>ff000000</shadowcolor>
