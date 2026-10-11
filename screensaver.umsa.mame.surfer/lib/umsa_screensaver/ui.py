@@ -1,47 +1,6 @@
 """Kodi UI implementation for the standalone UMSA screensaver add-on.
 
-TODO add 60+ empty 0,0 images to layout so that priorities for software info works!
-     means: change python image creation to use layout images
-
-TODO CLENAUP Addon module usage all over!!!
-
-TODO label:
-left_pic                machine_pic
-gamename                year, maker
-
-TODO:
-start video and end routine, then in onplaybackstart wait for systemexit and
-restart saver again, there wait until videofinished
-
-onPlaybackStarted
-try: # general or special video loop?
-    self.parent.saver.wait_loop_video()
-except SystemExit:
-    self.parent.saver.wait_loop()
-
-onEnd:
-try: # start a new video
-    self.parent.saver.get_art()
-except SystemExit:
-    self.parent.saver.get_art()
-
-
-remake get_art... to fetch_art
-set filename +++ to self.art if pic
-when videosnaps: add to playlist with infos
-redo onplaybackstart: use get_art and new wait_loop method in saver
-
-
-- switch mode after some time -> save time and beginning and check diff in loop
-- clean up art_type
-- remove parent.umsa:
-  - !!! take needed ggdb.get_random_art as args < needs machine_name as return value
-  - select actual video as software: move to gui.py
-- needs read filters from database for standalone usage
-- on init: when video is on, check if we have videos only then allow
-- update screensaver settings when change settings in gui.py runs
-
-BUG Player: 'exceptions.SystemExit' caused by Kodi killing the screensaver
+IDEA switch mode after some time -> save time and beginning and check diff in loop
 """
 
 from functools import reduce
@@ -54,10 +13,8 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcvfs
-from umsa_core.emulation import Emulation
 from umsa_core_kodi import (
     get_core_settings,
-    get_core_vgmplay_script,
     send_vgm_action,
     vgm_active,
 )
@@ -77,7 +34,6 @@ MEDIA_FOLDER = xbmcvfs.translatePath(
 ACTION_PLAY_NEXTITEM = (14,112)
 ACTION_MOVEMENT_RIGHT = (2,)
 ACTION_CONTEXT = (117,)
-ACTION_CANCEL_DIALOG = (9, 10, 51, 92, 110)
 INFO_LABEL = 102
 INFO_DETAIL = 108
 PIC_MACHINE = 105
@@ -120,9 +76,6 @@ class Saver(xbmcgui.WindowXMLDialog):
     IMPORTANT: as soon as video plays the kodi screensaver mode gets deactivated
     this means we still need to feed the playlist and wait for interaction from user
     to stop playing videos
-
-    TODO
-     - keep playlist to a size of ??? videos, else grows
     """
 
     def __init__(self, *args, **kwargs):
@@ -132,11 +85,9 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.running = "no"
         self.art_types = []
         self.wall = {}
-        self.lastgames = []
         self.settings = {}
 
         if PIL:
-            self.pil = True
             self.bad_image_list = [
                 "98f4b5e0981192d781c35be7181c7b57", # cover psx demo
                 "8d80173851047da4aca3a9901a3b82c5", # device
@@ -150,7 +101,6 @@ class Saver(xbmcgui.WindowXMLDialog):
                 "9b24d00807f94179a28f09619bc4e258", # screenless
             ]
         else:
-            self.pil = False
             self.bad_image_list = [
                 "cd773c91cffdb80457ab1c83bbd6cca5", # cover psx demo
                 "e2b8f257fea66b661ee70efc73b6c84a", # device ingame
@@ -196,23 +146,24 @@ class Saver(xbmcgui.WindowXMLDialog):
         """Kodi onAction"""
 
         xbmc.log(f"UMSA SSaver: onAction {self.running}", xbmc.LOGDEBUG)
-        # monitor in video mode?
         if self.running == 'videos':
+            # next video
             if action.getId() in ACTION_PLAY_NEXTITEM+ACTION_MOVEMENT_RIGHT:
-                # next video
                 self.add_video_to_playlist()
                 self.parent.player.playnext()
+            # show actual game in gui
+            # TODO does not work ATM
             elif action.getId() in ACTION_CONTEXT:
-                # stop and show game
                 # software id hidden in votes
                 s_id = int(self.parent.player.getVideoInfoTag().getVotes())
                 self.parent.umsa.open_software(s_id)
                 self.parent.player.stop()
                 self.running = 'no'
                 self.close()
+            # volume change, do not quit
             elif action.getId() in (88, 89):
-                # allow changing volume with plus/minus
                 pass
+            # else stop saver
             else:
                 self.parent.player.stop()
                 self.running = 'no'
@@ -356,11 +307,6 @@ class Saver(xbmcgui.WindowXMLDialog):
                     pic = path.join(MEDIA_FOLDER, "arcade.png")
         # set machine pic for swl
         else:
-            # TODO do with use_set['machine_name']... needs id
-            # for swl_machine_art in self.ggdb.get_artwork_for_set(use_set['machine_id']):
-            #    if swl_machine_art['type'] == 'cabinets':
-            #        pic = path.join(
-            #            cab_path, use_set['name']+swl_machine_art['extension'])
             if not pic:
                 # TODO fallback media pic for missing swl machine cab
                 pic = path.join(cab_path, use_set['machine_name']+'.png')
@@ -387,7 +333,6 @@ class Saver(xbmcgui.WindowXMLDialog):
             temp_dir = xbmcvfs.translatePath("special://temp/")
             xbmc.log(f"UMSA SSaver: videoadd: extracting {video_file} from {zip_file}.zip", xbmc.LOGDEBUG)
             with ZipFile(f"{zip_file}.zip", "r") as z:
-                #xbmc.log(f"videoadd: namelist in zip: {z.namelist()}", xbmc.LOGDEBUG)
                 if video_file not in z.namelist():
                     xbmc.log("UMSA SSaver: videoadd: video not found", xbmc.LOGWARNING)
                     return False
@@ -429,9 +374,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         return True
 
     def get_art_and_call_saver(self):
-        """blah."""
+        """ Get artwork and call Screensaver """
 
-        # set art_types according to run mode
         if not self.art_types:
             if self.running == 'videos':
                 self.art_types = ['videosnaps']
@@ -442,7 +386,7 @@ class Saver(xbmcgui.WindowXMLDialog):
             elif self.running == 'wall':
                 self.art_types = ['snap']
                 self.create_wall()
-        # prepare run
+
         if self.running == 'videos':
                 xbmc.log("UMSA SSaver: screensaver: video", xbmc.LOGDEBUG)
                 self.add_video_to_playlist()
@@ -454,19 +398,21 @@ class Saver(xbmcgui.WindowXMLDialog):
             self.create_wall()
             lastpos = None
             self.setProperty('SlideView.Background', 'show')
+
         elif self.running == 'slide':
             self.setProperty('SlideView.Background', 'show')
+
         elif self.running == 'cross':
             self.getControl(109).setVisible(False)
             self.getControl(BACKG[0]).setVisible(False)
             self.getControl(BACKG[1]).setVisible(False)
-            #self.getControl(103).setVisible(False)
             piclist = []
-        order = [0, 1]
+
         # screensaver loop
+        order = [0, 1]
         while self.running != 'no':
-            # get random art
             art = self.parent.umsa.ggdb.get_random_art(self.art_types)
+
             # set file path
             if (art['swl_name'] == 'exodos') or (art['swl_name'][:5] == 'gb64_'):
                 filename = art['filename']
@@ -475,18 +421,22 @@ class Saver(xbmcgui.WindowXMLDialog):
                     self.path[art['path']], art['type'],
                     art['swl_name'].replace('mame', art['type']),
                     "{}.{}".format(art['name'], art['extension']))
+
             # check for bad image
             if art['type'] in ('snap', 'titles', 'covers'):
                 if not self.check_snapshot(filename):
                     continue
+
             # set scaling
             if art['type'] not in ('snap', 'titles'):
                 aspect = 'NotScaled'
             else:
                 aspect = check_image_aspect(art)
+
             # get machine pic
             self.getControl(PIC_MACHINE).setImage(
                 self.get_machine_pic(art), False)
+
             # get left pic
             # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
             # TODO needs fetch info for snap from db for aspect ratio
@@ -508,7 +458,6 @@ class Saver(xbmcgui.WindowXMLDialog):
                     snapshot = path.join(
                         self.path[art['path']], 'covers', art['swl_name'],
                         "{}.{}".format(art['name'], art['extension']))
-                #xbmc.log(snapshot, xbmc.LOGDEBUG)
                 self.getControl(PIC_1TO1).setImage(snapshot, False)
                 self.getControl(PIC_4TO3).setImage('')
                 self.getControl(PIC_3TO4).setImage('')
@@ -518,19 +467,17 @@ class Saver(xbmcgui.WindowXMLDialog):
                     self.path[1], 'snap',
                     art['swl_name'].replace('mame', 'snap'),
                     "{}.{}".format(art['name'], 'png'))
-                #xbmc.log("UMSA screensaver: bottom left snap - %s" % (snapshot), xbmc.LOGDEBUG)
-                #xbmc.log("UMSA screensaver: real filename    - %s" % (filename), xbmc.LOGDEBUG)
                 snapctrl = PIC_4TO3
                 if self.check_snapshot(snapshot):
                     self.getControl(snapctrl).setImage(snapshot, False)
+
                 # no snapshot = clear all 3 snap views
                 else:
                     self.getControl(PIC_4TO3).setImage('')
                     self.getControl(PIC_3TO4).setImage('')
                     self.getControl(PIC_1TO1).setImage('')
+
             # set info label
-            # dont use bold the net says for subtitles
-            #self.getControl(INFO_LABEL).setLabel("[B]{}[/B]".format(art['gamename']))
             self.getControl(INFO_LABEL).setLabel(f"{art['gamename']}")
             self.getControl(INFO_DETAIL).setLabel(
                 "{}, {}".format(art['year'], art['maker']))
@@ -551,6 +498,7 @@ class Saver(xbmcgui.WindowXMLDialog):
                 if len(piclist) > 60:
                     self.removeControl(piclist[0])
                     del piclist[0]
+
             elif self.running == 'slide':
                 self.getControl(IMAGE[order[0]]).setImage(filename)
                 self.setProperty(f'SlideView.Slide{order[0]+1}', '0')
@@ -558,6 +506,7 @@ class Saver(xbmcgui.WindowXMLDialog):
                 self.setProperty(f'SlideView.Fade1{order[0]+1}', '0')
                 self.setProperty(f'SlideView.Fade1{order[1]+1}', '1')
                 self.getControl(BACKG[order[0]]).setImage(filename)
+
             elif self.running == 'wall':
                 # refill position list when empty
                 if not self.wall['pos']:
@@ -568,28 +517,20 @@ class Saver(xbmcgui.WindowXMLDialog):
                     self.wall['pos'] = pos
                 # pop new position from list
                 lastpos = self.wall['pos'].pop()
-                # TODO does not work with my 3 pics of 6 kacheln
-                # delete one of the last pics
+
                 if self.wall['free'] != 0:
                     self.wall['freelist'].append(lastpos)
-                    #print("IMAGELIST:")
-                    #print(self.wall['pos'])
-                    #print("FREELIST:")
-                    #print(self.wall['freelist'])
                     if len(self.wall['freelist']) == self.wall['free']:
                         tofree = self.wall['freelist'].pop(
                             randint(0, round(len(self.wall['freelist'])/2)))
-                        # print "TO MAKE FREE: %s" % (tofree)
-                        # insert actual to be cleaned image pos
-                        # to wall['pos']
                         self.wall['pos'].insert(0, tofree)
                         # make image empty
                         self.removeControl(self.wall['mesh'][tofree])
                         self.wall['mesh'][tofree].setImage('')
                         # TODO unneeded?
                         self.addControl(self.wall['mesh'][tofree])
-                # check if image is horizontal, vertical
-                # or aspect ratio must be keeped
+
+                # check if image is horizontal, vertical or aspect ratio must be keeped
                 # get image position
                 pos_x, pos_y = self.wall['mesh'][lastpos].getPosition()
                 # width not standard =
@@ -630,6 +571,7 @@ class Saver(xbmcgui.WindowXMLDialog):
                 xbmc.log("UMSA SSaver wait_time {wait_time}", xbmc.LOGDEBUG)
             else:
                 wait_time = self.settings['time']
+
             # wait_loop
             count = 0
             while count < wait_time:
@@ -641,8 +583,9 @@ class Saver(xbmcgui.WindowXMLDialog):
                 xbmc.sleep(1000)
                 if self.running == 'no':
                     break
-            # change order
+
             order.reverse()
+
         # cleanup
         if self.running == 'slide':
             self.getControl(IMAGE[0]).setImage('blank.png')
@@ -660,9 +603,6 @@ class Saver(xbmcgui.WindowXMLDialog):
             self.getControl(BACKG[0]).setImage('blank.png')
             self.getControl(BACKG[1]).setImage('blank.png')
 
-        #print("UMSA: Saver - clear Properties and close")
-        #self.clearProperties()
-        #self.clearList()
         self.close()
         xbmc.log("UMSA SSaver - call screensaver deactivate", xbmc.LOGINFO)
         self.parent.onScreensaverDeactivated()
@@ -701,7 +641,6 @@ class Saver(xbmcgui.WindowXMLDialog):
             rows = randint(rows_b, rows)
         # width
         self.wall['width'] = int((x_max-(rows+1)*x_space)/rows)
-        #ehspace = (x_max-self.wall['width']*rows)/(rows+1)
         # height
         self.wall['height'] = int(
             self.wall['width']/1.3333/self.settings['ar_norm']*self.settings['ar_x'])
@@ -773,7 +712,6 @@ class Player(xbmc.Player):
                 # get total time in sec
                 total_time = int(self.getTotalTime())
                 # wait until video starts
-                #while not self.parent.player.isPlayingVideo():
                 while total_time == 0:
                     xbmc.sleep(250)
                     total_time = int(self.getTotalTime())
@@ -827,7 +765,6 @@ class Player(xbmc.Player):
 
         try:
             xbmc.log("UMSA SSaver Player: onPlayBackEnded", xbmc.LOGINFO)
-            #self.parent.saver.setProperty('LabelView.Fade', '1')
             self.runp = False
 
             if self.parent.saver.running == 'videos':
@@ -836,18 +773,6 @@ class Player(xbmc.Player):
         except SystemExit as err:
             xbmc.log(f"UMSA SystemExit onPlayBackStarted: {err}", xbmc.LOGWARNING)
 
-        # when alreadyplaying is stopped set playvideo according to settings
-        # TODO: test, maybe have to use "def OnStop(self):"
-        #elif self.parent.already_playing:
-        #    self.parent.already_playing = None
-        #    if self.__addon__.getSetting('playvideo') == 'true':
-        #        self.parent.playvideo = True
-        #else:
-        #    pass
-            # multiimage not supported
-            # xbmc.log("UMSA SSaver ### revert right image size", xbmc.LOGDEBUG)
-            # self.parent.getControl(IMAGE_RIGHT).setPosition(600,35)
-            # self.parent.getControl(IMAGE_RIGHT).setHeight(650)
 
 class Monitor(xbmc.Monitor):
     """Kodi Monitor Class"""
@@ -859,36 +784,8 @@ class Monitor(xbmc.Monitor):
         self.vgmaction = False
         self.saver = Saver(
             "umsa_saver.xml", __addon__.getAddonInfo('path'), "default", "720p", itself=self)
-        # initalize Emulation class
-        self.emulation = Emulation(
-            mame_ini_file=self.umsa.mameini,
-            mame_dir=self.umsa.mame_dir,
-            mame_exe=self.umsa.mame_exe,
-            vgmplay_exe=self.umsa.vgmplay_exe,
-            vgmlua_script=get_core_vgmplay_script(),
-        )
-
-    def play_saver(self, saver, art_types=None):
-        """Start specific screensaver.
-        
-        TODO: remove calls and use xbmc.executebuiltin('ActivateScreensaver') instead
-        """
-        # TODO make also setting
-        #if not self.emulation.playrandomvgm:
-        #    self.play_random_vgm()
-        self.saver.running = saver
-        self.saver.art_types = art_types
-        self.saver.doModal()
-
-    #def play_vgm(self):
-    #    self.emulation.play_vgm(vgm, sec2run, sleep, intro)
-
-    def play_random_vgm(self):
-        self.emulation.play_random_vgm(
-            ggdb=self.umsa.ggdb, db_path=self.umsa.settings_folder, sleep=xbmc.sleep)
 
     def startme(self):
-    #def onScreensaverActivated(self):
         """Start screensaver when emulator is not running."""
 
         xbmc.log("UMSA SSaver Monitor: screensaver activated", xbmc.LOGINFO)
@@ -934,16 +831,6 @@ class Monitor(xbmc.Monitor):
         else:
             xbmc.log("UMSA SSaver Monitor: no vgm playing, stopping screensaver", xbmc.LOGDEBUG)
             self.reallyDeactivateScreensaver()
-
-            # TODO only when started by screensaver
-            #if self.emulation.playrandomvgm:
-            #    self.emulation.send_vgmaction(b'x')
-            #    self.emulation.playrandomvgm = None
-            #self.saver.running = 'no'
-            #del self.saver
-            #__addon__ = Addon(id='screensaver.umsa.mame.surfer')
-            #self.saver = Saver(
-            #    "umsa_saver.xml", __addon__.getAddonInfo('path'), "default", "720p", itself=self)
 
     def reallyDeactivateScreensaver(self):
 

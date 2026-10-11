@@ -4,7 +4,7 @@ import xbmc
 import xbmcgui
 from umsa_core import set_log
 from umsa_core.database import DBMod
-from umsa_core_kodi import get_core_data_paths, get_core_settings
+from umsa_core_kodi import get_core_data_paths
 
 from .arguments import decode_request
 from .ui import Monitor
@@ -21,11 +21,6 @@ class ScreensaverRuntime:
         self.ggdb = None
         self.monitor = None
         self.settings_folder = None
-        core_settings = get_core_settings()
-        self.mame_exe = core_settings.mame
-        self.mame_dir = core_settings.mamedir
-        self.mameini = core_settings.mameini
-        self.vgmplay_exe = core_settings.vgmplay
 
     def open_software(self, software_id):
         """Hand video-context selection back to the Games frontend."""
