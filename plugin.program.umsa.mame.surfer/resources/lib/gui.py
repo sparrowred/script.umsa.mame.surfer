@@ -49,6 +49,7 @@ from umsa_core_kodi import (
     get_core_data_paths,
     get_core_settings,
     get_core_vgmplay_script,
+    parse_software_open_method,
     parse_vgm_action_method,
     publish_vgm_info,
 )
@@ -224,10 +225,11 @@ def create_gui_element_from_snap(set_info, image, art_type='unset'):
 
 
 class VgmCommandMonitor(xbmc.Monitor):
-    """Receive VGM control commands sent by the screensaver add-on.
+    """Receive control commands sent by the screensaver add-on.
 
-    The VGM process lives in this script, so the screensaver (a separate
-    add-on) asks for volume/next/stop over Kodi notifications.
+    The VGM process and the software selection belong to this script, so
+    the screensaver (a separate add-on) asks for volume/next/stop and for
+    opening a displayed software over Kodi notifications.
     """
 
     def __init__(self, owner):
@@ -236,6 +238,10 @@ class VgmCommandMonitor(xbmc.Monitor):
 
     def onNotification(self, sender, method, data):
         if sender != VGM_SENDER:
+            return
+        software_id = parse_software_open_method(method)
+        if software_id is not None:
+            self.owner.open_software(software_id)
             return
         action = parse_vgm_action_method(method)
         if action in ('volume_up', 'volume_down', 'next', 'stop'):
@@ -1548,6 +1554,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.emulation.send_vgmaction(b'exit')
         elif action in ('volume_up', 'volume_down'):
             self.emulation.send_vgmaction(action.encode())
+
+    def open_software(self, software_id):
+        """Select software requested by the screensaver, keeping history."""
+
+        xbmc.log(f"UMSA gui: open software from handoff: id = {software_id}")
+        self.lastptr += 1
+        self.last.insert(self.lastptr, software_id)
+        self.select_software(self.last[self.lastptr])
 
     def read_settings(self):
         """Read settings for UMSA from Kodi

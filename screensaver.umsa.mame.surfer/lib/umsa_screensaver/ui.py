@@ -86,6 +86,10 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.art_types = []
         self.wall = {}
         self.settings = {}
+        # identity of the software currently on screen, for the handoff
+        self.current_software_id = None
+        # guard so one ContextMenu does not dispatch twice
+        self.opening = False
 
         if PIL:
             self.bad_image_list = [
@@ -146,17 +150,23 @@ class Saver(xbmcgui.WindowXMLDialog):
         """Kodi onAction"""
 
         xbmc.log(f"UMSA SSaver: onAction {self.running}", xbmc.LOGDEBUG)
+        if self.opening:
+            xbmc.log("UMSA SSaver: handoff already in progress, ignoring action", xbmc.LOGDEBUG)
+            return
         if self.running == 'videos':
             # next video
             if action.getId() in ACTION_PLAY_NEXTITEM+ACTION_MOVEMENT_RIGHT:
                 self.add_video_to_playlist()
                 self.parent.player.playnext()
             # show actual game in gui
-            # TODO does not work ATM
             elif action.getId() in ACTION_CONTEXT:
                 # software id hidden in votes
-                s_id = int(self.parent.player.getVideoInfoTag().getVotes())
-                self.parent.umsa.open_software(s_id)
+                s_id = None
+                try:
+                    s_id = int(self.parent.player.getVideoInfoTag().getVotes())
+                except (TypeError, ValueError):
+                    xbmc.log("UMSA SSaver: no software id for video context", xbmc.LOGWARNING)
+                self.open_software(s_id)
                 self.parent.player.stop()
                 self.running = 'no'
                 self.close()
@@ -169,9 +179,15 @@ class Saver(xbmcgui.WindowXMLDialog):
                 self.running = 'no'
                 self.close()
         elif self.running in ('cross', 'wall', 'slide'):
+            # show actual game in gui
+            if action.getId() in ACTION_CONTEXT:
+                self.open_software(self.current_software_id)
+                self.parent.reallyDeactivateScreensaver()
+                self.running = 'no'
+                self.close()
             # allow changing volume with plus/minus
             # also allow playnext and right should button for next vgm
-            if vgm_active():
+            elif vgm_active():
                 if action.getId() == 88:
                     self.parent.vgmaction = True
                     send_vgm_action('volume_up')
@@ -195,6 +211,32 @@ class Saver(xbmcgui.WindowXMLDialog):
                 self.parent.reallyDeactivateScreensaver()
                 self.running = 'no'
                 self.close()
+
+    def remember_art(self, art):
+        """Remember the software id of the artwork being rendered."""
+
+        self.current_software_id = art['s_id'] if art else None
+
+    def open_software(self, software_id):
+        """Hand the currently displayed software to the frontend.
+
+        A missing or invalid identifier is logged and ignored; the caller
+        still dismisses the screensaver without selecting anything else.
+        """
+
+        self.opening = True
+        if software_id is None:
+            xbmc.log("UMSA SSaver: no displayed software for context handoff", xbmc.LOGWARNING)
+            return
+        try:
+            self.parent.umsa.open_software(int(software_id))
+        except (TypeError, ValueError):
+            xbmc.log(
+                f"UMSA SSaver: invalid software id for handoff: {software_id!r}",
+                xbmc.LOGWARNING,
+            )
+        except Exception as error:  # noqa: BLE001 - never break screensaver dismissal
+            xbmc.log(f"UMSA SSaver: software handoff failed: {error}", xbmc.LOGERROR)
 
     def read_settings(self):
         """Read shared Core settings and screensaver-specific settings."""
@@ -412,6 +454,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         order = [0, 1]
         while self.running != 'no':
             art = self.parent.umsa.ggdb.get_random_art(self.art_types)
+            # remember the software being rendered for the context handoff
+            self.remember_art(art)
 
             # set file path
             if (art['swl_name'] == 'exodos') or (art['swl_name'][:5] == 'gb64_'):

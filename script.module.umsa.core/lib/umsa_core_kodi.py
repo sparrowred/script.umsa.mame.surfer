@@ -16,6 +16,8 @@ VGM_PLAYING_PROPERTY = "UMSA.VGM.Playing"
 VGM_SENDER = CORE_ADDON_ID
 VGM_ACTION_METHOD = "UMSA.VGM.Action"
 
+SOFTWARE_OPEN_METHOD = "UMSA.Software.Open"
+
 _SHARED_SETTING_IDS = (
     "mame",
     "mameini",
@@ -111,3 +113,29 @@ def parse_vgm_action_method(method: str):
     if index < 0:
         return None
     return method[index + len(marker):]
+
+
+def send_software_open(software_id: int) -> None:
+    """Ask a running frontend to select and display a software item.
+
+    Uses the same notification channel as the VGM control actions: the
+    message is announced as "Other.<method>.<id>" and parsed back by the
+    owning add-on with parse_software_open_method().
+    """
+
+    xbmc.executebuiltin(
+        f"NotifyAll({VGM_SENDER},{SOFTWARE_OPEN_METHOD}.{int(software_id)})")
+
+
+def parse_software_open_method(method: str):
+    """Return the software id carried by an onNotification method, else None."""
+
+    marker = f"{SOFTWARE_OPEN_METHOD}."
+    index = method.find(marker)
+    if index < 0:
+        return None
+    value = method[index + len(marker):]
+    try:
+        return int(value)
+    except ValueError:
+        return None

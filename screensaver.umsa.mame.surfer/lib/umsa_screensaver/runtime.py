@@ -4,7 +4,7 @@ import xbmc
 import xbmcgui
 from umsa_core import set_log
 from umsa_core.database import DBMod
-from umsa_core_kodi import get_core_data_paths
+from umsa_core_kodi import get_core_data_paths, send_software_open
 
 from .arguments import decode_request
 from .ui import Monitor
@@ -23,12 +23,27 @@ class ScreensaverRuntime:
         self.settings_folder = None
 
     def open_software(self, software_id):
-        """Hand video-context selection back to the Games frontend."""
+        """Hand the currently displayed software back to the Games frontend.
 
-        software_id = int(software_id)
-        xbmc.executebuiltin(
-            f"RunScript(plugin.program.umsa.mame.surfer,select_software,{software_id})"
+        Reuses the running frontend over Kodi notifications. When no
+        frontend is running the notification has no receiver and nothing
+        opens, which is the intended limitation.
+        """
+
+        try:
+            software_id = int(software_id)
+        except (TypeError, ValueError):
+            xbmc.log(
+                f"UMSA Screensaver: invalid software id: {software_id!r}",
+                xbmc.LOGWARNING,
+            )
+            return
+
+        xbmc.log(
+            f"UMSA Screensaver: reusing running GUI for software {software_id}",
+            xbmc.LOGDEBUG,
         )
+        send_software_open(software_id)
 
     def run_automatic(self):
         """Start an automatically selected configured screensaver mode."""
