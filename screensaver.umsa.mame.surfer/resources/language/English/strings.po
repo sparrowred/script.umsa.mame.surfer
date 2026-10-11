@@ -1,0 +1,78 @@
+# Kodi Media Center language file
+# Addon Name: UMSA MAME Surfer Screensaver
+# Addon id: screensaver.umsa.mame.surfer
+# Addon Provider: sparrowred
+msgid ""
+msgstr ""
+"Project-Id-Version: Kodi Addons\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en\n"
+
+msgctxt "#32000"
+msgid "UMSA Screensaver"
+msgstr ""
+
+msgctxt "#32010"
+msgid "General"
+msgstr ""
+
+msgctxt "#30199"
+msgid "Open shared Core settings"
+msgstr ""
+
+msgctxt "#30010"
+msgid "Seconds to display each image"
+msgstr ""
+
+msgctxt "#30056"
+msgid "Show game info"
+msgstr ""
+
+msgctxt "#30061"
+msgid "Show music info"
+msgstr ""
+
+msgctxt "#30067"
+msgid "Modes"
+msgstr ""
+
+msgctxt "#30058"
+msgid "Videos"
+msgstr ""
+
+msgctxt "#30065"
+msgid "Slide"
+msgstr ""
+
+msgctxt "#30059"
+msgid "Wall"
+msgstr ""
+
+msgctxt "#30068"
+msgid "Crossover"
+msgstr ""
+
+msgctxt "#30062"
+msgid "Wall options"
+msgstr ""
+
+msgctxt "#30054"
+msgid "Title rows: minimum"
+msgstr ""
+
+msgctxt "#30055"
+msgid "Rows: maximum"
+msgstr ""
+
+msgctxt "#30066"
+msgid "Snap rows: minimum"
+msgstr ""
+
+msgctxt "#30064"
+msgid "Free tiles (%)"
+msgstr ""
+
+msgctxt "#30063"
+msgid "Titles or snaps"
+msgstr ""

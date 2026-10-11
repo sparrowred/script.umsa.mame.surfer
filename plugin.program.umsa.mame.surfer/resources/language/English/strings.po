@@ -1,0 +1,136 @@
+# Kodi Media Center language file
+# Addon Name: UMSA MAME Surfer
+# Addon id: plugin.program.umsa.mame.surfer
+# Addon Provider: sparrowred
+msgid ""
+msgstr ""
+"Project-Id-Version: XBMC Addons\n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: sparrowred\n"
+"Language-Team: English\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "#30000"
+msgid "Basic"
+msgstr ""
+
+msgctxt "#30252"
+msgid "ROMs Temp folder"
+msgstr ""
+
+msgctxt "#30253"
+msgid "Preferred Country"
+msgstr ""
+
+msgctxt "#30254"
+msgid "Auto-Play Videos"
+msgstr ""
+
+msgctxt "#30255"
+msgid "PDF Viewer for Manuals"
+msgstr ""
+
+msgctxt "#30256"
+msgid "CHDMAN (for converting chd files)"
+msgstr ""
+
+msgctxt "#30257"
+msgid "Terminal (for Fallback Emulation start)"
+msgstr ""
+
+msgctxt "#31000"
+msgid "Misc"
+msgstr ""
+
+msgctxt "#31013"
+msgid "Emulation start"
+msgstr ""
+
+msgctxt "#31014"
+msgid "Delete UMSA database"
+msgstr ""
+
+msgctxt "#31015"
+msgid "Delete status database"
+msgstr ""
+
+msgctxt "#30199"
+msgid "Open shared Core settings"
+msgstr ""
+
+msgctxt "#32000"
+msgid "Screensaver"
+msgstr ""
+
+msgctxt "#33000"
+msgid "Outside MAME"
+msgstr ""
+
+msgctxt "#32010"
+msgid "Show"
+msgstr ""
+
+msgctxt "#30054"
+msgid "Titles - Rows to show: between"
+msgstr ""
+
+msgctxt "#30055"
+msgid "and"
+msgstr ""
+
+msgctxt "#30066"
+msgid "Snaps - Rows to show: between"
+msgstr ""
+
+msgctxt "#30056"
+msgid "Show game info"
+msgstr ""
+
+msgctxt "#30058"
+msgid "Videos"
+msgstr ""
+
+msgctxt "#30059"
+msgid "Wall"
+msgstr ""
+
+msgctxt "#30065"
+msgid "Slide"
+msgstr ""
+
+msgctxt "#30068"
+msgid "Crossover"
+msgstr ""
+
+msgctxt "#30060"
+msgid "Random"
+msgstr ""
+
+msgctxt "#30067"
+msgid "Modes:"
+msgstr ""
+
+msgctxt "#30061"
+msgid "Show music info"
+msgstr ""
+
+msgctxt "#30062"
+msgid "Wall Options:"
+msgstr ""
+
+msgctxt "#30063"
+msgid "Snaps or Titles?"
+msgstr ""
+
+msgctxt "#30064"
+msgid "How much free tiles?"
+msgstr ""
+
+msgctxt "#30010"
+msgid "Amount of seconds to display each image"
+msgstr ""

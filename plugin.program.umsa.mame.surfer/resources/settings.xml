@@ -1,0 +1,115 @@
+<?xml version="1.0" ?>
+<settings version="1">
+	<section id="plugin.program.umsa.mame.surfer">
+		<category id="basic" label="30000" help="30000">
+			<group id="core_settings">
+				<setting id="open_core_settings" type="action" label="30199" help="">
+					<level>0</level>
+					<data>Addon.OpenSettings(script.module.umsa.core)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
+			</group>
+			<group id="3" label="30000">
+                <setting id="temp_path" type="path" label="30252" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="path">
+                		<heading>30252</heading>
+                	</control>
+                </setting>
+                <setting id="pdfviewer" type="path" label="30255" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="file">
+                		<heading>30255</heading>
+                	</control>
+                </setting>
+                <setting id="chdman" type="path" label="30256" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="file">
+                		<heading>30256</heading>
+                	</control>
+                </setting>
+                <setting id="terminal" type="path" label="30257" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="file">
+                		<heading>30257</heading>
+                	</control>
+                </setting>
+			</group>
+		</category>
+		<category id="misc" label="31000" help="31000">
+			<group id="4" label="">
+                <setting id="emulation_start" type="string" label="31013" help="">
+                	<level>0</level>
+                	<default>Normal</default>
+                	<constraints>
+                		<options>
+                			<option>Normal</option>
+                			<option>Watch</option>
+                			<option>Fallback</option>
+                		</options>
+                	</constraints>
+                	<control type="list" format="string">
+                		<heading>31013</heading>
+                	</control>
+                </setting>
+                <setting id="pref_country" type="string" label="30253" help="">
+                	<level>0</level>
+                	<default>USA</default>
+                	<constraints>
+                		<options>
+                			<option>Europe</option>
+                			<option>USA</option>
+                			<option>Japan</option>
+                		</options>
+                	</constraints>
+                	<control type="list" format="string">
+                		<heading>30253</heading>
+                	</control>
+                </setting>
+                <setting id="play_video" type="boolean" label="30254" help="">
+                	<level>0</level>
+                	<default>false</default>
+                	<control type="toggle"/>
+                </setting>
+			</group>
+			<group id="6" label="">
+				<setting id="delete_database" type="action" label="31014" help="">
+					<level>0</level>
+					<data>RunScript(plugin.program.umsa.mame.surfer,del_db)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
+				<setting id="delete_status" type="action" label="31015" help="">
+					<level>0</level>
+					<data>RunScript(plugin.program.umsa.mame.surfer,del_status)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
+			</group>
+		</category>
+	</section>
+</settings>

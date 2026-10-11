@@ -1,0 +1,140 @@
+<?xml version="1.0" ?>
+<settings version="1">
+	<section id="script.module.umsa.core">
+		<category id="shared" label="30000" help="30000">
+			<group id="1" label="">
+                <setting id="mame" type="path" label="30100" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="file">
+                		<heading>30100</heading>
+                	</control>
+                </setting>
+                <setting id="mameini" type="path" label="30111" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="file">
+                		<heading>30111</heading>
+                	</control>
+                </setting>
+                <setting id="mamedir" type="path" label="30112" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="path">
+                		<heading>30112</heading>
+                	</control>
+                </setting>
+                <setting id="vgmplay" type="path" label="30258" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="file">
+                		<heading>30258</heading>
+                	</control>
+                </setting>
+			</group>
+			<group id="2" label="">
+                <setting id="progetto" type="path" label="30201" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="path">
+                		<heading>30201</heading>
+                	</control>
+                </setting>
+                <setting id="otherart" type="path" label="30203" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="path">
+                		<heading>30203</heading>
+                	</control>
+                </setting>
+                <setting id="datdir" type="path" label="30202" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="path">
+                		<heading>30202</heading>
+                	</control>
+                </setting>
+			</group>
+			<group id="3" label="">
+                <setting id="exodos" type="path" label="30204" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="path">
+                		<heading>30204</heading>
+                	</control>
+                </setting>
+                <setting id="gb64" type="path" label="30205" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="path">
+                		<heading>30205</heading>
+                	</control>
+                </setting>
+                <setting id="whdload" type="path" label="30206" help="">
+                	<level>0</level>
+                	<default/>
+                	<constraints>
+                		<writable>false</writable>
+                		<allowempty>true</allowempty>
+                	</constraints>
+                	<control type="button" format="path">
+                		<heading>30206</heading>
+                	</control>
+                </setting>
+			</group>
+			<group id="4" label="">
+                <setting id="aspectratio" type="string" label="30251" help="">
+                	<level>0</level>
+                	<default>16:9</default>
+                	<constraints>
+                		<options>
+                			<option>16:9</option>
+                			<option>16:10</option>
+                			<option>5:4</option>
+                			<option>4:3</option>
+                		</options>
+                	</constraints>
+                	<control type="list" format="string">
+                		<heading>30251</heading>
+                	</control>
+                </setting>
+			</group>
+		</category>
+	</section>
+</settings>

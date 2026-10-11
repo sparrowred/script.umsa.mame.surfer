@@ -1,0 +1,64 @@
+# Kodi Media Center language file
+# Addon Name: UMSA Core
+# Addon id: script.module.umsa.core
+# Addon Provider: sparrowred
+msgid ""
+msgstr ""
+"Project-Id-Version: XBMC Addons\n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: sparrowred\n"
+"Language-Team: English\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "#30000"
+msgid "Shared settings"
+msgstr ""
+
+msgctxt "#30100"
+msgid "MAME executable"
+msgstr ""
+
+msgctxt "#30111"
+msgid "MAME ini file"
+msgstr ""
+
+msgctxt "#30112"
+msgid "MAME working directory"
+msgstr ""
+
+msgctxt "#30201"
+msgid "ProgettoSnaps path"
+msgstr ""
+
+msgctxt "#30202"
+msgid "Support files path"
+msgstr ""
+
+msgctxt "#30203"
+msgid "2nd Artwork path"
+msgstr ""
+
+msgctxt "#30204"
+msgid "eXoDOS path"
+msgstr ""
+
+msgctxt "#30205"
+msgid "GameBase64 path"
+msgstr ""
+
+msgctxt "#30206"
+msgid "WHDLoad path"
+msgstr ""
+
+msgctxt "#30251"
+msgid "AspectRatio of your screen"
+msgstr ""
+
+msgctxt "#30258"
+msgid "VGMPlayer (optional, otherwise normal MAME is used)"
+msgstr ""
