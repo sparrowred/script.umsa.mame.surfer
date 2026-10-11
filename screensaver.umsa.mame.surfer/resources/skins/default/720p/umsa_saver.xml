@@ -364,11 +364,11 @@
             <posx>40</posx>
             <posy>10</posy>
             <width>1000</width>
-            <!-- <visible>Player.HasAudio</visible> -->
+            <visible>!String.IsEqual(Window(10000).Property(UMSA.VGM.Info),)</visible>
             <textcolor>FFB2D4F5</textcolor>
             <shadowcolor>ff000000</shadowcolor>
             <scroll>true</scroll>
-            <label></label>
+            <label>$INFO[Window(10000).Property(UMSA.VGM.Info)]</label>
             <font>font10</font>
         </control>
         <control type="image">

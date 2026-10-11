@@ -134,6 +134,11 @@
                 		<heading>30251</heading>
                 	</control>
                 </setting>
+                <setting id="ssaver_musicinfo" type="boolean" label="30259" help="">
+                	<level>0</level>
+                	<default>true</default>
+                	<control type="toggle"/>
+                </setting>
 			</group>
 		</category>
 	</section>

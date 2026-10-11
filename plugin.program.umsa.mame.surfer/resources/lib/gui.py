@@ -24,9 +24,12 @@ import xbmcgui
 import xbmcvfs
 from umsa_core import (
     ProcessState,
+    calculate_playback_plan,
     load_filter,
     load_lastsaver,
     load_software_list,
+    log,
+    parse_vgm_header,
     save_filter,
     save_software_list,
     set_log,
@@ -37,12 +40,17 @@ from umsa_core.emulation import (
     CHDExtractionCancelled,
     CHDExtractionError,
     Emulation,
+    format_vgm_info,
 )
 from umsa_core.support import marp_download, marp_search, youtube_search
 from umsa_core_kodi import (
+    VGM_SENDER,
+    clear_vgm_info,
     get_core_data_paths,
     get_core_settings,
     get_core_vgmplay_script,
+    parse_vgm_action_method,
+    publish_vgm_info,
 )
 from umsa_screensaver.arguments import encode_request
 
@@ -214,6 +222,25 @@ def create_gui_element_from_snap(set_info, image, art_type='unset'):
         list_item.setProperty(name, '1' if aspect == name else '')
     return list_item
 
+
+class VgmCommandMonitor(xbmc.Monitor):
+    """Receive VGM control commands sent by the screensaver add-on.
+
+    The VGM process lives in this script, so the screensaver (a separate
+    add-on) asks for volume/next/stop over Kodi notifications.
+    """
+
+    def __init__(self, owner):
+        super().__init__()
+        self.owner = owner
+
+    def onNotification(self, sender, method, data):
+        if sender != VGM_SENDER:
+            return
+        action = parse_vgm_action_method(method)
+        if action in ('volume_up', 'volume_down', 'next', 'stop'):
+            self.owner._handle_vgm_action(action)
+
 class UMSA(xbmcgui.WindowXMLDialog):
     """Main UMSA class"""
 
@@ -320,8 +347,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # initalize Emulation class
         self.emulation = Emulation(
             self.temp_dir, self.mameini, self.mame_dir, self.mame_exe, self.chdman_exe,
-            get_core_vgmplay_script(), None, self.nonmame, terminal=self.terminal,
-            vgmplay_exe=self.vgmplay_exe )
+            get_core_vgmplay_script(), self._show_vgm_info, self.nonmame, terminal=self.terminal,
+            vgmplay_exe=self.vgmplay_exe, vgm_stopped_callback=self._hide_vgm_info)
+
+        # receive VGM control commands from the screensaver add-on
+        if not hasattr(self, 'vgm_monitor'):
+            self.vgm_monitor = VgmCommandMonitor(self)
 
         # load filters
         self.filter_lists = load_filter(CORE_DATA_PATHS.filter_file())
@@ -786,10 +817,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     elif ret == 4:
                         self.marp_replayer()
                     elif ret == 5:
-                        self.getControl(MUSIC_INFO).setLabel('Starting random VGM...')
-                        self.getControl(MUSIC_INFO).setVisibleCondition('True')
+                        self._show_vgm_info('Starting random VGM...')
                         self.emulation.play_random_vgm(
-                            self.ggdb, self.getControl(MUSIC_INFO), SETTINGS_FOLDER, xbmc.sleep)
+                            self.ggdb, None, SETTINGS_FOLDER, xbmc.sleep)
                 elif menu_item == M_ASETTINGS:
                     self.setFocus(self.getControl(self.main_focus))
                     __addon__.openSettings()
@@ -1285,8 +1315,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 if select:
                     which_track = self.dialog.select('Select VGM track:', select)
                     if which_track > -1:
+                        track = vgm_tracklist[which_track]
+                        header = parse_vgm_header(vgm_zipfile, track, logger=log)
+                        plan = calculate_playback_plan(header)
+                        nice = format_vgm_info(
+                            track, self.actset['gamename'], header, plan)
                         self.emulation.play_vgm(
-                            f'{list_id}:{which_track+1:03d}', sleep=xbmc.sleep)
+                            f'{list_id}:{which_track+1:03d}', sleep=xbmc.sleep,
+                            info=nice, plan=plan)
             # youtube
             elif what == "yt":
                 self.player.play(
@@ -1473,6 +1509,46 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # update gui
         self.set_filter_content(filter_category_name, update=which_content)
 
+    def _show_vgm_info(self, message):
+        """Publish VGM info to the shared window and to this window's label."""
+
+        publish_vgm_info(message, show=self.musicinfo)
+        try:
+            control = self.getControl(MUSIC_INFO)
+            control.setLabel(message)
+            control.setVisibleCondition('True')
+        except Exception as error:
+            xbmc.log(f"UMSA gui: could not update VGM label: {error}", xbmc.LOGDEBUG)
+
+    def _hide_vgm_info(self):
+        """Clear the shared VGM info and restore this window's music label."""
+
+        clear_vgm_info()
+        try:
+            control = self.getControl(MUSIC_INFO)
+            control.setVisibleCondition('Player.HasAudio')
+            control.setLabel(
+                "$INFO[MusicPlayer.Artist] - $INFO[MusicPlayer.Title] "
+                "(-$INFO[MusicPlayer.TimeRemaining])"
+            )
+        except Exception as error:
+            xbmc.log(f"UMSA gui: could not reset VGM label: {error}", xbmc.LOGDEBUG)
+
+    def _handle_vgm_action(self, action):
+        """Run a VGM control action requested by another add-on."""
+
+        if not self.emulation.playvgm:
+            return
+        xbmc.log(f"UMSA gui: VGM action from screensaver: {action}", xbmc.LOGDEBUG)
+        if action == 'stop':
+            self.emulation.playrandomvgm = False
+            clear_vgm_info()
+            self.emulation.send_vgmaction(b'exit')
+        elif action == 'next':
+            self.emulation.send_vgmaction(b'exit')
+        elif action in ('volume_up', 'volume_down'):
+            self.emulation.send_vgmaction(action.encode())
+
     def read_settings(self):
         """Read settings for UMSA from Kodi
 
@@ -1494,6 +1570,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.aratio = core_settings.aspectratio
         self.datdir = core_settings.datdir
         self.vgmplay_exe = core_settings.vgmplay
+        self.musicinfo = core_settings.musicinfo_enabled
         # read in settings specific to this add-on
         self.pref_country = __addon__.getSetting('pref_country')
         self.temp_dir = __addon__.getSetting('temp_path')
@@ -3152,6 +3229,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if self.emulation.playvgm:
             self.emulation.playrandomvgm = None
             self.emulation.send_vgmaction(b'exit')
+            clear_vgm_info()
         # TODO stop video if playing
         # if self.player.isPlayingVideo() and self.playvideo:
         #     self.player.stop()

@@ -26,6 +26,13 @@ class SharedSettings:
     gb64: str = ""
     whdload: str = ""
     aspectratio: str = DEFAULT_ASPECT_RATIO
+    ssaver_musicinfo: str = "true"
+
+    @property
+    def musicinfo_enabled(self) -> bool:
+        """Return whether the screensaver should display music info."""
+
+        return self.ssaver_musicinfo == "true"
 
     @property
     def aspect_ratio_factor(self) -> float:

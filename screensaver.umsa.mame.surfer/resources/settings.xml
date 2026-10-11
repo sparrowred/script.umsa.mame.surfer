@@ -26,10 +26,6 @@
           <default>true</default>
           <control type="toggle"/>
         </setting>
-        <setting id="ssaver_musicinfo" type="boolean" label="30061">
-          <default>false</default>
-          <control type="toggle"/>
-        </setting>
       </group>
       <group id="modes" label="30067">
         <setting id="ssaver_videos" type="boolean" label="30058">

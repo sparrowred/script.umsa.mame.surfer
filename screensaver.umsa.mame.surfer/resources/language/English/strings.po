@@ -29,10 +29,6 @@ msgctxt "#30056"
 msgid "Show game info"
 msgstr ""
 
-msgctxt "#30061"
-msgid "Show music info"
-msgstr ""
-
 msgctxt "#30067"
 msgid "Modes"
 msgstr ""

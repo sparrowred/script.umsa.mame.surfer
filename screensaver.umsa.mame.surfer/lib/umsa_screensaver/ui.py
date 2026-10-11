@@ -55,7 +55,12 @@ import xbmcaddon
 import xbmcgui
 import xbmcvfs
 from umsa_core.emulation import Emulation
-from umsa_core_kodi import get_core_settings, get_core_vgmplay_script
+from umsa_core_kodi import (
+    get_core_settings,
+    get_core_vgmplay_script,
+    send_vgm_action,
+    vgm_active,
+)
 
 try:
     from PIL import Image, ImageStat
@@ -215,24 +220,22 @@ class Saver(xbmcgui.WindowXMLDialog):
         elif self.running in ('cross', 'wall', 'slide'):
             # allow changing volume with plus/minus
             # also allow playnext and right should button for next vgm
-            if self.parent.emulation.playrandomvgm or self.parent.emulation.playvgm:
+            if vgm_active():
                 if action.getId() == 88:
                     self.parent.vgmaction = True
-                    self.parent.umsa.monitor.emulation.send_vgmaction(b'volume_up')
+                    send_vgm_action('volume_up')
                     xbmc.log("UMSA SSaver: sound volume + dont end saver", xbmc.LOGDEBUG)
                 elif action.getId() == 89:
                     self.parent.vgmaction = True
-                    self.parent.umsa.monitor.emulation.send_vgmaction(b'volume_down')
+                    send_vgm_action('volume_down')
                     xbmc.log("UMSA SSaver: sound volume - dont end saver", xbmc.LOGDEBUG)
                 elif action.getId() in ACTION_PLAY_NEXTITEM+ACTION_MOVEMENT_RIGHT:
                     self.parent.vgmaction = True
-                    self.parent.umsa.monitor.emulation.send_vgmaction(b'exit')
+                    send_vgm_action('next')
                     xbmc.log("UMSA SSaver: next song - dont end saver", xbmc.LOGDEBUG)
                 elif action.getId() == 13:
-                    self.parent.emulation.playrandomvgm = False
                     self.parent.vgmaction = True
-                    self.parent.umsa.monitor.emulation.send_vgmaction(b'exit')
-                    # TODO check gui, clean music info
+                    send_vgm_action('stop')
                 else:
                     self.parent.reallyDeactivateScreensaver()
                     self.running = 'no'
@@ -257,7 +260,6 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.settings['info'] = False
         if self.__addon__.getSetting('ssaver_info') == 'true':
             self.settings['info'] = True
-        self.settings['musicinfo'] = self.__addon__.getSetting('ssaver_musicinfo')
 
         self.settings['type'] = []
         if self.__addon__.getSetting('ssaver_videos') == 'true':
@@ -864,20 +866,7 @@ class Monitor(xbmc.Monitor):
             mame_exe=self.umsa.mame_exe,
             vgmplay_exe=self.umsa.vgmplay_exe,
             vgmlua_script=get_core_vgmplay_script(),
-            vgm_info_callback=self._set_vgm_info,
         )
-
-    def _set_vgm_info(self, message):
-        """Update the screensaver's VGM label from the Kodi integration layer."""
-
-        if self.saver.running != "no":
-            try:
-                self.saver.getControl(4100).setLabel(message)
-            except Exception as error:
-                xbmc.log(
-                    f"UMSA screensaver: could not update VGM label: {error}",
-                    xbmc.LOGWARNING,
-                )
 
     def play_saver(self, saver, art_types=None):
         """Start specific screensaver.
@@ -940,7 +929,7 @@ class Monitor(xbmc.Monitor):
         elif self.vgmaction:
             xbmc.log("UMSA SSaver Monitor: only vgm command send, screensaver stays active", xbmc.LOGDEBUG)
             self.vgmaction = False
-        elif self.emulation.playrandomvgm:
+        elif vgm_active():
             xbmc.log("UMSA SSaver Monitor: dont stop as random vgm plays and it could be a command", xbmc.LOGDEBUG)
         else:
             xbmc.log("UMSA SSaver Monitor: no vgm playing, stopping screensaver", xbmc.LOGDEBUG)

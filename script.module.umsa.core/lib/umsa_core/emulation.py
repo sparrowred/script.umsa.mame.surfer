@@ -37,6 +37,16 @@ NONMAME = ('exodos','gb64_quik','gb64_cart','gb64_cass','gb64_flop','whdload_gam
 CHD_PROCESS_STOP_TIMEOUT = 2
 
 
+def format_vgm_info(track_filename, gamename, header, plan):
+    """Build the human readable VGM info string shared by all play modes."""
+
+    minutes, seconds = divmod(int(header.total_seconds), 60)
+    return (
+        f'Song "{track_filename[:-4].title()}" from "{gamename}" '
+        f'{minutes}:{seconds:02d} ({plan.reason})'
+    )
+
+
 class CHDExtractionCancelled(Exception):
     """Raised when the user cancels a running CHD extraction."""
 
@@ -205,7 +215,7 @@ class Emulation:
 
     def __init__(self, temp_dir='.', mame_ini_file=None, mame_dir='.', mame_exe=None,
                     chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame={},
-                    terminal='', vgmplay_exe=''):
+                    terminal='', vgmplay_exe='', vgm_stopped_callback=None):
         self.percent = 0 # chd convert
         self.playvgm = False
         self.playintrovgm = False
@@ -224,6 +234,7 @@ class Emulation:
         self.vgm_port_env = None
         self.lua_script = vgmlua_script
         self.vgm_info_callback = vgm_info_callback
+        self.vgm_stopped_callback = vgm_stopped_callback
         self.nonmame = nonmame
         self.terminal = terminal
         self.vgmplay_exe = vgmplay_exe
@@ -505,12 +516,15 @@ class Emulation:
             log("UMSA Emu: lua send failed", level='warning')
             return False
 
-    def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True, plan=None):
+    def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True,
+                    plan=None, info=None):
         """Play vgm."""
 
         log(f"UMSA emu: play_vgm_thread, vgmplay_exe: {self.vgmplay_exe}")
         self.playvgm = True
         self.playintrovgm = intro
+        if info:
+            self._notify_vgm_info(info)
         # Use plan.seconds_to_run if provided, else sec2run (backward compat)
         actual_sec = plan.seconds_to_run if plan else sec2run
         vgm_args = ['-videodriver', 'dummy', '-video', 'none', '-volume', '1', '-seconds_to_run', str(int(actual_sec)),
@@ -523,20 +537,42 @@ class Emulation:
             'working_dir': self.mame_dir,
             'env': self._vgm_process_env(),
         }
-        self.run()
-        self._accept_vgm_conn()
-        # wait until emu is finished
-        if self.process:
-            # TODO wait is blocking, not good in a thread? have some poll loop?
-            my_rc = self.process.wait()
-            log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
-        else:
-            log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
-        self.playvgm = False
-        if close_server:
-            self._close_vgm_sockets()
-        else:
-            self._close_accepted_conn()
+        try:
+            self.run()
+            self._accept_vgm_conn()
+            # wait until emu is finished
+            if self.process:
+                # TODO wait is blocking, not good in a thread? have some poll loop?
+                my_rc = self.process.wait()
+                log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
+            else:
+                log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
+        finally:
+            self.playvgm = False
+            if close_server:
+                self._close_vgm_sockets()
+            else:
+                self._close_accepted_conn()
+            if info:
+                self._notify_vgm_stopped()
+
+    def _notify_vgm_info(self, message):
+        """Forward a VGM info message to the Kodi integration layer."""
+
+        if self.vgm_info_callback:
+            try:
+                self.vgm_info_callback(message)
+            except Exception as error:
+                log(f'UMSA Emu: VGM info callback failed: {error}', level='warning')
+
+    def _notify_vgm_stopped(self):
+        """Forward the end of a VGM playback to the Kodi integration layer."""
+
+        if self.vgm_stopped_callback:
+            try:
+                self.vgm_stopped_callback()
+            except Exception as error:
+                log(f'UMSA Emu: VGM stopped callback failed: {error}', level='warning')
 
     def _vgm_process_env(self):
         """Pass the port captured for this listener only to the MAME process."""
@@ -586,8 +622,8 @@ class Emulation:
                     #f'UMSA Emu: VGM vol_mod={header.volume_modifier} gain={header.header_gain_factor:.4f} gain_db={header.header_gain_db:.2f} \n'
                     #f'UMSA Emu: VGM extra_hdr={header.extra_header_present} chip_vol={header.has_chip_volumes}',
                     level='debug')
-                minutes, seconds = divmod(int(header.total_seconds), 60)
-                vgm_nice = f'Song "{vgm_tracklist[random_track-1][:-4].title()}" from "{random_vgm["gamename"]}" {minutes}:{seconds:02d} ({plan.reason})'
+                vgm_nice = format_vgm_info(
+                    vgm_tracklist[random_track - 1], random_vgm["gamename"], header, plan)
                 if self.vgm_info_callback:
                     self.vgm_info_callback(vgm_nice)
                 if textinfo:
@@ -599,6 +635,7 @@ class Emulation:
         finally:
             self._close_vgm_sockets()
             self.playrandomvgm = False
+            self._notify_vgm_stopped()
 
     def play_random_vgm(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
 
@@ -606,13 +643,13 @@ class Emulation:
             args=(ggdb, textinfo, db_path, sleep))
         self.rvgm_thread.start()
 
-    def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False):
+    def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):
 
         if intro and self.playvgm:
             return  # no intro play when a vgm already plays
         self._start_vgm_server()
         self.pvgm_thread = Thread(target=self.play_vgm_thread,
-            args=(vgm, sec2run, sleep, intro))
+            args=(vgm, sec2run, sleep, intro), kwargs={'info': info, 'plan': plan})
         self.pvgm_thread.start()
 
     def find_nonmame_roms(self, exodos_shell=''):

@@ -62,3 +62,7 @@ msgstr ""
 msgctxt "#30258"
 msgid "VGMPlayer (optional, otherwise normal MAME is used)"
 msgstr ""
+
+msgctxt "#30259"
+msgid "Show music info"
+msgstr ""
