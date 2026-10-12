@@ -22,16 +22,13 @@ import xbmcgui
 import xbmcvfs
 from umsa_core import (
     FILTER_CATEGORIES,
-    ProcessState,
     build_artwork_path,
     calculate_playback_plan,
     categorize_art_type,
     check_image_aspect,
     find_local_snapshots,
     get_machine_artwork_path,
-    load_batocera_mapping,
     load_filter,
-    load_lastsaver,
     load_software_list,
     log,
     parse_vgm_header,
@@ -53,7 +50,7 @@ from umsa_core.emulation import (
     Emulation,
     format_vgm_info,
 )
-from umsa_core.support import marp_download, marp_search, youtube_search
+from umsa_core.support import marp_search, youtube_search
 from umsa_core_kodi import (
     VGM_SENDER,
     clear_vgm_info,
@@ -66,6 +63,8 @@ from umsa_core_kodi import (
 )
 from umsa_screensaver.arguments import encode_request
 from retroplayer_cache import run_retroplayer
+from gamelist_strategies import EARLY_RETURN, GAMELIST_STRATEGIES
+from settings_adapter import load_all_settings
 
 try:
     from pdf import play_pdf
@@ -1554,6 +1553,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # TODO: put all into settings dict
         # read in shared settings from the Core module
         core_settings = get_core_settings()
+        # read in settings specific to this add-on
+        gui_settings, emu_settings = load_all_settings(
+            core_settings, __addon__, __resource__, PLATFORM
+        )
+
         self.mame_exe = core_settings.mame
         self.mameini = core_settings.mameini
         self.mame_dir = core_settings.mamedir
@@ -1563,44 +1567,18 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.datdir = core_settings.datdir
         self.vgmplay_exe = core_settings.vgmplay
         self.musicinfo = core_settings.musicinfo_enabled
-        # read in settings specific to this add-on
-        self.pref_country = __addon__.getSetting('pref_country')
-        self.temp_dir = __addon__.getSetting('temp_path')
-        self.pdfviewer = __addon__.getSetting('pdfviewer')
-        self.chdman_exe = __addon__.getSetting('chdman')
-        self.terminal = __addon__.getSetting('terminal')
-        es_dict = {'Normal': 0, 'Watch': 1, 'Fallback': 2}
-        self.emulation_start = es_dict[__addon__.getSetting('emulation_start')]
-        self.nonmame = {
-            'exodos': core_settings.exodos,
-            'gb64': core_settings.gb64,
-            'whdload': core_settings.whdload,
-        }
 
-        # check chdman
-        if self.chdman_exe == "":
-            # split self.mame_exe
-            mame_path = os.path.split(self.mame_exe)[0]
-            # check if chdman is in same dir as mame
-            if 'linux' in PLATFORM:
-                chdman_file = os.path.join(mame_path, 'chdman')
-            else:
-                chdman_file = os.path.join(mame_path, 'chdman.exe')
-            if os.path.isfile(chdman_file):
-                self.chdman_exe = chdman_file
+        self.pref_country = gui_settings.pref_country
+        self.temp_dir = gui_settings.temp_dir
+        self.pdfviewer = gui_settings.pdfviewer
+        self.chdman_exe = gui_settings.chdman_exe
+        self.terminal = gui_settings.terminal
+        self.emulation_start = gui_settings.emulation_start
+        self.playvideo = gui_settings.playvideo
 
-        # auto play videos
-        if __addon__.getSetting('play_video') == 'true':
-            self.playvideo = True
-        # needed as settings can be changed and reread
-        else:
-            self.playvideo = None
-
-        self.cab_path = os.path.join(self.progetto, 'cabinets/cabinets')
-
-        # batocera mapping
-        mapping_file = os.path.join(__resource__, 'batocera-dir-struct-map.txt')
-        self.batomame = load_batocera_mapping(mapping_file)
+        self.nonmame = emu_settings.nonmame
+        self.cab_path = emu_settings.cab_path
+        self.batomame = emu_settings.batomame
 
     def close_filterlist(self, no_update=None):
         """Close filter list window"""
@@ -1865,163 +1843,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.getControl(GAME_LIST_LABEL).setLabel('loading...')
         time1 = time.time()
 
-        if item == M_ALL:
-            xbmc.log("UMSA gui: update_gamelist: get_by_software")
-            results, pos, count = self.ggdb.get_by_software(self.actset['id'])
-            gl_label = "Complete list (%d)" % (count,)
-            gl_options = ('name', 'year', 'publisher')
-
-        elif item == M_SWL:
-            xbmc.log("UMSA gui: update_gamelist: get_by_swl")
-            results, pos, count = self.ggdb.get_by_swl(
-                self.actset['swl_name'],
-                self.actset['id'],
-            )
-            gl_label = "swl: %s (%d)" % (
-                self.actset['swl_name'], count
-            )
-            gl_options = ("all swls", "get connected swls")
-
-        elif item == M_CAT:
-            results, pos, count = self.ggdb.get_by_cat(
-                self.actset['category'], self.actset['id']
-            )
-            gl_label = "Category: %s (%d)" % (
-                self.actset['category'], count
-            )
-            gl_options = ('name', 'year', 'publisher')
-
-        elif item == M_YEAR:
-            results, pos, count = self.ggdb.get_by_year(
-                self.actset['year'],
-                self.actset['id']
-            )
-            gl_label = "Year: %s (%d)" % (self.actset['year'], count)
-            gl_options = ('±0', '±1', '±2')
-
-        elif item == M_PLAYERS:
-            results, pos, count = self.ggdb.get_by_players(
-                self.actset['nplayers'],
-                self.actset['id']
-            )
-            gl_label = "Players: {} ({})".format(self.actset['nplayers'], count)
-            gl_options = ('name', 'year', 'publisher')
-
-        elif item == M_MAKER:
-            results, pos, count = self.ggdb.get_by_maker(
-                self.actset['publisher'],
-                self.actset['id']
-            )
-            gl_label = "Publisher: %s (%d)" % (self.actset['publisher'], count)
-            gl_options = ('name', 'year', 'publisher')
-
-        elif item == M_PLAYSTAT:
-            results, pos = self.ggdb.get_last_played("time_played")
-            gl_label = ("play status")
-            gl_options = ('time_played', 'last_played', 'play_count')
-
-        elif item == M_MACHINE:
-            if self.actset['swl_name'] == "mame":
-                emus = self.ggdb.get_emulators(source=self.actset['source'])
-                gl_label = 'Emulators for source {} ({})'.format(
-                    self.actset['source'][:-4], len(results))
-            else:
-                emus = self.ggdb.get_emulators(swl_name=self.actset['swl_name'])
-                temp_results, pos = self.ggdb.get_machines(
-                    self.actset['swl_name'], self.actset['machine_name']
-                )
-                results.extend(temp_results)
-                results.append({'id': 0, 'name': "----------", 'year': '', 'maker': ''})
-                gl_label = 'Machines for {} ({})'.format(self.actset['swl_name'], len(results))
-            for i in emus:
-                results.append({'id': "emu_conn::{}".format(i['emu_conn_id']),
-                                'name': i['name'], 'year': '', 'maker': ''})
-            if self.actset['swl_name'] == 'exodos':
-                results.append({'id': 1,
-                            'name': "Start eXoDOS Shell launcher",
-                            'year': ">>>", 'maker': "<<<"})
-                results.append({'id': 1,
-                            'name': "Start eXoDOS Alternate Shell launcher",
-                            'year': ">>>", 'maker': "<<<"})
-            results.append({'id': 1,
-                            'name': "Start with M.A.M.E.",
-                            'year': ">>>", 'maker': "<<<"})
-            results.append({'id': 1,
-                            'name': "Start with Kodi Retroplayer",
-                            'year': ">>>", 'maker': "<<<"})
-            results.append({'id': 1,
-                            'name': "Choose a different emulator",
-                            'year': ">>>", 'maker': "<<<"})
-            gl_options = ('name', 'year', 'publisher')
-
-        elif item == M_ALLEMUS:
-            for i in self.ggdb.get_emulators():
-                results.append(
-                    {'id': "emu::{}".format(i['id']),
-                     'name': i['name'],
-                     'year': '', 'maker': "{} / {}".format(i['mode'], i['zip'])})
-            gl_label = "Emulators"
-            gl_options = ""
-
-        elif item == M_SOURCE:
-            results, pos, result_count = self.ggdb.get_software_for_source(
-                self.actset['id'], self.actset['source']
-            )
-            gl_label = "source: %s (%d)" % (self.actset['source'], result_count)
-            gl_options = ('name', 'year', 'publisher')
-
-        elif item == M_LSSAVER:
-            results = []
-            for i in load_lastsaver(CORE_DATA_PATHS.lastsaver_file):
-                saver_list = self.ggdb.get_info_by_set_and_swl(i[0], i[1])
-                results.append(
-                    {'name': saver_list['name'],
-                     'id': str(saver_list['software_id']),
-                     'year': saver_list['year'],
-                     'maker': saver_list['maker'],
-                    }
-                )
-            gl_label = 'last screensaver session'
-            gl_options = ('name', 'year', 'publisher')
-            pos = 0
-
-        elif item == M_SERIES:
-
-            results = self.ggdb.get_series(self.last[self.lastptr])
-            if results:
-                self.popup_gamelist(results, 'Series')
-            #self.getControl(GAME_LIST_TEXT).setText('')
-            return
-
-        elif item == M_REC:
-
-            self.show_rec()
-            #self.getControl(GAME_LIST_TEXT).setText('')
-            return
-
-        # TODO rethink normal and context call
-        elif item == M_SEARCH_NEW:
-            keyboard = xbmc.Keyboard('', "Search for", 0)
-            keyboard.doModal()
-            if keyboard.isConfirmed():
-                self.searchold = keyboard.getText()
-            else:
+        strategy = GAMELIST_STRATEGIES.get(item)
+        if strategy is not None:
+            outcome = strategy(self)
+            if outcome is EARLY_RETURN:
                 return
-            results, pos, result_count = self.ggdb.get_searchresults(self.searchold)
-            gl_label = '%d results for %s' % (result_count, self.searchold)
-            gl_options = ('new search',)
-
-        elif item == M_SEARCH:
-            if not self.searchold:
-                keyboard = xbmc.Keyboard('', "Search for", 0)
-                keyboard.doModal()
-                if keyboard.isConfirmed():
-                    self.searchold = keyboard.getText()
-                else:
-                    return
-            results, pos, result_count = self.ggdb.get_searchresults(self.searchold)
-            gl_label = '%d results for %s' % (result_count, self.searchold)
-            gl_options = ('new search',)
+            results, pos, gl_label, gl_options = outcome
 
         # no results = close list
         if len(results) == 0:
@@ -2724,40 +2551,17 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # exodos
         if 'exodos' in emu_infos['exe']:
-            alt = "shell"
-            if 'alt' in emu_infos['exe']:
-                alt = "alt"
             self.emu_dialog.update(10, 'searching shellscript...')
-            self.emulation.find_nonmame_roms(alt)
-            self.emulation.emurun['args'] = []
-            self.emulation.emurun['emulation_start'] = 2
+            self.emulation.prepare_exodos_run(emu_infos)
         # marp
         elif emu_infos['exe'] == "marp":
-            self.emulation.emurun['emu_exe'] = self.mame_exe
             self.emu_dialog.update(20, 'download replay...')
             # TODO error handling, percentage?
-            inp_file = marp_download(
-                emu_infos['marp_dl'],
-                self.emulation.input_directory)
-            self.emulation.emurun['args'] = [
-                emu_infos['set_name'], "-playback", inp_file, "-exit_after_playback"]
+            self.emulation.prepare_marp_run(emu_infos)
         # mame
         elif emu_infos['exe'] == "mame":
-            self.emulation.emurun['emu_exe'] = self.mame_exe
-            if self.actset['swl_name'] == 'mame':
-                self.emulation.emurun['args'] = self.actset['name']
-            # check for Gamebase64 files
-            elif self.actset['swl_name'].startswith('gb64_'):
-                filename = self.nonmame['gb64']+'Games/'+self.actset['name']+'.zip'
-                self.emulation.emurun['args'] = [
-                    'c64p', f"-{self.actset['swl_name'][-4:]}", filename]
-            # start a swl item
-            else:
-                self.emu_dialog.update(20, 'create swl options...')
-                # get cmd options
-                self.emulation.emurun['args'] = self.ggdb.get_cmd_line_options(
-                    self.actset['id'], self.actset['name'],
-                    self.actset['machine_name'], self.actset['swl_name'])
+            self.emulation.prepare_mame_run(
+                self.ggdb, self.actset, dialog=self.emu_dialog)
         # other emulator
         else:
             xbmc.log(f"UMSA gui: run_emulator: diff emu: {dict(emu_infos)}")
@@ -2823,34 +2627,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.emulation.run()
 
         start = time.time()
-        out, err = '', ''
-        # wait for emulator process to stop or cancel press to kill
-        wait_cancel = True
-        while wait_cancel:
-            xbmc.sleep(1000)
-            if uses_process_runner:
-                if self.emulation.managed_process_status().state is not ProcessState.RUNNING:
-                    wait_cancel = False
-            else:
-                wait_cancel = False
-            if self.emu_dialog.iscanceled():
-                self.emu_dialog.update(60, 'emulator stopping...')
-                wait_cancel = False
-                xbmc.log("UMSA gui: run_emulator: cancel pressed, sending SIGTERM")
-                if uses_process_runner:
-                    self.emulation.terminate_managed_process()
-                else:
-                    self.emulation.terminate()
-                xbmc.sleep(3000)
-                if (uses_process_runner and
-                        self.emulation.managed_process_status().state is ProcessState.RUNNING):
-                    xbmc.log(
-                        "UMSA gui: run_emulator: process does not terminate, sending SIGKILL")
-                    self.emulation.kill_managed_process()
-        if self.emulation.emurun['emulation_start'] == 1:
-            process_out, process_err = self.emulation.read_managed_process_output()
-            out = process_out.decode('utf-8', errors='ignore')
-            err = process_err.decode('utf-8', errors='ignore')
+        out, err = self.emulation.wait_for_completion(
+            dialog=self.emu_dialog, sleep=xbmc.sleep)
 
         #xbmc.executebuiltin("Maximize")
         #xbmc.executebuiltin("Action(Fullscreen)")

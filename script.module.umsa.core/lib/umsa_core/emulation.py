@@ -13,11 +13,13 @@ from zipfile import BadZipfile, ZipFile
 
 from umsa_core import (
     ProcessRunner,
+    ProcessState,
     ProcessStatus,
     calculate_playback_plan,
     log,
     parse_vgm_header,
 )
+from umsa_core.support import marp_download
 
 PLATFORM = platform()
 EXTENSIONS = {
@@ -35,6 +37,12 @@ EXTENSIONS = {
 }
 NONMAME = ('exodos','gb64_quik','gb64_cart','gb64_cass','gb64_flop','whdload_games','whdload_demos')
 CHD_PROCESS_STOP_TIMEOUT = 2
+
+
+def _time_sleep_ms(milliseconds):
+    """Sleep for milliseconds via ``time.sleep`` (Kodi-free default)."""
+
+    time_sleep(milliseconds / 1000.0)
 
 
 def format_vgm_info(track_filename, gamename, header, plan):
@@ -356,6 +364,87 @@ class Emulation:
         """Read stdout and stderr captured by the Core process runner."""
 
         return self.process_runner.read_output()
+
+    def prepare_exodos_run(self, emu_infos):
+        """Prepare ``emurun`` for eXoDOS."""
+
+        alt = "shell"
+        if 'alt' in emu_infos['exe']:
+            alt = "alt"
+        self.find_nonmame_roms(alt)
+        self.emurun['args'] = []
+        self.emurun['emulation_start'] = 2
+
+    def prepare_marp_run(self, emu_infos):
+        """Prepare ``emurun`` for a MARP replay."""
+
+        self.emurun['emu_exe'] = self.mame_exe
+        inp_file = marp_download(
+            emu_infos['marp_dl'],
+            self.input_directory)
+        self.emurun['args'] = [
+            emu_infos['set_name'], "-playback", inp_file, "-exit_after_playback"]
+
+    def prepare_mame_run(self, ggdb, actset, dialog=None):
+        """Prepare ``emurun['args']`` for MAME based on ``actset``."""
+
+        self.emurun['emu_exe'] = self.mame_exe
+        if actset['swl_name'] == 'mame':
+            self.emurun['args'] = actset['name']
+        # check for Gamebase64 files
+        elif actset['swl_name'].startswith('gb64_'):
+            filename = self.nonmame['gb64'] + 'Games/' + actset['name'] + '.zip'
+            self.emurun['args'] = [
+                'c64p', f"-{actset['swl_name'][-4:]}", filename]
+        # start a swl item
+        else:
+            if dialog is not None:
+                dialog.update(20, 'create swl options...')
+            # get cmd options
+            self.emurun['args'] = ggdb.get_cmd_line_options(
+                actset['id'], actset['name'],
+                actset['machine_name'], actset['swl_name'])
+
+    def wait_for_completion(self, dialog=None, sleep=None):
+        """Wait for the running emulator to stop or the user to cancel.
+
+        Returns ``(stdout, stderr)``. ``sleep`` takes milliseconds so the GUI
+        can pass ``xbmc.sleep``; the default maps them to ``time.sleep``.
+        """
+
+        if sleep is None:
+            sleep = _time_sleep_ms
+        sleep_ms = sleep
+        uses_process_runner = self.emurun['emulation_start'] in (0, 1)
+        out, err = '', ''
+        # wait for emulator process to stop or cancel press to kill
+        wait_cancel = True
+        while wait_cancel:
+            sleep_ms(1000)
+            if uses_process_runner:
+                if self.managed_process_status().state is not ProcessState.RUNNING:
+                    wait_cancel = False
+            else:
+                wait_cancel = False
+            if dialog is not None and dialog.iscanceled():
+                dialog.update(60, 'emulator stopping...')
+                wait_cancel = False
+                log("UMSA gui: run_emulator: cancel pressed, sending SIGTERM")
+                if uses_process_runner:
+                    self.terminate_managed_process()
+                else:
+                    self.terminate()
+                sleep(3000)
+                if (uses_process_runner and
+                        self.managed_process_status().state is ProcessState.RUNNING):
+                    log(
+                        "UMSA gui: run_emulator: process does not terminate, sending SIGKILL")
+                    self.kill_managed_process()
+        if self.emurun['emulation_start'] == 1:
+            process_out, process_err = self.read_managed_process_output()
+            out = process_out.decode('utf-8', errors='ignore')
+            err = process_err.decode('utf-8', errors='ignore')
+        return out, err
 
 
     def after_run(self):
