@@ -1,8 +1,6 @@
 """Kodi Retroplayer cache preparation and launch.
 
-Extracted verbatim from :meth:`gui.UMSA.run_emulator` (the
-``emu_infos['exe'] == 'kodi'`` branch). ``ctx`` is the UMSA GUI instance; the
-code is byte-for-byte identical apart from the ``self`` -> ``ctx`` rename.
+Refactored to accept a minimal context with data, services and callbacks.
 """
 
 import os

@@ -19,7 +19,8 @@ if COMMAND in (None, "select_software"):
     addon = xbmcaddon.Addon(id=ADDON_ID)
     sys.path.append(os.path.join(addon.getAddonInfo("path"), "resources", "lib"))
     # start frontend
-    import gui  # noqa: F401
+    import gui
+    gui.main()
 elif COMMAND == "del_db":
     try:
         os.remove(CORE_DATA_PATHS.umsa_db)

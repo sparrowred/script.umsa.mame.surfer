@@ -12,6 +12,7 @@ import os
 import sys
 import time
 import zipfile
+from dataclasses import dataclass
 from json import dumps, loads
 from random import choice, randint
 from threading import Thread
@@ -1866,7 +1867,18 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         strategy = GAMELIST_STRATEGIES.get(item)
         if strategy is not None:
-            outcome = strategy(self)
+            gl_ctx = GamelistCtx(
+                db=self.ggdb,
+                actset=self.actset,
+                last=self.last,
+                lastptr=self.lastptr,
+                searchold=self.searchold,
+                popup_gamelist=self.popup_gamelist,
+                show_rec=self.show_rec,
+                lastsaver_path=CORE_DATA_PATHS.lastsaver_file,
+            )
+            outcome = strategy(gl_ctx)
+            self.searchold = gl_ctx.searchold
             if outcome is EARLY_RETURN:
                 return
             results, pos, gl_label, gl_options = outcome
@@ -2567,7 +2579,18 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # start
         #
         if emu_infos['exe'] == 'kodi':
-            run_retroplayer(self)
+            rp_ctx = RetroplayerCtx(
+                actset=self.actset,
+                batomame=self.batomame,
+                temp_dir=self.temp_dir,
+                emulation=self.emulation,
+                emu_dialog=self.emu_dialog,
+                dialog=self.dialog,
+                player=self.player,
+            )
+            rp_ctx.stop_screensaver = self.stop_screensaver
+            rp_ctx.exit = self.exit
+            run_retroplayer(rp_ctx)
             return
 
         # exodos
@@ -2762,4 +2785,33 @@ def main():
     gui.doModal()
     del gui
 
-main()
+
+@dataclass
+class GamelistCtx:
+    db = None
+    actset = None
+    last = None
+    lastptr = 0
+    searchold = None
+    popup_gamelist = None
+    show_rec = None
+    lastsaver_path = None
+
+
+@dataclass
+class RetroplayerCtx:
+    actset = None
+    batomame = None
+    temp_dir = None
+    emulation = None
+    emu_dialog = None
+    dialog = None
+    player = None
+
+    def stop_screensaver(self):
+        pass
+
+    def exit(self):
+        pass
+
+
