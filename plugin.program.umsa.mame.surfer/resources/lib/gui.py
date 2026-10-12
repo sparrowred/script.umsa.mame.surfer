@@ -20,6 +20,9 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcvfs
+from gamelist_strategies import EARLY_RETURN, GAMELIST_STRATEGIES
+from retroplayer_cache import run_retroplayer
+from settings_adapter import load_all_settings
 from umsa_core import (
     FILTER_CATEGORIES,
     build_artwork_path,
@@ -62,9 +65,6 @@ from umsa_core_kodi import (
     publish_vgm_info,
 )
 from umsa_screensaver.arguments import encode_request
-from retroplayer_cache import run_retroplayer
-from gamelist_strategies import EARLY_RETURN, GAMELIST_STRATEGIES
-from settings_adapter import load_all_settings
 
 try:
     from pdf import play_pdf
@@ -101,6 +101,8 @@ ACTION_PLAY_NEXTITEM = (14,112)
 ACTION_SOUND_VOLUME = (88, 89)
 ACTION_CONTEXT = (117,)
 ACTION_ENTER = (7,)
+
+EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"  # Shared with screensaver.umsa.mame.surfer; both depend on identical name.
 
 #ControlIds
 SERIES_LABEL = 2301
@@ -280,6 +282,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.vidman = None
         self.emulation_start = 0
         self.initial_software_id = None
+
+        # Clear stale emulator running state from any previous crashed instance
+        self.set_emulator_running(False)
 
         # no settings = open settings
         if not os.path.exists(SETTINGS_FOLDER):
@@ -500,6 +505,22 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # update control_id
         self.enter = None
         self.selected_control_id = control_id
+
+    def set_emulator_running(self, running: bool):
+        """Set/clear the property indicating an external emulator is running.
+
+        This property is shared with screensaver.umsa.mame.surfer; both add-ons
+        must use the identical property name.
+        """
+        w = xbmcgui.Window(10000)
+        if running:
+            w.setProperty(EMULATOR_RUNNING_PROPERTY, "true")
+        else:
+            w.clearProperty(EMULATOR_RUNNING_PROPERTY)
+
+    def is_emulator_running(self):
+        """Return True if an external emulator is currently running."""
+        return xbmcgui.Window(10000).getProperty(EMULATOR_RUNNING_PROPERTY) == "true"
 
     def get_screensaver_mode(self):
         """Return the active standalone screensaver mode, if any."""
@@ -2619,16 +2640,20 @@ class UMSA(xbmcgui.WindowXMLDialog):
         #xbmc.executebuiltin("Minimize")
         xbmc.sleep(100)
         uses_process_runner = self.emulation.emurun['emulation_start'] in (0, 1)
-        if uses_process_runner:
-            self.emulation.start_managed_process(
-                capture_output=self.emulation.emurun['emulation_start'] == 1
-            )
-        else:
-            self.emulation.run()
+        self.set_emulator_running(True)
+        try:
+            if uses_process_runner:
+                self.emulation.start_managed_process(
+                    capture_output=self.emulation.emurun['emulation_start'] == 1
+                )
+            else:
+                self.emulation.run()
 
-        start = time.time()
-        out, err = self.emulation.wait_for_completion(
-            dialog=self.emu_dialog, sleep=xbmc.sleep)
+            start = time.time()
+            out, err = self.emulation.wait_for_completion(
+                dialog=self.emu_dialog, sleep=xbmc.sleep)
+        finally:
+            self.set_emulator_running(False)
 
         #xbmc.executebuiltin("Maximize")
         #xbmc.executebuiltin("Action(Fullscreen)")

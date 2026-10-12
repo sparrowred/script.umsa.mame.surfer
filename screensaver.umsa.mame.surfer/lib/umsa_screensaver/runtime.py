@@ -11,6 +11,7 @@ from .ui import Monitor
 
 _RUNNING_PROPERTY = "UMSA.Screensaver.Running"
 _MODE_PROPERTY = "UMSA.Screensaver.Mode"
+_EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"  # Shared with plugin.program.umsa.mame.surfer; both depend on identical name.
 _WINDOW_ID = 10000
 
 
@@ -64,6 +65,10 @@ class ScreensaverRuntime:
         window = xbmcgui.Window(_WINDOW_ID)
         if window.getProperty(_RUNNING_PROPERTY):
             xbmc.log("UMSA Screensaver: another screensaver instance is active", xbmc.LOGWARNING)
+            return
+        # Prevent screensaver from starting while an external emulator is running
+        if window.getProperty(_EMULATOR_RUNNING_PROPERTY) == "true":
+            xbmc.log("UMSA saver: emulator running, not starting", xbmc.LOGINFO)
             return
 
         window.setProperty(_RUNNING_PROPERTY, "true")
