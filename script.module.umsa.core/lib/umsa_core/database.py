@@ -8,8 +8,12 @@ TODO
 
 import os
 import sqlite3  # connect, Row, OperationalError
+import threading
 import time
+import zipfile
+from io import BytesIO
 from re import findall, search
+from urllib.request import urlopen
 
 from .data_paths import CoreDataPaths
 from .logging import log
@@ -21,6 +25,91 @@ def _core_data_paths(db_path):
     """Adapt legacy database-directory arguments to explicit Core paths."""
 
     return CoreDataPaths(os.path.abspath(db_path))
+
+
+def parse_recommended_games(rec_text, db):
+    """Parse the 'Rec' dat field into popup entries.
+
+    Returns ``(rec_list, pos)``. Separator entries (names starting with ``-``)
+    are ``{'name', 'id': 0, 'year', 'maker'}`` and each increments ``pos``;
+    found games are ``{'id', 'name', 'year', 'maker'}``. Names not found in the
+    database are kept as ``None`` (popup_gamelist skips them).
+    """
+
+    rec_list = []
+    pos = 0
+    for rec_gamename in rec_text.split('[CR]'):
+        if rec_gamename == '':
+            continue
+        if rec_gamename[0] == '-':
+            rec_list.append({'name': rec_gamename, 'id': 0, 'year': '', 'maker': ''})
+            pos += 1
+        else:
+            found = db.search_single(rec_gamename)
+            rec_list.append(
+                None if found is None else
+                {'id': found['id'], 'name': found['name'],
+                 'year': found['year'], 'maker': found['maker']})
+    return rec_list, pos
+
+
+def build_filter_lists(filter_lists, category, db):
+    """Partition a filter category's database entries into active/inactive.
+
+    ``active`` holds entries whose id is in ``filter_lists[category]``,
+    ``inactive`` holds the rest (database order preserved). Each entry is a
+    dict ``{'id': str, 'name', 'count'}``. Unknown categories yield empty lists.
+    """
+
+    active_ids = set(filter_lists.get(category, []))
+    active = []
+    inactive = []
+    for entry in (db.get_all_dbentries(category) or []):
+        item = {'id': str(entry[0]), 'name': entry[1], 'count': entry[2]}
+        (active if item['id'] in active_ids else inactive).append(item)
+    return {'active': active, 'inactive': inactive}
+
+
+def download_and_update_umsa_db(data_dir, progress, title='Updating UMSA database'):
+    """Download and extract the UMSA database archive into ``data_dir``.
+
+    ``progress`` is called as ``progress(percent, title, message)``; ``message``
+    is ``None`` for the plain percentage updates during download.
+    """
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    db_zip = bytearray()
+    url = urlopen("http://umsa.info/umsa_db.zip", timeout=20)
+    # float with *1.0 for percentage
+    db_zip_size = int(url.info()['Content-Length']) * 1.0
+    while len(db_zip) < db_zip_size:
+        db_zip.extend(url.read(102400))
+        progress(int((len(db_zip) / db_zip_size) * 80), title, None)
+
+    progress(80, title, 'unzip file...')
+    zipfile.ZipFile(BytesIO(db_zip)).extractall(data_dir)
+
+
+def run_scan_with_progress(db, scan_method, scan_args, progress, title, sleep):
+    """Run a DBMod scan method in a thread while reporting progress.
+
+    ``sleep`` is invoked as ``sleep(1000)`` for each poll (the GUI passes
+    ``xbmc.sleep``). ``progress`` is called as ``progress(percent, title,
+    message)``. The scan method must set ``scan_perc``/``scan_what``/
+    ``scan_status`` on ``db``.
+    """
+
+    scan_func = getattr(db, scan_method)
+    scan_thread = threading.Thread(target=scan_func, args=scan_args)
+    scan_thread.start()
+    db.scan_perc = 0
+    db.scan_what = ''
+    db.scan_status = True
+    while db.scan_status:
+        sleep(1000)
+        progress(db.scan_perc, title, f'scanning {db.scan_what}')
+    progress(100, title, 'saving')
 
 # new db for pics
 # listdir recursive for progetto

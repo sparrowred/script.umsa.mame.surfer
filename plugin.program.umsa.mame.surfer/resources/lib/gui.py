@@ -12,19 +12,24 @@ import os
 import sys
 import time
 import zipfile
-from io import BytesIO
 from json import dumps, loads
 from random import choice, randint
 from threading import Thread
-from urllib.request import urlopen
 
 import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcvfs
 from umsa_core import (
+    FILTER_CATEGORIES,
     ProcessState,
+    build_artwork_path,
     calculate_playback_plan,
+    categorize_art_type,
+    check_image_aspect,
+    find_local_snapshots,
+    get_machine_artwork_path,
+    load_batocera_mapping,
     load_filter,
     load_lastsaver,
     load_software_list,
@@ -34,9 +39,15 @@ from umsa_core import (
     save_software_list,
     set_log,
 )
-from umsa_core.database import DBMod, split_gamename
+from umsa_core.database import (
+    DBMod,
+    build_filter_lists,
+    download_and_update_umsa_db,
+    parse_recommended_games,
+    run_scan_with_progress,
+    split_gamename,
+)
 from umsa_core.emulation import (
-    NONMAME,
     CHDExtractionCancelled,
     CHDExtractionError,
     Emulation,
@@ -54,6 +65,7 @@ from umsa_core_kodi import (
     publish_vgm_info,
 )
 from umsa_screensaver.arguments import encode_request
+from retroplayer_cache import run_retroplayer
 
 try:
     from pdf import play_pdf
@@ -166,37 +178,11 @@ WAIT_GUI = 100
 # TODO: use
 SUPPORT_ORDER = {'History': 1, 'Info': 2, 'Command': 3, 'Series': 4, 'WIP': 5}
 
-# filter categories
-FILTER_CAT = [
-    "Softwarelists", "Game Categories", "Machine Categories", "Players",
-    "Years", "----------", "Load Filter", "Save Filter"
-]
 # order of listmode submenu for select
 SUBMENU_ORDER = {
     M_ALL: 0, M_SERIES: 1, M_MAKER: 2, M_CAT: 3, M_REC: 4, M_YEAR: 5, M_PLAYERS: 6,
     M_SWL: 7, M_SOURCE: 7, M_SSAVER: 8, M_PLAYSTAT: 9
 }
-# list with types of art on progettosnaps
-LEFT_IMAGELIST = ('snap', 'titles', 'howto', 'logo', 'bosses', 'ends',
-                  'gameover', 'scores', 'select', 'versus', 'warning')
-RIGHT_IMAGELIST = ('cabinets', 'cpanel', 'flyers', 'marquees', 'media',
-                   'cabdevs', 'pcb', 'artpreview', 'covers', 
-                   'projectmess_covers')
-
-def check_image_aspect(set_info):
-    """Return the artwork orientation used by the GUI skin."""
-
-    aspect_ratio = 'Vertical' if set_info['display_rotation'] in [90, 270] else 'Horizontal'
-    if (
-        set_info['display_type'] == 'lcd'
-        or set_info['category'] in (
-            'Electromechanical / Pinball', 'Handheld Game')
-        or set_info['swl_name'] in (
-            'gameboy', 'lynx', 'gamegear', 'vboy', 'vectrex')
-    ):
-        aspect_ratio = 'NotScaled'
-    return aspect_ratio
-
 
 def create_gui_element_from_snap(set_info, image, art_type='unset'):
     """Return a Kodi list item for a snapshot."""
@@ -367,7 +353,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # fill filter lists
         list_items = []
-        for i in FILTER_CAT:
+        for i in FILTER_CATEGORIES:
             list_items.append(xbmcgui.ListItem(i))
         self.getControl(FILTER_CATEGORY_LIST).addItems(list_items)
         self.getControl(FILTER_OPTIONS).addItems(('all', 'none', 'invert'))
@@ -541,15 +527,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         media_folder = os.path.join(
             __cwd__, "resources", "skins", "default", "media")
-        if use_set["machine_name"] != "mame":
-            return os.path.join(self.cab_path, use_set["machine_name"] + ".png")
-        if use_set["is_machine"]:
-            return os.path.join(self.cab_path, use_set["name"] + ".png")
-        if use_set["category"] == "Electromechanical / Pinball":
-            return os.path.join(media_folder, "pinball.png")
-        if "Reels" in use_set["category"]:
-            return os.path.join(media_folder, "reels.png")
-        return os.path.join(media_folder, "arcade.png")
+        return get_machine_artwork_path(use_set, self.cab_path, media_folder)
 
     def onClick(self, control_id):
         """Kodi onClick"""
@@ -1621,14 +1599,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.cab_path = os.path.join(self.progetto, 'cabinets/cabinets')
 
         # batocera mapping
-        with open(os.path.join(__resource__, 'batocera-dir-struct-map.txt')) as f:
-            for content in f:
-                content = content.rstrip()
-                if content[0] != '#':
-                    bato, fmame = content.split(':')
-                    for i in fmame.split(','):
-                        if i and i not in self.batomame.keys():
-                            self.batomame[i] = bato
+        mapping_file = os.path.join(__resource__, 'batocera-dir-struct-map.txt')
+        self.batomame = load_batocera_mapping(mapping_file)
 
     def close_filterlist(self, no_update=None):
         """Close filter list window"""
@@ -1720,7 +1692,6 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def update(self, what):
         """Update UMSA database, artwork or support files"""
 
-        # TODO move to support? could remove import urllib
         # update umsa.db
         if what == 'db':
 
@@ -1729,27 +1700,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
             # close db before update
             if self.ggdb:
                 self.ggdb.close_db()
-            # sanity
-            CORE_DATA_PATHS.data_dir.mkdir(parents=True, exist_ok=True)
-            # TODO: backup
-            #try:
-                # download
-            db_zip = bytearray()
-            url = urlopen("http://umsa.info/umsa_db.zip", timeout=20)
-            # float with *1.0 for percentage
-            db_zip_size = int(url.info()['Content-Length'])*1.0
-            while len(db_zip) < db_zip_size:
-                db_zip.extend(url.read(102400))
-                progress_dialog.update(int((len(db_zip)/db_zip_size)*80))
-            # extract
-            progress_dialog.update(80, 'unzip file...')
-            zipfile.ZipFile(BytesIO(db_zip)).extractall(CORE_DATA_PATHS.data_dir)
-            #except:
-            #    xbmc.executebuiltin(
-            #        'XBMC.Notification(Updating UMSA database,\
-            #         problem during download/unzip,5000)'
-            #    )
-            #    # TODO: restore backup
+
+            def progress(percent, title, message):
+                if message is None:
+                    progress_dialog.update(percent)
+                else:
+                    progress_dialog.update(percent, message)
+
+            download_and_update_umsa_db(CORE_DATA_PATHS.data_dir, progress)
 
             # re-connect to db
             if self.ggdb:
@@ -1766,109 +1724,43 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             progress_dialog.close()
 
-        # update dats database
-        elif what == 'dat':
+        # scan support files / eXoDOS / GameBase64 / artwork
+        elif what in ('dat', 'exo', 'gb64', 'art'):
             self.setFocus(self.getControl(self.main_focus))
-            self.progress_dialog.create('Scan support files', 'warm up')
 
-            # create thread
-            scan_dat_thread = Thread(
-                target=self.ggdb.scan_dats,
-                args=(self.datdir, SETTINGS_FOLDER)
-                )
-            scan_dat_thread.start()
-            self.ggdb.scan_perc = 0
-            self.ggdb.scan_what = ''
-            self.ggdb.scan_status = True
-            while self.ggdb.scan_status:
-            #TODO while scan_dat_thread.is_alive:
-                xbmc.sleep(1000)
-                self.progress_dialog.update(
-                    self.ggdb.scan_perc,
-                    'Scan support files',
-                    f'scanning {self.ggdb.scan_what}',
-                )
-            self.progress_dialog.update(100, 'Scan support files', 'saving')
-            self.ggdb.add_dat_to_db(SETTINGS_FOLDER)
-            self.progress_dialog.close()
+            titles = {
+                'dat': 'Scan support files',
+                'exo': 'Scan eXoDOS files',
+                'gb64': 'Scan GameBase64 files',
+                'art': 'Scan artwork folders',
+            }
+            title = titles[what]
+            self.progress_dialog.create(title, 'warm up')
 
-        # update exodos database
-        elif what == 'exo':
-            self.setFocus(self.getControl(self.main_focus))
-            self.progress_dialog.create('Scan eXoDOS files', 'warm up')
+            scans = {
+                'dat': ('scan_dats', (self.datdir, SETTINGS_FOLDER)),
+                'exo': ('scan_exodos_to_db', ('', SETTINGS_FOLDER)),
+                'gb64': ('scan_gb64_to_db', ('', SETTINGS_FOLDER)),
+                'art': (
+                    'scan_artwork',
+                    ((self.progetto, self.other_artwork), SETTINGS_FOLDER, xbmcvfs.listdir)
+                ),
+            }
+            scan_method, scan_args = scans[what]
 
-            # create thread
-            scan_dat_thread = Thread(
-                target=self.ggdb.scan_exodos_to_db,
-                args=('', SETTINGS_FOLDER)
-                )
-            scan_dat_thread.start()
-            self.ggdb.scan_perc = 0
-            self.ggdb.scan_what = ''
-            self.ggdb.scan_status = True
-            #TODO while scan_dat_thread.is_alive:
-            while self.ggdb.scan_status:
-                xbmc.sleep(1000)
-                self.progress_dialog.update(
-                    self.ggdb.scan_perc,
-                    'Scan eXoDOS files',
-                    f'scanning {self.ggdb.scan_what}',
-                )
-            self.progress_dialog.update(100, 'Scan eXoDOS files', 'saving')
-            self.ggdb.add_dat_to_db(SETTINGS_FOLDER)
-            self.ggdb.add_art_to_db(SETTINGS_FOLDER)
-            self.progress_dialog.close()
+            def progress(percent, title, message):
+                self.progress_dialog.update(percent, title, message)
 
-        # update gb64 database
-        elif what == 'gb64':
-            self.setFocus(self.getControl(self.main_focus))
-            self.progress_dialog.create('Scan GameBase64 files', 'warm up')
+            run_scan_with_progress(
+                self.ggdb, scan_method, scan_args, progress, title, xbmc.sleep)
 
-            # create thread
-            scan_dat_thread = Thread(
-                target=self.ggdb.scan_gb64_to_db,
-                args=('', SETTINGS_FOLDER)
-                )
-            scan_dat_thread.start()
-            self.ggdb.scan_perc = 0
-            self.ggdb.scan_what = ''
-            self.ggdb.scan_status = True
-            #TODO while scan_dat_thread.is_alive:
-            while self.ggdb.scan_status:
-                xbmc.sleep(1000)
-                self.progress_dialog.update(
-                    self.ggdb.scan_perc,
-                    'Scan GameBase64 files',
-                    f'scanning {self.ggdb.scan_what}',
-                )
-            self.progress_dialog.update(100, 'Scan GameBase64 files', 'saving')
-            self.ggdb.add_dat_to_db(SETTINGS_FOLDER)
-            self.ggdb.add_art_to_db(SETTINGS_FOLDER)
-            self.progress_dialog.close()
-
-        # update art database
-        elif what == 'art':
-            self.setFocus(self.getControl(self.main_focus))
-            self.progress_dialog.create('Scan artwork folders', 'warm up')
-
-            scan_art_thread = Thread(
-                target=self.ggdb.scan_artwork,
-                args=((self.progetto, self.other_artwork), SETTINGS_FOLDER, xbmcvfs.listdir)
-                )
-            scan_art_thread.start()
-            self.ggdb.scan_perc = 0
-            self.ggdb.scan_what = ''
-            self.ggdb.scan_status = True
-            # TODO while scan_art_thread.is_alive():
-            while self.ggdb.scan_status:
-                xbmc.sleep(1000)
-                self.progress_dialog.update(
-                    self.ggdb.scan_perc,
-                    'Scan artwork folders',
-                    f'scanning {self.ggdb.scan_what}',
-                )
-            self.progress_dialog.update(100, 'Scan artwork folders', 'saving')
-            self.ggdb.add_art_to_db(SETTINGS_FOLDER)
+            if what in ('exo', 'gb64'):
+                self.ggdb.add_dat_to_db(SETTINGS_FOLDER)
+                self.ggdb.add_art_to_db(SETTINGS_FOLDER)
+            elif what == 'dat':
+                self.ggdb.add_dat_to_db(SETTINGS_FOLDER)
+            else:
+                self.ggdb.add_art_to_db(SETTINGS_FOLDER)
             self.progress_dialog.close()
 
     def choose_media(self):
@@ -1943,6 +1835,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def show_rec(self):
         """Shows recommended section from mameinfo.dat in gamelist"""
 
+        text = ''
         if (self.actset['id'] in self.all_dat
                 and 'Rec' in self.all_dat[self.actset['id']]):
             text = self.all_dat[self.actset['id']]['Rec']
@@ -1951,17 +1844,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 if 'Rec' in self.all_dat[i]:
                     text = self.all_dat[i]['Rec']
                     break
-        rec_list = []
-        pos = 0
-        for rec_gamename in text.split('[CR]'):
-            if rec_gamename == '':
-                continue
-            if rec_gamename[0] == '-':
-                rec_item = {'name': rec_gamename, 'id': 0, 'year': '', 'maker': '',}
-                pos += 1
-            else:
-                rec_item = self.ggdb.search_single(rec_gamename)
-            rec_list.append(rec_item)
+        rec_list, pos = parse_recommended_games(text, self.ggdb)
         self.popup_gamelist(rec_list, 'Recommended', pos=pos)
 
     def update_gamelist(self, item):
@@ -2243,12 +2126,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def set_filter_content(self, cat, update=None):
         """Set filter content"""
 
-        active = []
-        inactive = []
         filter_content_id = 0
         f_select = 0
         f_element = 0
-        count = 0
 
         # only for action in list, not for inital fill
         if update == 'active':
@@ -2262,26 +2142,28 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.getControl(FILTER_CONTENT_LIST_INACTIVE).getSelectedItem().getLabel2()
             )
 
-        # fill lists
-        for entry in self.ggdb.get_all_dbentries(cat):
+        # partition entries into active and inactive lists
+        lists = build_filter_lists(self.filter_lists, cat, self.ggdb)
+        active = [
+            xbmcgui.ListItem(f"{entry['name']} ({entry['count']})", entry['id'])
+            for entry in lists['active']
+        ]
+        inactive = [
+            xbmcgui.ListItem(f"{entry['name']} ({entry['count']})", entry['id'])
+            for entry in lists['inactive']
+        ]
 
-            # label: swl (count), id
-            list_item = xbmcgui.ListItem(f"{entry[1]} ({entry[2]})", str(entry[0]))
-
-            if str(entry[0]) in self.filter_lists[cat]:
-                active.append(list_item)
-                # check for selected item id, so we can select this in the other list
-                if update == 'inactive':
-                    if entry[0] == filter_content_id:
-                        f_select = count
-                    count += 1
-            else:
-                inactive.append(list_item)
-                # check for selected item id, so we can select this in the other list
-                if update == 'active':
-                    if entry[0] == filter_content_id:
-                        f_select = count
-                    count += 1
+        # check for selected item id, so we can select this in the other list
+        if update == 'active':
+            for index, entry in enumerate(lists['inactive']):
+                if entry['id'] == str(filter_content_id):
+                    f_select = index
+                    break
+        elif update == 'inactive':
+            for index, entry in enumerate(lists['active']):
+                if entry['id'] == str(filter_content_id):
+                    f_select = index
+                    break
 
         # reset lists and refill
         self.setFocus(self.getControl(FILTER_CATEGORY_LIST))
@@ -2566,28 +2448,16 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def search_snaps(self, set_info):
         """Search files in MAME snapshot directory
 
-        Returns list with full path
+        Returns list of Kodi ListItems
 
         TODO move to screensaver
         """
 
-        imagelist = []
-        if set_info['swl_name'] == 'mame':
-            snap_dir = os.path.join(
-                self.emulation.mame_ini['snapshot_directory'],
-                set_info['name']
-            )
-        else:
-            snap_dir = os.path.join(
-                self.emulation.mame_ini['snapshot_directory'],
-                set_info['swl_name'], set_info['name']
-            )
-        if os.path.isdir(snap_dir):
-            for snap_file in os.listdir(snap_dir):
-                imagelist.append(
-                    create_gui_element_from_snap(set_info, os.path.join(snap_dir, snap_file))
-                )
-        return imagelist
+        snapshot_dir = self.emulation.snapshot_directory
+        return [
+            create_gui_element_from_snap(set_info, snap_path)
+            for snap_path in find_local_snapshots(snapshot_dir, set_info)
+        ]
 
     def create_artworklist(self):
         """Create left and right artwork list, side product is play count and time played"""
@@ -2618,25 +2488,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     continue
                 for art in self.all_art[set_info['id']]:
 
-                    if art['path']:
-                        path = self.progetto
-                    else:
-                        path = self.other_artwork
+                    filename = build_artwork_path(
+                        art, set_info, self.progetto, self.other_artwork)
 
-                    # create complete filename
-                    if set_info['swl_name'] == 'mame':
-                        filename = os.path.join(
-                            path, art['type'], art['type'], set_info['name']+'.'+art['extension']
-                        )
-                    elif (set_info['swl_name'] == 'exodos') or (set_info['swl_name'][:5] == 'gb64_'):
-                        filename = art['filename']
-                    else:
-                        filename = os.path.join(
-                            path, art['type'], set_info['swl_name'],
-                            "{}.{}".format(set_info['name'], art['extension'])
-                        )
-
-                    if art['type'] in RIGHT_IMAGELIST:
+                    art_category = categorize_art_type(art['type'])
+                    if art_category == 'right':
                         list_item = xbmcgui.ListItem()
                         list_item.setLabel("{}: {} ({})".format(
                             art['type'], set_info['detail'], set_info['swl_name']))
@@ -2644,14 +2500,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
                             art['type'], set_info['swl_name'], set_info['detail']))
                         list_item.setArt({'icon': filename})
                         set_info['right_pics'].append(list_item)
-                    elif art['type'] in LEFT_IMAGELIST:
+                    elif art_category == 'left':
                         set_info['left_pics'].append(
                             create_gui_element_from_snap(set_info, filename, art)
                         )
-                    elif art['type'] == 'videosnaps':
+                    elif art_category == 'video':
                         set_info['video'] = filename[:-4]+'.'+art['extension']
                         vid += 1
-                    elif art['type'] == 'manuals':
+                    elif art_category == 'manual':
                         set_info['manual'] = filename[:-4]+'.'+art['extension']
                         man += 1
                     else:
@@ -2863,176 +2719,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # start
         #
         if emu_infos['exe'] == 'kodi':
-            self.emu_dialog.update(10, 'searching roms...')
-            playfile = None
-
-            # set cache folder
-            if self.actset['swl_name'] == 'mame':
-                if self.actset['source'] in self.batomame:
-                    self.emulation.emurun['folder'] = os.path.join(
-                        self.temp_dir, self.batomame[self.actset['source']] )
-                else:
-                    self.emulation.emurun['folder'] = os.path.join(
-                        self.temp_dir, 'mame', 'roms')
-            elif self.actset['swl_name'] in NONMAME:
-                if self.actset['swl_name']+'.xml' in self.batomame:
-                    self.emulation.emurun['folder'] = os.path.join( 
-                        self.temp_dir, self.batomame[self.actset['swl_name']+'.xml'])
-                else:
-                    self.dialog.notification(heading='error',
-                        message=f"{self.actset['swl_name']}: not found in Batocera map",
-                        icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
-                    self.stop_screensaver()
-                    self.emu_dialog.close()
-                    return
-                if 'gb64' in self.actset['swl_name']:
-                   self.emulation.emurun['folder'] = os.path.join(
-                       self.emulation.emurun['folder'],
-                       os.path.basename(self.actset['name']) )
-            elif self.actset['swl_name']+'.xml' in self.batomame:
-                self.emulation.emurun['folder'] = os.path.join(
-                    self.temp_dir, self.batomame[self.actset['swl_name']+'.xml'],
-                    f"{self.actset['swl_name']}_{self.actset['name']}")
-            else:
-                self.emulation.emurun['folder'] = os.path.join(
-                    self.temp_dir, 'mame', 'roms', self.actset['swl_name'])
-            xbmc.log(f"UMSA gui: cache folder: {self.emulation.emurun['folder']}", xbmc.LOGDEBUG)
-
-            # check if rom already in cache folder and set playfile
-            xbmc.log("UMSA gui: check if rom in cache", xbmc.LOGDEBUG)
-            if self.actset['swl_name'] in NONMAME:
-                if os.path.exists(self.emulation.emurun['folder']):
-                    if 'gb64' in self.actset['swl_name']:
-                        dfiles = os.listdir(self.emulation.emurun['folder'])
-                        for dfile in dfiles:
-                            if dfile != 'VERSION.NFO':
-                                playfile = os.path.join(
-                                    self.emulation.emurun['folder'], dfile)
-                                break
-                    else:
-                        playfile = os.path.join(
-                            self.emulation.emurun['folder'],self.actset['name']+'.zip')
-            elif self.actset['swl_name'] == 'mame':
-                # TODO we always assume zip, not 7z, rar or what else does mame support?
-                playfile = os.path.join(
-                    self.emulation.emurun['folder'], self.actset['name']+'.zip')
-            elif self.actset['swl_name']+'.xml' in self.batomame:
-                if os.path.exists(self.emulation.emurun['folder']):
-                    dfiles = os.listdir(self.emulation.emurun['folder'])
-                    if dfiles:
-                        playfile = os.path.join(
-                            self.emulation.emurun['folder'], dfiles[0])
-            else:
-                self.dialog.notification(heading='error',
-                                         message='check rom in cache deadend?',
-                                         icon=xbmcgui.NOTIFICATION_ERROR, time=10000)
-            xbmc.log(f"UMSA gui: cache build rom file: {playfile}", xbmc.LOGDEBUG)
-
-            # we need to search for the rom in known rom paths if not in cache
-            check_file = None
-            if playfile:
-                check_file = os.path.isfile(playfile)
-            if not check_file:
-                xbmc.log(f"UMSA gui: searching {self.actset['swl_name']} roms:", xbmc.LOGDEBUG)
-                if self.actset['swl_name'] in NONMAME:
-                    self.emulation.find_nonmame_roms()
-                else:
-                    # TODO: for mame use parent!
-                    self.emulation.find_roms()
-                xbmc.log(f"UMSA gui: zips: {self.emulation.emurun['zips']}", xbmc.LOGDEBUG)
-                xbmc.log(f"UMSA gui: chds: {self.emulation.emurun['chds']}", xbmc.LOGDEBUG)
-                xbmc.log(f"UMSA gui: disks: {self.emulation.emurun['disks']}", xbmc.LOGDEBUG)
-                # TODO check result of find_roms here
-                if self.actset['swl_name'] == 'mame':
-                    if self.emulation.emurun['zips']:
-                        playfile = os.path.join(
-                            self.emulation.emurun['folder'],
-                            self.actset['name']+'.zip')
-                        xbmc.log("UMSA gui: copy rom file", xbmc.LOGDEBUG)
-                        if xbmcvfs.copy(
-                            self.emulation.emurun['zips'][0], playfile):
-                            xbmc.log("UMSA gui: copy successful", xbmc.LOGINFO)
-                        else:
-                            xbmc.log("UMSA gui: copy error!!!", xbmc.LOGWARNING)
-                    # TODO also copy chds = self.emulation.emurun['disks']
-                elif self.actset['swl_name'] in NONMAME:
-                    if 'gb64' in self.actset['swl_name']:
-                        self.emulation.extract_rom()
-                        if 'extract_files' in self.emulation.emurun:
-                            for pfile in self.emulation.emurun['extract_files']:
-                                if pfile != 'VERSION.NFO':
-                                    playfile = os.path.join(
-                                        self.emulation.emurun['folder'],
-                                        self.emulation.emurun['extract_files'][0])
-                    else:
-                        if self.emulation.emurun['zips']:
-                            playfile = os.path.join(
-                                self.emulation.emurun['folder'],
-                                #self.actset['name']+'.zip'
-                                os.path.basename(self.emulation.emurun['zips'][0])
-                            )
-                            xbmcvfs.copy(
-                                self.emulation.emurun['zips'][0], playfile)
-                elif self.emulation.emurun['zips']:
-                    self.emulation.extract_rom()
-                    if 'extract_files' in self.emulation.emurun:
-                        playfile = os.path.join(
-                            self.emulation.emurun['folder'],
-                            self.emulation.emurun['extract_files'][0])
-                elif self.emulation.emurun['chds']:
-                    # TODO loop and copy all chds
-                    playfile = os.path.join(
-                        self.emulation.emurun['folder'],
-                        self.emulation.emurun['disks'][0]['disk']+'.chd')
-                    xbmcvfs.copy(self.emulation.emurun['chds'][0],playfile)
-                else:
-                    self.stop_screensaver()
-                    self.emu_dialog.close()
-                    self.dialog.notification(
-                        heading='error', message='seems we can not find the rom?',
-                        icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
-                    return
-
-            # stop if nothing found to play
-            if not playfile:
-                self.stop_screensaver()
-                self.emu_dialog.close()
-                self.dialog.notification(heading='error', message='rom not found',
-                    icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
-                return
-            xbmc.log(f"UMSA gui: playfile = {playfile}", xbmc.LOGDEBUG)
-
-            # start retroplayer
-            xbmc.log(f"UMSA gui: actset: {self.actset}", xbmc.LOGDEBUG)
-            game_item = xbmcgui.ListItem(playfile)
-            game_item.setInfo(type='game', infoLabels={ 'title': self.actset['gamename']})
-            game_tag = game_item.getGameInfoTag()
-            game_tag.setTitle(     self.actset['name'] )
-            game_tag.setPlatform(  self.actset['machine_label'] )
-            game_tag.setGenres( [  self.actset['category'], ] )
-            game_tag.setPublisher( self.actset['publisher'] )
-            game_tag.setDeveloper( self.actset['publisher'] ) # get dev from game entry
-            game_tag.setOverview(  'set info from history' ) # TODO
-            if self.actset['year'].isdigit():
-                game_tag.setYear(  int(self.actset['year']) )
-            else:
-                game_tag.setYear(0)
-            # TODO depends on swl, add-id is name? check log or addon
-            # Sets the add-on ID of the game client executing the game.
-            #game_tag.setGameClient()
-            if self.player.isPlaying():
-                self.player.stop()
-                xbmc.sleep(500)
-            self.player.play(playfile, game_item)
-            self.stop_screensaver()
-            self.emu_dialog.close()
-            # TODO need to exit or found out how to deinit window and init after play session
-            # but when is play over? !!! check self.player.isPlaying()
-            # as longs is its playing the game runs!
-            self.exit()
-
-            # TODO update status, but how to measure playtime?
-            # start thread, wait for kodi signal that retroplayer stops?
+            run_retroplayer(self)
             return
 
         # exodos
@@ -3051,7 +2738,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             # TODO error handling, percentage?
             inp_file = marp_download(
                 emu_infos['marp_dl'],
-                os.path.join(self.mame_dir, self.emulation.mame_ini['input_directory']))
+                self.emulation.input_directory)
             self.emulation.emurun['args'] = [
                 emu_infos['set_name'], "-playback", inp_file, "-exit_after_playback"]
         # mame

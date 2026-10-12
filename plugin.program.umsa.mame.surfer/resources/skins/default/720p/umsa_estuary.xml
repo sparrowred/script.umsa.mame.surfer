@@ -231,8 +231,7 @@ cat umsa_estuary.xml | sed 's/font10/ListFont8/' | sed 's/font37/SlideShowCaptio
 
         <!-- Submenu slide animation (group 4902) -->
         <include name="AnimSubMenuSlide">
-            <animation effect="slide" end="0,-500" delay="0" time="400" tween="quadratic" easing="out" condition="Control.HasFocus(4902)">Conditional</animation>
-            <animation effect="slide" end="0,500" delay="0" time="400" tween="quadratic" easing="out" condition="!Control.HasFocus(4902)">Conditional</animation>
+            <animation effect="slide" start="0,500" end="0,0" delay="0" time="400" tween="quadratic" easing="out">VisibleChange</animation>
         </include>
 
         <!-- Video window fade animation -->
@@ -937,7 +936,7 @@ cat umsa_estuary.xml | sed 's/font10/ListFont8/' | sed 's/font37/SlideShowCaptio
                 <description>sub gamelist bg</description>
                 <include content="AnimSubMenuSlide" />
                 <posx>180</posx>
-                <posy>865</posy>
+                <posy>365</posy>
                 <width>220</width>
                 <height>310</height>
                 <texture>popup.png</texture>
@@ -949,10 +948,10 @@ cat umsa_estuary.xml | sed 's/font10/ListFont8/' | sed 's/font37/SlideShowCaptio
                 <description>sub gamelist menu</description>
                 <include content="AnimSubMenuSlide" />
                 <posx>180</posx>
-                <posy>865</posy>
+                <posy>365</posy>
                 <width>220</width>
                 <height>310</height>
-                <visible>true</visible>
+                <visible allowhiddenfocus="true">Control.HasFocus(4902)</visible>
                 <orientation>vertical</orientation>
                 <itemlayout width="300" height="30">
                     <control type="label">

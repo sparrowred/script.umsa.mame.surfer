@@ -201,6 +201,26 @@ def parse_mame_ini(ini_file):
         fobj.close()
     return mame_ini
 
+
+def resolve_mame_paths(mame_ini, mame_dir):
+    """Resolve mame.ini path/directory options against the MAME directory.
+
+    ``path`` options are semicolon-separated lists, ``directory`` options are
+    single values. Absolute entries pass through unchanged (os.path.join
+    semantics), matching the cwd (mame_dir) MAME is launched with.
+    """
+
+    resolved = {}
+    for key, value in mame_ini.items():
+        if isinstance(value, list):
+            resolved[key] = [os.path.join(mame_dir, entry) for entry in value]
+        elif 'directory' in key:
+            resolved[key] = os.path.join(mame_dir, value)
+        else:
+            resolved[key] = value
+    return resolved
+
+
 class Emulation:
     """Emulation handling class.
 
@@ -239,14 +259,28 @@ class Emulation:
         self.terminal = terminal
         self.vgmplay_exe = vgmplay_exe
 
+        self.mame_ini = {}
         if mame_ini_file:
-            self.mame_ini = parse_mame_ini(mame_ini_file)
-            # set snap directory
-            if 'snapshot_directory' in self.mame_ini:
-                self.mame_ini['snapshot_directory'] = os.path.join(
-                    mame_dir, self.mame_ini['snapshot_directory'])
-            else:
-                self.mame_ini['snapshot_directory'] = ''
+            self.mame_ini = resolve_mame_paths(
+                parse_mame_ini(mame_ini_file), mame_dir)
+
+    @property
+    def snapshot_directory(self):
+        """Absolute MAME snapshot directory ('' when unset)."""
+
+        return self.mame_ini.get('snapshot_directory', '')
+
+    @property
+    def input_directory(self):
+        """Absolute MAME input directory ('' when unset)."""
+
+        return self.mame_ini.get('input_directory', '')
+
+    @property
+    def rom_paths(self):
+        """Absolute MAME rom path list ([] when unset)."""
+
+        return self.mame_ini.get('rompath', [])
 
     def run(self):
         """Run the emulator."""
@@ -746,7 +780,7 @@ class Emulation:
                             '{}.chd'.format(i['disk'])))
         # search filename
         log(f"UMSA Emu: search {zip_name}", level='debug')
-        for path in self.mame_ini['rompath']:
+        for path in self.rom_paths:
             # check for chd
             if all_chds:
                 for i in all_chds:

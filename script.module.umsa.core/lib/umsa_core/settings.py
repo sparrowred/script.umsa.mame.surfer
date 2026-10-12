@@ -10,6 +10,12 @@ ASPECT_RATIOS = {
 }
 DEFAULT_ASPECT_RATIO = "16:9"
 
+# Filter category names shown in the UI - must match database/persistence keys
+FILTER_CATEGORIES = [
+    "Softwarelists", "Game Categories", "Machine Categories", "Players",
+    "Years", "----------", "Load Filter", "Save Filter"
+]
+
 
 @dataclass(frozen=True)
 class SharedSettings:

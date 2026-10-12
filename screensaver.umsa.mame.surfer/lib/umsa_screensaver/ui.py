@@ -13,6 +13,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcvfs
+from umsa_core import check_image_aspect
 from umsa_core_kodi import (
     get_core_settings,
     send_vgm_action,
@@ -42,31 +43,6 @@ PIC_3TO4 = 106
 PIC_1TO1 = 107
 IMAGE = [1, 2]
 BACKG = [5, 6]
-
-def check_image_aspect(set_info):
-    """Pseudo aspect ratio check for image.
-
-    Returns Vertical, Horizontal or NotScaled for one set
-    based on display_type, display_rotation, category and swl_name
-    """
-
-    aspect_ratio = None
-    if set_info['display_rotation'] in [90, 270]:
-        aspect_ratio = 'Vertical'
-    else:
-        aspect_ratio = 'Horizontal'
-    # TODO
-    # - enhance list, check display_type
-    # - problem is that set is not lcd, but machine gameboy!
-    # - fetch display type for s['swl_machine_id']
-    if (set_info['display_type'] == 'lcd' or
-            set_info['category'] in (
-                'Electromechanical / Pinball', 'Handheld Game') or
-            set_info['swl_name'] in (
-                'gameboy', 'lynx', 'gamegear', 'vboy', 'vectrex')
-       ):
-        aspect_ratio = 'NotScaled'
-    return aspect_ratio
 
 class Saver(xbmcgui.WindowXMLDialog):
     """Screensaver implementation.
