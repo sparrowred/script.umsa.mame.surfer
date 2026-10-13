@@ -21,6 +21,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcvfs
+from emulator_launcher import LaunchCtx, launch_emulator
 from gamelist_strategies import EARLY_RETURN, GAMELIST_STRATEGIES
 from retroplayer_cache import run_retroplayer
 from settings_adapter import load_all_settings
@@ -49,8 +50,6 @@ from umsa_core.database import (
     split_gamename,
 )
 from umsa_core.emulation import (
-    CHDExtractionCancelled,
-    CHDExtractionError,
     Emulation,
     format_vgm_info,
 )
@@ -2513,72 +2512,47 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.build_main_menu()
         xbmc.log("UMSA gui: show_artwork: pics, dats done")
 
+    def _add_or_update_emu_output(self, out, err, exit_code, cmd_args):
+        no_emu_out = True
+        try:
+            for i in range(self.getControl(TEXTLIST).size()):
+                if self.getControl(TEXTLIST).getListItem(i).getLabel() == 'Emulator output':
+                    no_emu_out = False
+                    emu_out_item = self.getControl(TEXTLIST).getListItem(i)
+                    break
+        except Exception:
+            return
+        if no_emu_out and (out or err):
+            try:
+                emu_out_item = xbmcgui.ListItem()
+                emu_out_item.setLabel('Emulator output')
+                self.getControl(TEXTLIST).addItem(emu_out_item)
+            except Exception:
+                return
+        try:
+            cmd_str = ' '.join(cmd_args) if cmd_args else ''
+            emu_out_item.setProperty(
+                'text', f'cmd: {cmd_str}\nerr {exit_code}: {err}\nout: {out}')
+            self.getControl(TEXTLIST).selectItem(self.getControl(TEXTLIST).size() - 1)
+        except Exception:
+            pass
+
+    def _notify_final_launch(self, notif_text, emu_name, mode):
+        try:
+            if mode != 'no':
+                self.emu_dialog.update(
+                    90, f"{notif_text}\nScreensaver active. Press a button to escape!")
+            else:
+                self.emu_dialog.close()
+                self.dialog.notification(f'{emu_name} stopped', f'{notif_text}',
+                                        xbmcgui.NOTIFICATION_INFO, 3000, False)
+        except Exception:
+            pass
+
     def run_emulator(self, emu_infos):
         """Prepare commandline options for emulator and start emulator."""
 
-        # stop playing mame vgm
-        if self.emulation.playvgm:
-            xbmc.log("UMSA gui: runemu stop VGM", xbmc.LOGINFO)
-            self.emulation.send_vgmaction(b'exit')
-            if self.emulation.playrandomvgm:
-                self.emulation.playrandomvgm = None
-            xbmc.sleep(500)
-
-        # TODO: switch to normal dialog without progress as emulator is slow?
-        self.emu_dialog.create("Emulator: {}".format(emu_infos['name']), 'warm up...')
-        # set flag for monitor
-        self.stop_screensaver()
-        self.emulation.emurun = {
-            'emulation_start': self.emulation_start,
-            'working_dir': self.mame_dir,
-            'swl_name': self.actset['swl_name'],
-            'set_name': self.actset['name'],
-            'description': self.actset['gamename'],
-            'publisher': self.actset['publisher'],
-            'set_clone': self.ggdb.get_set_name(self.actset['clone']),
-            'disks': self.ggdb.get_disks(self.actset['swl_name'], self.actset['name'])
-        }
-        # check if more than 1 disk, then selection
-        if self.emulation.emurun['disks'] and len(self.emulation.emurun['disks']) > 1:
-            select = []
-            for i in self.emulation.emurun['disks']:
-                # TODO remove when export is fixed
-                xbmc.log(f"UMSA gui: disks {dict(i)}", xbmc.LOGDEBUG)
-                if i['disk']:
-                    select.append(i['disk'])
-            if select:
-                which_disk = self.dialog.select('Select CHD:', select)
-                if which_disk > -1:
-                    this_disk = self.emulation.emurun['disks'][which_disk]
-                    self.emulation.emurun['disks'][which_disk] = self.emulation.emurun['disks'][0]
-                    self.emulation.emurun['disks'][0] = this_disk
-        # Kodi Retroplayer
-        #
-        # Copy needed files over to Batocera directory structure
-        # and try to start in Kodi Retroplayer
-        #
-        # - mame
-        # build cache path (check if roms source is in batocera map for naomi etc dir)
-        # check if file already exists > start!
-        # search zip file in rom dirs
-        # check for chd: if yes, copy over to cache
-        # copy zip file over to cache path > start!
-        #
-        # - swl (implemented)
-        # build cache path (if no hit for batocera, then write to mame and start with mame)
-        # check if folder already exists > get file and start!
-        # search zip file in rom dirs
-        # check for chd: if yes, copy over to cache
-        # extract zip file over to cache path > get file and start!
-        #
-        # - other emulators
-        # build cache path from batocera > error if no hit
-        # check if file (c64: folder) already exists > start!
-        # search file in special rom dir
-        # copy over to cache / c64: extract to folder
-        # start
-        #
-        if emu_infos['exe'] == 'kodi':
+        if emu_infos.get('exe') == 'kodi':
             rp_ctx = RetroplayerCtx(
                 actset=self.actset,
                 batomame=self.batomame,
@@ -2593,59 +2567,28 @@ class UMSA(xbmcgui.WindowXMLDialog):
             run_retroplayer(rp_ctx)
             return
 
-        # exodos
-        if 'exodos' in emu_infos['exe']:
-            self.emu_dialog.update(10, 'searching shellscript...')
-            self.emulation.prepare_exodos_run(emu_infos)
-        # marp
-        elif emu_infos['exe'] == "marp":
-            self.emu_dialog.update(20, 'download replay...')
-            # TODO error handling, percentage?
-            self.emulation.prepare_marp_run(emu_infos)
-        # mame
-        elif emu_infos['exe'] == "mame":
-            self.emulation.prepare_mame_run(
-                self.ggdb, self.actset, dialog=self.emu_dialog)
-        # other emulator
-        else:
-            xbmc.log(f"UMSA gui: run_emulator: diff emu: {dict(emu_infos)}")
-            try:
-                error = self.emulation.other_emulator(
-                    # TODO add exodos longname from 1st line of dat?
-                    emu_infos, sleep=xbmc.sleep, dialog=self.emu_dialog)
-            except CHDExtractionCancelled:
-                self.stop_screensaver()
-                self.emu_dialog.close()
-                return
-            except CHDExtractionError as error:
-                self.stop_screensaver()
-                self.emu_dialog.close()
-                self.dialog.notification(
-                    f'{emu_infos["name"]} error', str(error),
-                    xbmcgui.NOTIFICATION_ERROR, 3500)
-                return
-            except Exception:
-                self.stop_screensaver()
-                self.emu_dialog.close()
-                raise
-            if not error:
-                self.stop_screensaver()
-                self.emu_dialog.close()
-                xbmc.log(f"UMSA gui: run_emulator: {emu_infos['name']}: rom not found", xbmc.LOGERROR)
-                self.dialog.notification(f'{emu_infos["name"]} error', 'rom not found',
-                    xbmcgui.NOTIFICATION_ERROR, 3500)
-                return
-            # dialog when more than 1 extracted file in zip
-            # TODO don't overwrite emurun[args] when emu FS-UAE !!!
-            if ('extract_files' in self.emulation.emurun and
-                    len(self.emulation.emurun['extract_files']) > 1):
-                which_file = self.dialog.select(
-                    'Select file: ', self.emulation.emurun['extract_files'])
-                if which_file > -1:
-                    self.emulation.emurun['args'] = os.path.join(
-                        self.emulation.emurun['folder'],
-                        self.emulation.emurun['extract_files'][which_file]
-                    )
+        ctx = LaunchCtx(
+            actset=self.actset,
+            emu_infos=emu_infos,
+            emulation=self.emulation,
+            ggdb=self.ggdb,
+            emu_dialog=self.emu_dialog,
+            dialog=self.dialog,
+            player=self.player,
+            mame_dir=self.mame_dir,
+            emulation_start=self.emulation_start,
+            playvideo=self.playvideo,
+            stop_screensaver=self.stop_screensaver,
+            get_screensaver_mode=self.get_screensaver_mode,
+            set_emulator_running=self.set_emulator_running,
+            search_snaps=self.search_snaps,
+            show_artwork=self.show_artwork,
+            add_or_update_emu_output=self._add_or_update_emu_output,
+            notify_final=self._notify_final_launch,
+            sleep=xbmc.sleep,
+        )
+        launch_emulator(ctx)
+        return
 
         # stop playing video or pause audio
         if self.playvideo and self.player.isPlayingVideo():
