@@ -44,6 +44,7 @@ PIC_1TO1 = 107
 IMAGE = [1, 2]
 BACKG = [5, 6]
 
+
 class Saver(xbmcgui.WindowXMLDialog):
     """Screensaver implementation.
 
@@ -826,6 +827,7 @@ class Monitor(xbmc.Monitor):
             self.saver.art_types = None
             xbmcgui.Window(10000).setProperty(
                 "UMSA.Screensaver.Mode", self.saver.running)
+            xbmc.log(f"UMSA SSaver Monitor: starting {self.saver.running} saver", xbmc.LOGINFO)
             self.saver.doModal()
         xbmc.log("UMSA SSaver Monitor: onScreensaverActivated routine stop", xbmc.LOGINFO)
 
@@ -853,14 +855,17 @@ class Monitor(xbmc.Monitor):
             self.reallyDeactivateScreensaver()
 
     def reallyDeactivateScreensaver(self):
+        """Signal the active saver to stop.
+
+        The runtime owns the saver for the whole session and discards the
+        monitor afterwards, so there is no need to delete or replace the
+        saver here. Setting ``running`` to ``no`` is what breaks the artwork
+        loop and lets ``doModal`` return.
+        """
 
         xbmc.log("UMSA SSaver Monitor: now really deactive screensaver", xbmc.LOGINFO)
         self.saver.running = 'no'
         xbmcgui.Window(10000).setProperty("UMSA.Screensaver.Mode", "no")
-        del self.saver
-        __addon__ = xbmcaddon.Addon(id='screensaver.umsa.mame.surfer')
-        self.saver = Saver(
-            "umsa_saver.xml", __addon__.getAddonInfo('path'), "default", "720p", itself=self)
 
     def onDPMSActivated(self):
         """Stop screensaver when DPMS is activated."""
