@@ -2731,25 +2731,25 @@ def main():
 
 @dataclass
 class GamelistCtx:
-    db = None
-    actset = None
-    last = None
-    lastptr = 0
-    searchold = None
-    popup_gamelist = None
-    show_rec = None
-    lastsaver_path = None
+    db: object = None
+    actset: object = None
+    last: object = None
+    lastptr: int = 0
+    searchold: object = None
+    popup_gamelist: object = None
+    show_rec: object = None
+    lastsaver_path: object = None
 
 
 @dataclass
 class RetroplayerCtx:
-    actset = None
-    batomame = None
-    temp_dir = None
-    emulation = None
-    emu_dialog = None
-    dialog = None
-    player = None
+    actset: object = None
+    batomame: object = None
+    temp_dir: object = None
+    emulation: object = None
+    emu_dialog: object = None
+    dialog: object = None
+    player: object = None
 
     def stop_screensaver(self):
         pass
