@@ -1076,7 +1076,8 @@ class DBMod:
                  WHERE emu_conn.swl = ? ORDER BY emu.name", (swl_name,))
         else:
             self.sdbc.execute("SELECT id, name, exe, dir, zip, mode FROM emu ORDER BY name")
-        return self.sdbc.fetchall()
+        rows = self.sdbc.fetchall()
+        return [dict(row) for row in rows] if rows else []
 
     def get_emulator(self, emu_id=None, emu_conn_id=None):
         """Return information about saved emulator"""
@@ -1088,7 +1089,8 @@ class DBMod:
             self.sdbc.execute(
                 "SELECT id, name, exe, dir, zip, mode FROM emu WHERE id = \
                  (SELECT emu_id FROM emu_conn WHERE id = ?)", (emu_conn_id,))
-        return self.sdbc.fetchone()
+        row = self.sdbc.fetchone()
+        return dict(row) if row is not None else None
 
     def save_emulator(self, emu_info, reconfigure, source=None, swl_name=None):
         """Save emulator to database and connect if needed."""
