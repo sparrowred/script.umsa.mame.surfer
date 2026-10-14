@@ -9,6 +9,8 @@ from .artwork import (
     check_image_aspect,
     find_local_snapshots,
     get_machine_artwork_path,
+    resolve_artwork_path,
+    root_key_for_path,
 )
 from .data_paths import CoreDataPaths
 from .logging import log, set_log
@@ -56,6 +58,8 @@ __all__ = [
     "load_software_list",
     "log",
     "parse_vgm_header",
+    "resolve_artwork_path",
+    "root_key_for_path",
     "save_filter",
     "save_software_list",
     "set_log",

@@ -19,6 +19,7 @@ from urllib.request import urlopen
 from zipfile import ZipFile
 
 from .logging import log
+from .artwork import root_key_for_path
 
 MARP_URL = "http://replay.marpirc.net"
 YT_URL = "http://www.youtube.com"
@@ -345,10 +346,15 @@ Region: {region}
                 #pic_type = ext_dir
                 #print(f"UMSA exodos: {pic_type} - {dirname.split('/')[7]}")
                 abc.execute(
-                    "INSERT INTO art_set (id, type, extension, path, filename) VALUES (?,?,?,?,?)",
+                    "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
                     (exodos_sets[pic_name.lower()],
+                     'exodos',
+                     root_key_for_path(exodos_path) if exodos_path else '',
+                     dirname.split('/')[art_type_indicator] if art_type_indicator < len(dirname.split('/')) else '',
                      exodos_type_convert[dirname.split('/')[art_type_indicator]],
-                     extension[1:], 0, art_entry)
+                     extension[1:],
+                     os.path.relpath(art_entry, exodos_path) if exodos_path else art_entry,
+                     None)
                 )
             #else:
             #    try:
@@ -386,9 +392,14 @@ Region: {region}
                     # get short name and then .bat name from filesystem, is same as .mp4
                     if exodos_name in exodos_sets:
                         abc.execute(
-                            "INSERT INTO art_set (id, type, extension, path, filename) VALUES (?,?,?,?,?)",
+                            "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
                             (exodos_sets[exodos_name],
-                            'videosnaps', 'mp4', 0, f'zip://{gamedata_zip}{entry}')
+                             'exodos',
+                             root_key_for_path(exodos_path) if exodos_path else '',
+                             os.path.relpath(gamedata_zip, exodos_path) if exodos_path and os.path.isabs(gamedata_zip) else (os.path.relpath(gamedata_zip, exodos_path) if exodos_path else os.path.basename(gamedata_zip)),
+                             'videosnaps', 'mp4',
+                             os.path.relpath(gamedata_zip, exodos_path) if exodos_path else gamedata_zip,
+                             entry)
                         )
                     else:
                         log(f"UMSA support: found {entry} but {exodos_name} not found in exodos_sets", level='warning')
@@ -427,8 +438,8 @@ def scan_gb64_nfo(all_gb64_sets, gb64_name, gb64_path, dbc, abc, other_self):
         title_name = ' '.join(filesplit)
         if title_name in gb64_name:
             abc.execute(
-                "INSERT INTO art_set (id, type, extension, path, filename) VALUES (?,?,?,?,?)",
-                (gb64_name[title_name], arttype, filext, 0, art_entry)
+                "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
+                (gb64_name[title_name], 'gb64', root_key_for_path(gb64_path) if gb64_path else '', 'Extras/Cover', arttype, filext[1:] if filext.startswith('.') else filext, os.path.relpath(art_entry, gb64_path) if gb64_path else art_entry, None)
             )
         other_self.scan_perc = int(count / maxno * 100)
         count += 1
@@ -469,14 +480,14 @@ def scan_gb64_nfo(all_gb64_sets, gb64_name, gb64_path, dbc, abc, other_self):
                     notesinfo.append(i)
         if snap:
             abc.execute(
-                "INSERT INTO art_set (id, type, extension, path, filename) VALUES (?,?,?,?,?)",
-                (setid, 'snap', snap[:-3], 0, f"{gb64_path}Screenshots/{snap}")
+                "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
+                (setid, 'gb64', root_key_for_path(gb64_path) if gb64_path else '', 'Screenshots', 'snap', snap.split('.')[-1] if '.' in snap else snap[:-3], os.path.join('Screenshots', snap) if gb64_path else f"Screenshots/{snap}", None)
             )
             title_image_path = f"{gb64_path}Screenshots/{snap[:-4]}_1{snap[-4:]}"
             if os.path.isfile(os.path.join(gb64_path, 'Screenshots', title_image_path)):
                 abc.execute(
-                    "INSERT INTO art_set (id, type, extension, path, filename) VALUES (?,?,?,?,?)",
-                    (setid, 'titles', snap[:-3], 0, title_image_path)
+                    "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
+                    (setid, 'gb64', root_key_for_path(gb64_path) if gb64_path else '', 'Screenshots', 'titles', snap.split('.')[-1] if '.' in snap else snap[:-3], os.path.relpath(title_image_path, gb64_path) if gb64_path else title_image_path, None)
                 )
         
         # now put into db

@@ -6,6 +6,7 @@ TODO
  - move artwork scanning to tools
 """
 
+import errno
 import os
 import sqlite3  # connect, Row, OperationalError
 import threading
@@ -101,11 +102,11 @@ def run_scan_with_progress(db, scan_method, scan_args, progress, title, sleep):
     """
 
     scan_func = getattr(db, scan_method)
-    scan_thread = threading.Thread(target=scan_func, args=scan_args)
-    scan_thread.start()
     db.scan_perc = 0
     db.scan_what = ''
     db.scan_status = True
+    scan_thread = threading.Thread(target=scan_func, args=scan_args)
+    scan_thread.start()
     while db.scan_status:
         sleep(1000)
         progress(db.scan_perc, title, f'scanning {db.scan_what}')
@@ -300,7 +301,7 @@ class DBMod:
         )
         self.gdbc.execute("INSERT INTO main.dat SELECT * FROM dat.dat")
         self.gdbc.execute("INSERT INTO main.dat_set SELECT * FROM dat.dat_set")
-        self.gdbc.execute("INSERT INTO main.art_set SELECT * FROM art.art_set")
+        self.gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
         self.gdb.commit()
         self.gdbc.execute("DETACH DATABASE 'dat'")
         self.gdbc.execute("DETACH DATABASE 'art'")
@@ -329,24 +330,41 @@ class DBMod:
     def create_art_tables(self, db_cursor):
         """create art tables"""
 
-        # TODO for exo,gb64,whd,+
-        # change path to complete path from base incl filename
-        # when empty use progettosnaps
-        # TODO add options to scan gb64 or exodos seperatly
-        # - only delete other tables when rebuilding mame dat or art
+        # Ensure tables exist (new schema only)
 
-        # id = sets.id
-        # type = videosnap, cover, snap, titles, ...
-        # path = 0 = progettosnaps, 1 = other
-        # filename = complete filename for nonmame
         db_cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS art_set(
-                id          INTEGER,
-                type        VARCHAR(20),
-                extension   VARCHAR(10),
-                path        BOOLEAN,
-                filename    TEXT
+                art_id          INTEGER PRIMARY KEY,
+                id              INTEGER NOT NULL,
+                source          TEXT NOT NULL,
+                root_key        TEXT NOT NULL,
+                scan_unit       TEXT NOT NULL,
+                type            TEXT NOT NULL,
+                extension       TEXT NOT NULL,
+                relative_path   TEXT,
+                archive_member  TEXT
+            )
+            """
+        )
+        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_id ON art_set(id)")
+        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_source ON art_set(source)")
+        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_type ON art_set(type)")
+        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_scan_unit ON art_set(scan_unit)")
+        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_source_root_scan ON art_set(source, root_key, scan_unit)")
+
+        # Create art_scan_unit table
+        db_cursor.execute("DROP TABLE IF EXISTS art_scan_unit")  # ensure clean
+        db_cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS art_scan_unit(
+                source       TEXT NOT NULL,
+                root_key     TEXT NOT NULL,
+                scan_unit    TEXT NOT NULL,
+                status       TEXT NOT NULL,
+                last_error   TEXT,
+                updated_at   TEXT,
+                PRIMARY KEY (source, root_key, scan_unit)
             )
             """
         )
@@ -511,156 +529,234 @@ class DBMod:
         gdbc.execute("DETACH DATABASE 'dat'")
         gdb.close()
 
-    def scan_artwork(self, paths, db_path, listdir):
-        """ Scan paths for artwork files and more.
+    def scan_artwork(self, paths=None, db_path=None, listdir=None, source=None,
+                     cancel_event=None, only_types=None, resume=True, **kwargs):
+        """Scan artwork folders, unit-based and resumable.
 
-        TODO: split out to support.py, see scan_dat with dbc
+        Directory layout is ``<root>/<type>/<software_list>/<set>.<ext>``.
+        The only exception is the MAME software list, which nests the type
+        again: ``<root>/<type>/<type>/<set>.<ext>``.
 
-        TODO:
-        - support zip
-        - support different dir structs
+        Every ``<type>/<software_list>`` pair forms one scan unit. Discovered
+        units are stored in ``art_scan_unit`` (so an interrupted run resumes
+        and skips finished units) and matching files are recorded in
+        ``art_set``.
 
-        old:
-        TODO check pleasuredome dir struct
-        TODO check how mame does it
-        /type/type/set.png
-        /type/type.zip/set.png
-        /type/swl/set.png
-        /type/swl.zip/set.png
-
-        new:
-        /swl/set/type.png
-        /swl/set.zip/type.png
-        /type.zip/set.png
-
-        - support extension: png,jpg,pdf,txt,ips,bps
-        - types: snap,title,+ ,manual,maps,patch
-          - mame: flyer,cabinet,cpanel,artpreview,marquee,pcb
-          - swl : cover,media
-
-        flow:
-        - get all swls
-        - get dirs/zips in path/ so ignore non *.zip files in path/
-          dirs, files = listdir(path)
-        - if dir/zip = swl:
-            get sets for swl
-            get dirs/zips
-            if set = dir/zip:
-                get files and save with file = type, dir = set
-        - else assume dir = type
-            get dirs/zips
-            if swl:
-                get sets for swl
-                get files
-                if set = file: save with dir = type, file = set
-            else:
-                get mame sets
-                get files
-                if set = file: save
-
-
-
-        create list with all swls from path
-        and save types of artwork in them
-        [{swl : {cab, fly, cov, snap}},]
-        get all set names with ids from db for swl
-        listdir for all types of given swl
-        save in db
+        paths -- a single path or a sequence of paths.
+        db_path -- directory holding the database files.
+        listdir -- directory listing callable (defaults to ``os.listdir``).
+        source -- artwork source name; defaults to ``progettosnaps`` for the
+            first path and ``artwork2`` for the rest.
+        only_types -- optional restriction to a set of artwork types.
+        resume -- skip units already marked ``done``.
         """
 
-        # connect to db
-        db_paths = _core_data_paths(db_path)
+        from .artwork import root_key_for_path
+
+        if isinstance(paths, str):
+            path_list = [paths]
+        elif paths is None:
+            path_list = []
+        else:
+            path_list = list(paths)
+        if listdir is None:
+            listdir = os.listdir
+        if cancel_event is None:
+            cancel_event = threading.Event()
+
+        db_paths = _core_data_paths(db_path) if db_path else self.db_paths
         db_conn = connect_sqlite(db_paths.artwork_db)
         dbc = db_conn.cursor()
-        # umsa connect for swl sets
         gdb = connect_sqlite(db_paths.umsa_db)
         gdbc = gdb.cursor()
 
-        # create tables for first run
         self.create_art_tables(dbc)
         db_conn.commit()
 
-        # clean table
-        dbc.execute("DELETE FROM art_set")
-        db_conn.commit()
+        self.scan_status = True
+        self.scan_perc = 0
+        self.scan_what = 'discovering'
 
-        # scan art/swl from filesystem
-        self.scan_what = 'dirs'
-        swls = {}
-        c_dirs = 0
-        first_path = True # only 2 paths allowed
-        for path in paths:
-            # scan all art types
-            for art_type in listdir(path)[0]:
-                c_dirs += 1
-                for swl in listdir(os.path.join(path, art_type))[0]:
-                    c_dirs += 1
-                    if swl == art_type:
-                        if 'mame' not in swls:
-                            swls['mame'] = []
-                        swls['mame'].append(art_type)
-                    else:
-                        if swl not in swls:
-                            swls[swl] = []
-                        swls[swl].append(art_type)
+        def listing(path, what):
+            last_exc = None
+            for attempt in range(3):
+                try:
+                    return list(listdir(path))
+                except OSError as exc:
+                    last_exc = exc
+                    if exc.errno in (errno.EMFILE, errno.ENFILE, errno.EAGAIN):
+                        log(f"UMSA artwork scan: '{path}' busy ({exc.errno}), "
+                            f"retry {attempt + 1}/3", level='warning')
+                        time.sleep(0.5 * (attempt + 1))
+                        continue
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    break
+            log(f"UMSA artwork scan: cannot list {what} '{path}': {last_exc}",
+                level='warning')
+            return None
 
-            # scan sets from fs and write to db
-            count = 0.0
-            for swl in swls:
-                # get all entries from umsa
-                self.scan_what = f'db sets for {swl}'
-                gdbc.execute("SELECT id FROM swl WHERE name = ?", (swl,))
-                db_swl_id = gdbc.fetchone()
-                if db_swl_id:
-                    swl_id = db_swl_id[0]
-                else:
-                    log(f"UMSA database: scan_artwork: swl {swl} not found... next", level='debug')
+        def is_dir(path):
+            try:
+                return os.path.isdir(path)
+            except Exception:
+                return False
+
+        log(f"UMSA artwork scan: start paths={path_list} source={source} resume={resume}")
+
+        try:
+            # Discover scan units (type/software_list) without reading files yet.
+            units = []
+            for idx, path in enumerate(path_list):
+                root_key = root_key_for_path(path)
+                source_name = source or ('progettosnaps' if idx == 0 else 'artwork2')
+                entries = listing(path, 'root')
+                if entries is None:
                     continue
-                swl_dict = {}
-                gdbc.execute(
-                    "SELECT id, name FROM sets WHERE swllink_id = ?", (swl_id,)
-                )
-                for i in gdbc.fetchall():
-                    swl_dict[i[1]] = i[0]
-
-                # scan all art fs for swl
-                count += 1
-                self.scan_perc = int(count/c_dirs*100)
-                for art_type in swls[swl]:
-                    # no icons as Kodi can't display them
+                art_types = sorted(d for d in entries
+                                   if is_dir(os.path.join(path, d)))
+                log(f"UMSA artwork scan: root '{path}' source '{source_name}' "
+                    f"key {root_key[:12]} types={art_types}")
+                for art_type in art_types:
+                    if only_types and art_type not in only_types:
+                        continue
                     if art_type == 'icons':
                         continue
-                    self.scan_what = f"{swl}/{art_type}"
-                    if swl == 'mame':
-                        files = listdir(
-                            os.path.join(path, art_type, art_type))[1]
-                    else:
-                        files = listdir(
-                            os.path.join(path, art_type, swl))[1]
-                    # TODO: commit every 1000?
-                    for file_name in files:
-                        try:
-                            set_name, file_extension = file_name.split('.')
-                        except ValueError:
-                            log(f"UMSA database scan_artwork: unknown file = {file_name}", level='debug')
+                    art_type_path = os.path.join(path, art_type)
+                    entries = listing(art_type_path, art_type)
+                    if entries is None:
+                        continue
+                    subdirs = [d for d in sorted(entries)
+                               if is_dir(os.path.join(art_type_path, d))]
+                    if art_type in subdirs:
+                        units.append((source_name, root_key, path,
+                                      f"{art_type}/{art_type}", 'mame', art_type))
+                    for swl in subdirs:
+                        if swl == art_type:
                             continue
-                        # if set known write to db
-                        if set_name in swl_dict:
-                            dbc.execute(
-                                "INSERT INTO art_set (id, type, extension, path) VALUES (?,?,?,?)",
-                                (swl_dict[set_name], art_type, file_extension, first_path)
-                            )
-                        else:
-                            log(f"UMSA database scan_artwork: set {set_name} not found in swl {swl}", level='debug')
-                    db_conn.commit()
-                    count += 1
-                    self.scan_perc = int(count/c_dirs*100)
-            first_path = False
-            swls = {}
+                        units.append((source_name, root_key, path,
+                                      f"{art_type}/{swl}", swl, art_type))
 
-        db_conn.close()
-        gdb.close()
-        self.scan_status = False
+            total = len(units)
+            log(f"UMSA artwork scan: discovered {total} units")
+            processed = skipped = inserted = errors = 0
+            cancelled = False
+
+            for i, (src, rkey, rpath, urel, swl_name, atype) in enumerate(units):
+                if cancel_event.is_set() or not self.scan_status:
+                    cancelled = True
+                    log("UMSA artwork scan: cancelled before unit")
+                    break
+                self.scan_what = urel
+                self.scan_perc = int((i / total) * 100) if total else 100
+
+                if resume:
+                    dbc.execute("SELECT status FROM art_scan_unit "
+                                "WHERE source=? AND root_key=? AND scan_unit=?",
+                                (src, rkey, urel))
+                    st = dbc.fetchone()
+                    if st and st[0] == 'done':
+                        skipped += 1
+                        continue
+
+                dbc.execute("INSERT OR REPLACE INTO art_scan_unit "
+                            "(source,root_key,scan_unit,status,updated_at) "
+                            "VALUES (?,?,?,?,datetime('now'))",
+                            (src, rkey, urel, 'running'))
+                db_conn.commit()
+
+                gdbc.execute("SELECT id FROM swl WHERE name = ?", (swl_name,))
+                swl_id_row = gdbc.fetchone()
+                swl_dict = {}
+                if swl_id_row:
+                    gdbc.execute("SELECT id,name FROM sets WHERE swllink_id=?",
+                                 (swl_id_row[0],))
+                    for s in gdbc.fetchall():
+                        swl_dict[s[1]] = s[0]
+                elif swl_name != 'mame':
+                    log(f"UMSA artwork scan: unknown software list '{swl_name}' "
+                        f"for unit '{urel}'", level='warning')
+
+                unit_path = os.path.join(rpath, urel)
+                files = listing(unit_path, urel)
+                if files is None:
+                    errors += 1
+                    log(f"UMSA artwork scan: skipping unit '{urel}' "
+                        "(listing failed)", level='error')
+                    try:
+                        dbc.execute("INSERT OR REPLACE INTO art_scan_unit "
+                                    "(source,root_key,scan_unit,status,last_error,updated_at) "
+                                    "VALUES (?,?,?,?,?,datetime('now'))",
+                                    (src, rkey, urel, 'error', 'listing failed'))
+                        db_conn.commit()
+                    except Exception:
+                        pass
+                    continue
+
+                try:
+                    dbc.execute("DELETE FROM art_set "
+                                "WHERE source=? AND root_key=? AND scan_unit=?",
+                                (src, rkey, urel))
+                    matched = 0
+                    for f in files:
+                        if cancel_event.is_set() or not self.scan_status:
+                            raise InterruptedError('cancelled')
+                        name, ext = os.path.splitext(f)
+                        ext_clean = ext[1:] if ext.startswith('.') else ext
+                        if not ext_clean:
+                            continue
+                        if name in swl_dict:
+                            dbc.execute(
+                                "INSERT INTO art_set "
+                                "(id,source,root_key,scan_unit,type,extension,"
+                                "relative_path,archive_member) VALUES (?,?,?,?,?,?,?,?)",
+                                (swl_dict[name], src, rkey, urel, atype,
+                                 ext_clean, None, None))
+                            matched += 1
+                    db_conn.commit()
+                    dbc.execute("INSERT OR REPLACE INTO art_scan_unit "
+                                "(source,root_key,scan_unit,status,updated_at) "
+                                "VALUES (?,?,?,?,datetime('now'))",
+                                (src, rkey, urel, 'done'))
+                    db_conn.commit()
+                    processed += 1
+                    inserted += matched
+                    log(f"UMSA artwork scan: [{i + 1}/{total}] {urel} "
+                        f"swl={swl_name} files={len(files)} matched={matched}")
+                except InterruptedError:
+                    cancelled = True
+                    db_conn.rollback()
+                    log(f"UMSA artwork scan: cancelled during unit '{urel}'")
+                    break
+                except Exception as exc:
+                    errors += 1
+                    db_conn.rollback()
+                    log(f"UMSA artwork scan: unit '{urel}' failed: {exc}",
+                        level='error')
+                    try:
+                        dbc.execute("INSERT OR REPLACE INTO art_scan_unit "
+                                    "(source,root_key,scan_unit,status,last_error,updated_at) "
+                                    "VALUES (?,?,?,?,?,datetime('now'))",
+                                    (src, rkey, urel, 'error', str(exc)))
+                        db_conn.commit()
+                    except Exception:
+                        pass
+
+            self.scan_perc = 100
+            log(f"UMSA artwork scan: finished units={total} processed={processed} "
+                f"skipped={skipped} inserted={inserted} errors={errors} "
+                f"cancelled={cancelled}")
+        finally:
+            self.scan_status = False
+            try:
+                gdb.close()
+            except Exception:
+                pass
+            try:
+                db_conn.close()
+            except Exception:
+                pass
 
     def add_art_to_db(self, db_path):
         """add artwork to database
@@ -681,8 +777,11 @@ class DBMod:
         gdbc.execute(
             "ATTACH DATABASE ? AS art", (os.fspath(db_paths.artwork_db),)
         )
-        gdbc.execute("INSERT INTO main.art_set SELECT * FROM art.art_set")
+        gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
         gdb.commit()
+        gdbc.execute("SELECT COUNT(*) FROM art_set")
+        count = gdbc.fetchone()[0]
+        log(f"UMSA artwork: copied {count} records into umsa.db")
         gdbc.execute("DETACH DATABASE 'art'")
         gdb.close()
 
@@ -705,25 +804,33 @@ class DBMod:
         TODO think about if dict with key = type is better?
         """
 
-        self.gdbc.execute("SELECT type, extension, path FROM art_set WHERE id = ?", (set_id,))
-        return self.gdbc.fetchall()
+        self.gdbc.execute("SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art_set WHERE id = ?", (set_id,))
+        rows = self.gdbc.fetchall()
+        # return as dicts with both new and legacy-compatible keys where possible
+        result = []
+        for r in rows:
+            d = dict(r)
+
+            result.append(d)
+        return result
 
     def get_artwork_for_sets(self, set_ids):
         """get artwork for a list of sets"""
 
+        if not set_ids:
+            return {}
         self.gdbc.execute(
-            "SELECT id, type, extension, path, filename FROM art_set WHERE id in ({})".format(
+            "SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art_set WHERE id in ({})".format(
                 ','.join(set_ids)
             )
         )
         art_set = {}
         for i in self.gdbc.fetchall():
-            # TODO rework
-            # create key if not exist
-            if i['id'] not in art_set:
-                art_set[i['id']] = []
-            art_set[i['id']].append(
-                {'type': i['type'], 'extension': i['extension'], 'path': i['path'], 'filename': i['filename']})
+            row = dict(i)
+            row['filename'] = row.get('relative_path')
+            if row['id'] not in art_set:
+                art_set[row['id']] = []
+            art_set[row['id']].append(row)
         return art_set
 
     def get_dat_for_set(self, set_id):
@@ -789,7 +896,7 @@ class DBMod:
         # get with filter if on
         if self.use_filter:
             # TODO: doesnt work when filter = everything but filter = on
-            statement = "SELECT sets.id, art_set.extension, art_set.path, art_set.type, art_set.filename \
+            statement = "SELECT sets.id, art_set.extension, '', art_set.type, art_set.filename \
                          FROM art_set JOIN sets ON sets.id = art_set.id {} \
                          WHERE type IN ({}) AND {} \
                          ORDER BY RANDOM() LIMIT 1".format(
@@ -800,7 +907,7 @@ class DBMod:
             rand_art = self.gdbc.fetchone()
         # and without filter if we haven't found anything
         if not rand_art:
-            statement = "SELECT sets.id, art_set.extension, art_set.path, art_set.type, art_set.filename \
+            statement = "SELECT sets.id, art_set.extension, '', art_set.type, art_set.filename, art_set.source, art_set.root_key, art_set.relative_path, art_set.archive_member, art_set.scan_unit \
                         FROM art_set JOIN sets ON sets.id = art_set.id \
                         WHERE type IN ({}) \
                         ORDER BY RANDOM() LIMIT 1".format("'"+"','".join(art_types)+"'")
@@ -1859,7 +1966,7 @@ class DBMod:
         # get set ids with artwork
         self.gdbc.execute(
             "SELECT sets.name as set_name, swl.name as swl_name, \
-                   art_set.extension, art_set.path \
+                   art_set.extension, '' as path, art_set.source, art_set.root_key, art_set.relative_path, art_set.archive_member \
              FROM sets, swl, art_set \
              WHERE sets.softwarelink_id = ? \
              AND swl.id = sets.swllink_id \

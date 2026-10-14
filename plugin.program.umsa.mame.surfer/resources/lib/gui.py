@@ -28,6 +28,7 @@ from settings_adapter import load_all_settings
 from umsa_core import (
     FILTER_CATEGORIES,
     build_artwork_path,
+    resolve_artwork_path,
     calculate_playback_plan,
     categorize_art_type,
     check_image_aspect,
@@ -1742,7 +1743,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 'gb64': ('scan_gb64_to_db', ('', SETTINGS_FOLDER)),
                 'art': (
                     'scan_artwork',
-                    ((self.progetto, self.other_artwork), SETTINGS_FOLDER, xbmcvfs.listdir)
+                    (self.progetto, SETTINGS_FOLDER, os.listdir)
                 ),
             }
             scan_method, scan_args = scans[what]
@@ -2347,8 +2348,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     continue
                 for art in self.all_art[set_info['id']]:
 
-                    filename = build_artwork_path(
-                        art, set_info, self.progetto, self.other_artwork)
+                    source_roots = {"progettosnaps": self.progetto, "progetto": self.progetto,
+                                     "artwork2": self.other_artwork, "otherart": self.other_artwork,
+                                     "exodos": self.nonmame.get("exodos", ""), "gb64": self.nonmame.get("gb64", "")}
+                    filename = resolve_artwork_path(art, set_info, source_roots)
 
                     art_category = categorize_art_type(art['type'])
                     if art_category == 'right':
@@ -2699,16 +2702,28 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if self.emulation.playvgm:
             self.emulation.playrandomvgm = None
             self.emulation.send_vgmaction(b'exit')
-            clear_vgm_info()
-        # TODO stop video if playing
-        # if self.player.isPlayingVideo() and self.playvideo:
-        #     self.player.stop()
-        # close db
+            try:
+                clear_vgm_info()
+            except Exception:
+                pass
+        try:
+            if hasattr(self, 'ggdb') and self.ggdb and hasattr(self.ggdb, 'scan_status'):
+                self.ggdb.scan_status = False
+                xbmc.log('UMSA gui: exit: requested scan stop', xbmc.LOGDEBUG)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'scan_thread') and self.scan_thread and self.scan_thread.is_alive():
+                try:
+                    self.scan_thread.join(timeout=5)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         try:
             self.ggdb.close_db()
-        except AttributeError:
+        except Exception:
             pass
-        # close script
         self.close()
 
 def main():

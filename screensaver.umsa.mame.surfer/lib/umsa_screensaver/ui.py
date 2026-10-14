@@ -13,7 +13,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcvfs
-from umsa_core import check_image_aspect
+from umsa_core import check_image_aspect, resolve_artwork_path, root_key_for_path
 from umsa_core_kodi import (
     get_core_settings,
     send_vgm_action,
@@ -344,30 +344,13 @@ class Saver(xbmcgui.WindowXMLDialog):
             self.close()
             self.snapshot_crossover(['covers', 'flyers'])
             return
-        if rand_vid['swl_name'] == 'exodos':
-            xbmc.log("UMSA SSaver: videoadd: found exodos video", xbmc.LOGDEBUG)
-            # TODO zip://zipfile/videofile does not work
-            # seems like kodi can't cope with Videos/MS-DOS/video.mp4
-            zip_file, video_file = rand_vid['filename'][6:].split('.zip')
-            temp_dir = xbmcvfs.translatePath("special://temp/")
-            xbmc.log(f"UMSA SSaver: videoadd: extracting {video_file} from {zip_file}.zip", xbmc.LOGDEBUG)
-            with ZipFile(f"{zip_file}.zip", "r") as z:
-                if video_file not in z.namelist():
-                    xbmc.log("UMSA SSaver: videoadd: video not found", xbmc.LOGWARNING)
-                    return False
-                else:
-                    filename = path.join(temp_dir, path.basename(video_file))
-                    with z.open(video_file) as src, open(filename, "wb") as dst:
-                        dst.write(src.read())
-                    xbmc.log(f"UMSA SSaver: videoadd: extracted to {filename}", xbmc.LOGDEBUG)
-        else:
-            filename = path.join(
-                self.path[rand_vid['path']],
-                'videosnaps',
-                rand_vid['swl_name'].replace('mame', 'videosnaps'),
-                "{}.{}".format(rand_vid['name'], rand_vid['extension'])
-            )
-            xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
+        source_roots = {"progettosnaps": self.path[1] if len(self.path) > 1 else self.path[0], "progetto": self.path[1] if len(self.path) > 1 else self.path[0],
+                         "artwork2": self.path[0] if len(self.path) > 0 else "", "otherart": self.path[0] if len(self.path) > 0 else "",
+                         "exodos": self.parent.umsa.nonmame.get("exodos") if hasattr(self.parent.umsa, "nonmame") else "",
+                         "gb64": self.parent.umsa.nonmame.get("gb64") if hasattr(self.parent.umsa, "nonmame") else ""}
+        filename = resolve_artwork_path(rand_vid, rand_vid, source_roots)
+        xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
+        # For archive-contained videos, Kodi can play zip:// paths directly
         machine_pic = self.get_machine_pic(rand_vid)
         # get left pic
         # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
@@ -434,14 +417,11 @@ class Saver(xbmcgui.WindowXMLDialog):
             # remember the software being rendered for the context handoff
             self.remember_art(art)
 
-            # set file path
-            if (art['swl_name'] == 'exodos') or (art['swl_name'][:5] == 'gb64_'):
-                filename = art['filename']
-            else:
-                filename = path.join(
-                    self.path[art['path']], art['type'],
-                    art['swl_name'].replace('mame', art['type']),
-                    "{}.{}".format(art['name'], art['extension']))
+            source_roots = {"progettosnaps": self.path[1] if len(self.path) > 1 else self.path[0], "progetto": self.path[1] if len(self.path) > 1 else self.path[0],
+                             "artwork2": self.path[0] if len(self.path) > 0 else "", "otherart": self.path[0] if len(self.path) > 0 else "",
+                             "exodos": self.parent.umsa.nonmame.get("exodos") if hasattr(self.parent.umsa, "nonmame") else "",
+                             "gb64": self.parent.umsa.nonmame.get("gb64") if hasattr(self.parent.umsa, "nonmame") else ""}
+            filename = resolve_artwork_path(art, art, source_roots)
 
             # check for bad image
             if art['type'] in ('snap', 'titles', 'covers'):
