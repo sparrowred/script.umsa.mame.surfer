@@ -1,7 +1,5 @@
 """MARP and Youtube search, Artwork and support file scan
 
-TODO create google cover image search
-
 IDEAS:
  - with http://replay.marpirc.net/txt/scores3.htm we know all mame arcade sets with replays
    also scores and player (but only first 3)
@@ -186,9 +184,6 @@ def youtube_search(gamename, machine):
     html_content = unescape(url_open.read().decode('utf-8', errors='ignore'))
     return findall(r'{"videoId":"(.{11})".*?"text":"(.*?)"', html_content)
 
-def scan_artwork():
-    """Scan artwork and more. """
-
 def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dbc, abc, other_self):
     """Scan eXoDOS xml file for dat infos and artwork path"""
 
@@ -218,13 +213,11 @@ def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dbc, abc, other_sel
     with ZipFile(xml_file, 'r') as archive:
         exodos_xml = archive.read('xml/all/MS-DOS.xml').decode('utf-8', 'ignore')
     root = ET.fromstring(exodos_xml)
-    xmldata = {}
 
     other_self.scan_what = 'scanning xml...'
     maxno = len(root) 
     count = 1.0
     for game in root.iter('Game'):
-        noapppath = False
         for child in game.iter():
             if child.tag == 'RootFolder':
                 set_name = child.text.split('\\')[-1]
@@ -250,9 +243,6 @@ def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dbc, abc, other_sel
                 music = child.text
             elif child.tag == 'VideoUrl':
                 videourl = child.text
-            elif child.tag == 'ApplicationPath':
-                # get longname
-                long_name = os.path.split(child.text.replace('\\','/'))[-1][:-4]
         note = f"""Genre: {genre}
 
 Developer: {developer}
@@ -292,23 +282,8 @@ Region: {region}
         other_self.scan_perc = int(count / maxno * 100)
         count += 1
 
-    # scan artwork
-    # TODO needs tools.py and tools-xbmc.py modules for
-    # filesystem operations > "import os" or "import xbmcvfs" 
-    #
-    # replace special char :' to _
-    # Images/MS-DOS/*/Game Name_ Title-\d{2}.*  #Zork III_ The Dungeon Master-01.jpg
-    # Images/MS-DOS/*/Country/Game Name_ Title-\d{2}.*  #Zork III_ The Dungeon Master-01.jpg
-    # Manuals/^
-    # Music/^
-    #
-    # new since exodos v6:
-    #shasum Box\ -\ Front/1,000\ Miler-00.png Screenshot\ -\ Game\ Title/1,000\ Miler-01.png
-    #eb613f06927300b9cc82caab90fbd77f3a0f961d  Box - Front/1,000 Miler-00.png
-    #eb613f06927300b9cc82caab90fbd77f3a0f961d  Screenshot - Game Title/1,000 Miler-01.png
     # all games w/o box, got the game title, so shasum gametitle and check if box is same
 
-    # TODO scan from Content/XODOSMetadata.zip and use images from zipfile
     art_path = os.path.join(exodos_path, 'Images', 'MS-DOS')
     art_type_indicator = len(art_path.split('/'))
     log(f"UMSA support: art path and ind.: {art_path} : {art_type_indicator}", level='debug')
@@ -338,13 +313,9 @@ Region: {region}
         if extension.lower() in pics:
             pic_name, empty, pic_no = pic_fullname.rpartition('-')
             if pic_name.lower() in exodos_sets:
-                #print(f"UMSA exodos art hit: {exodos_sets[pic_name.lower()]} - {pic_no}")
-                #ext_dir = exodos_type_convert[dirname.split('/')[7]] 
                 if dirname.split('/')[art_type_indicator] == 'Box - Front': # get md5, check against titles
                     if md5sum(art_entry) in titles:
                         continue
-                #pic_type = ext_dir
-                #print(f"UMSA exodos: {pic_type} - {dirname.split('/')[7]}")
                 abc.execute(
                     "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
                     (exodos_sets[pic_name.lower()],
@@ -356,13 +327,6 @@ Region: {region}
                      os.path.relpath(art_entry, exodos_path) if exodos_path else art_entry,
                      None)
                 )
-            #else:
-            #    try:
-            #        print(f"UMSA exodos art MISS: {pic_name} - {pic_no}")
-            #    except UnicodeEncodeError:
-            #        print("UMSA exodos art MISS: UnicodeEncodeError")
-        #else:
-        #    print(f"UMSA exodos: {art_entry}")
         other_self.scan_perc = int(count / maxno * 100)
         count += 1
 
@@ -375,8 +339,6 @@ Region: {region}
     allext = {}
     allext['mp4notfound'] = 0
     for gamedata_zip in gamedata_zips:
-        # easy way without namelist:
-        # just check for Videos/MS-DOS/zipname.mp4
         if gamedata_zip[-3:] != 'zip':
             continue
         with ZipFile(gamedata_zip, 'r') as archive:
@@ -533,7 +495,6 @@ def scan_history(history_string, all_sets, dbc):
                     #else:
                     #    print(f"UMSA - history.xml: not found {set_info}")
             elif child.tag == 'text':
-                #dbc.save_setdat(new_db_entries, child.text)
                 # now put into db
                 dbc.execute(
                     "INSERT INTO dat (file, entry) \

@@ -118,6 +118,7 @@ LUA_READER_JOIN_TIMEOUT = 1.0
 # Lua truncates each message (~480 bytes), this only guards against garbage.
 LUA_LOG_MAX_LINE_BYTES = 8192
 
+# TODO push to settings
 VGMPLAY_DEFAULT_PORT = 1234
 
 
@@ -230,16 +231,7 @@ def resolve_mame_paths(mame_ini, mame_dir):
 
 
 class Emulation:
-    """Emulation handling class.
-
-    Needed:
-        - temp dir          in other_emus saved as emurun.folder; for extracting roms/chds
-        - mame ini          for parsing mame ini file used TODO
-        - mame dir
-        - mame exe          to start mame emulation, for vgmplay
-        - chdman exe        extract chd
-        - TODO settings path     for lua script in vgmplay
-    """
+    """Emulation handling class."""
 
     def __init__(self, temp_dir='.', mame_ini_file=None, mame_dir='.', mame_exe=None,
                     chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame={},
@@ -293,8 +285,6 @@ class Emulation:
     def run(self):
         """Run the emulator."""
 
-        # create args
-        # TODO why can args be str? emrun['args'] should always be a list > fix everywhere
         args = self._process_args()
         popen_env = {}
         if 'env' in self.emurun:
@@ -308,16 +298,11 @@ class Emulation:
             self.process = subprocess.Popen(
                 args, cwd=self.emurun['working_dir'], **popen_env)
         elif self.emurun['emulation_start'] == 2: # Fallback
-            # TODO make os.system a daemon thread so it does not stop the script?
-            # TODO use subprocess.run?
             self.process = None
-            # Supermodel needs to be started in it's directory
-            #run = "cd {} && ".format(self.emurun['working_dir'])
             run = ''
             # escape parameters with double quotes
             for i in args:
                 run += f'"{i}" '
-            #os.system(run)
             torun = [self.terminal, '-e', run]
             log(f'UMSA Emulation run {torun}', level='debug')
             subprocess.run(torun)
@@ -707,10 +692,7 @@ class Emulation:
         return env
 
     def play_random_vgm_thread(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
-        """Play random vgm until ordered to stop playing.
-
-            TODO check if all threads are closed at the end
-        """
+        """Play random vgm until ordered to stop playing."""
 
         self.playrandomvgm = True
         self._start_vgm_server()
@@ -762,14 +744,16 @@ class Emulation:
 
     def play_random_vgm(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
 
+        if self.playvgm:
+            return
         self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
             args=(ggdb, textinfo, db_path, sleep))
         self.rvgm_thread.start()
 
     def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):
 
-        if intro and self.playvgm:
-            return  # no intro play when a vgm already plays
+        if self.playvgm:
+            return
         self._start_vgm_server()
         self.pvgm_thread = Thread(target=self.play_vgm_thread,
             args=(vgm, sec2run, sleep, intro), kwargs={'info': info, 'plan': plan})
@@ -782,15 +766,11 @@ class Emulation:
         filename = ''
 
         if self.emurun['swl_name'] == 'exodos':
-            # TODO check PLATFORM!
+            # TODO for real exodos usage we need to check platform and set right extension
+            dosext = '.bat'
             log(f'UMSA Emu: Platform: {PLATFORM}', level='debug')
             log(f'UMSA Emu: - eXoDOS arg: "{exodos_shell}"', level='debug')
             log(f'UMSA Emu: - emurun: {self.emurun}', level='debug')
-            #if 'Linux' in PLATFORM or 'macOS' in PLATFORM:
-            #    dosext = '.sh'
-            #else:
-            #    dosext = '.bat'
-            dosext = '.bat'
             dospath = self.nonmame['exodos']+'eXo/eXoDOS/!dos/'+self.emurun['set_name']
             if os.path.isdir(dospath):
                 # check for start file, needed to find zip
@@ -819,7 +799,7 @@ class Emulation:
             filename = self.nonmame['gb64']+'Games/'+self.emurun['set_name']+'.zip'
         elif 'whdload' in self.emurun['swl_name']:
             # TODO emurun needs complete description
-            log("UMSA Emu - whdload: {self.emurun['description']}", level='debug')
+            log(f"UMSA Emu - whdload: {self.emurun['description']}", level='debug')
             filename = self.emurun['description'].replace(', ','_')
             filename = filename.replace('(','_').replace(')','').replace(' ','')
             filename = filename[0]+'/'+filename
@@ -900,8 +880,6 @@ class Emulation:
         if os.path.exists(self.emurun['folder']):
             self.percent = 100
             self.emurun['extractcd'] = os.listdir(self.emurun['folder'])
-            # TODO also check the files
-            #self.emurun['extractcd'] = chd_name+file_ext
             return ""
         os.mkdir(self.emurun['folder'])
         output_file = os.path.join(self.emurun['folder'], chd_name+file_ext)
