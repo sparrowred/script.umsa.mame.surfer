@@ -4,7 +4,7 @@ import xbmc
 import xbmcgui
 from umsa_core import set_log
 from umsa_core.database import DBMod
-from umsa_core_kodi import get_core_data_paths, send_software_open
+from umsa_core_kodi import get_core_data_paths, get_core_settings, send_software_open
 
 from .arguments import decode_request
 from .ui import Monitor
@@ -22,6 +22,19 @@ class ScreensaverRuntime:
         self.ggdb = None
         self.monitor = None
         self.settings_folder = None
+        self.nonmame = {}
+
+    def _nonmame_roots(self):
+        """Return the configured non-MAME roots for artwork path resolution."""
+
+        settings = get_core_settings()
+        nonmame = {
+            'exodos': settings.exodos,
+            'gb64': settings.gb64,
+            'whdload': settings.whdload,
+        }
+        self.nonmame = nonmame
+        return nonmame
 
     def open_software(self, software_id):
         """Hand the currently displayed software back to the Games frontend.
@@ -92,7 +105,7 @@ class ScreensaverRuntime:
                 )
                 return
 
-            self.ggdb = DBMod(self.settings_folder)
+            self.ggdb = DBMod(self.settings_folder, self._nonmame_roots())
             self.ggdb.use_filter = False
             if request is not None and request["art_types"] is not None:
                 available_art_types = set(self.ggdb.get_art_types())

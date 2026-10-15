@@ -49,7 +49,7 @@
                 </setting>
 			</group>
 			<group id="2" label="">
-                <setting id="progetto" type="path" label="30201" help="">
+                <setting id="progettosnaps" type="path" label="30201" help="">
                 	<level>0</level>
                 	<default/>
                 	<constraints>
@@ -60,7 +60,7 @@
                 		<heading>30201</heading>
                 	</control>
                 </setting>
-                <setting id="otherart" type="path" label="30203" help="">
+                <setting id="own_artwork" type="path" label="30203" help="">
                 	<level>0</level>
                 	<default/>
                 	<constraints>

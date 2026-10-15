@@ -72,7 +72,7 @@ class EmulationSettings:
                 'gb64': core.gb64,
                 'whdload': core.whdload,
             },
-            cab_path=os.path.join(core.progetto, 'cabinets/cabinets'),
+            cab_path=os.path.join(core.progettosnaps, 'cabinets/cabinets'),
             batomame=load_batocera_mapping(
                 os.path.join(resource_path, 'batocera-dir-struct-map.txt')
             ),

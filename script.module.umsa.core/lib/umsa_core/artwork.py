@@ -162,7 +162,7 @@ def resolve_artwork_path(art: Dict[str, Any], set_info: Dict[str, Any],
         # For sources that store explicit relative paths (exodos/gb64)
         return os.path.join(current_root, relative_path)
 
-    # Reconstruct from set info and type (progetto-style)
+    # Reconstruct from set info and type (progettosnaps-style)
     art_type = art.get('type', '')
     extension = art.get('extension', '')
 
@@ -189,13 +189,13 @@ def _build_legacy_path(art: Dict[str, Any], set_info: Dict[str, Any],
     """Build path using old-style art dict (for backward compatibility)."""
 
     art_path_flag = art.get('path')
-    progetto = source_roots.get('progettosnaps') or source_roots.get('progetto', '')
-    other_artwork = source_roots.get('artwork2') or source_roots.get('otherart', '')
+    progettosnaps = source_roots.get('progettosnaps', '')
+    own_artwork = source_roots.get('own_artwork', '')
 
     if art_path_flag:
-        path_root = progetto
+        path_root = progettosnaps
     else:
-        path_root = other_artwork
+        path_root = own_artwork
 
     if set_info['swl_name'] == 'mame':
         filename = os.path.join(
@@ -211,25 +211,23 @@ def _build_legacy_path(art: Dict[str, Any], set_info: Dict[str, Any],
     return filename
 
 
-def build_artwork_path(art: dict, set_info: dict, progetto: str, other_artwork: str) -> str:
+def build_artwork_path(art: dict, set_info: dict, progettosnaps: str, own_artwork: str) -> str:
     """Build the full filesystem path for an artwork entry (legacy API).
 
     Args:
         art: Artwork metadata (type, extension, path, filename) - old style
             or new style fields
         set_info: Game set info (swl_name, name)
-        progetto: ProgettoSnaps base path
-        other_artwork: Alternative artwork base path
+        progettosnaps: ProgettoSnaps base path
+        own_artwork: Own artwork base path
 
     Returns:
         Full path to the artwork file
     """
 
     source_roots = {
-        'progettosnaps': progetto,
-        'progetto': progetto,
-        'artwork2': other_artwork,
-        'otherart': other_artwork,
+        'progettosnaps': progettosnaps,
+        'own_artwork': own_artwork,
     }
 
     # Try new resolver if it looks like new schema
@@ -248,7 +246,7 @@ def get_machine_artwork_path(
     Args:
         set_info: Dict with keys 'machine_name', 'name', 'is_machine',
             'category'
-        cab_path: Base cabinet artwork path (e.g. /progetto/cabinets/cabinets)
+        cab_path: Base cabinet artwork path (e.g. /progettosnaps/cabinets/cabinets)
         fallback_media_dir: Directory with fallback images (pinball.png,
             reels.png, arcade.png)
 

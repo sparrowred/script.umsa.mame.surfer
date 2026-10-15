@@ -1064,17 +1064,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
             return
         # get snap, machines
         xbmc.log(f"UMSA gui: gamelist_move: db fetch snap, machines for {gamelist_id}")
-        snap = self.ggdb.get_artwork_by_software_id(gamelist_id, 'snap')
+        snap = self.ggdb.get_artwork_by_software_id(
+            gamelist_id, 'snap', self.artwork_source_roots())
         # set info to gamelist item
         if snap[0]:
-            if snap[1]:
-                path = self.progetto
-            else:
-                path = self.other_artwork
-            gamelist_item.setArt(
-                {'icon' : os.path.join(path, 'snap', snap[0].replace('mame', 'snap'))}
-                )
-        gamelist_item.setProperty('text', snap[2])
+            gamelist_item.setArt({'icon': snap[0]})
+        gamelist_item.setProperty('text', snap[1])
         xbmc.log(f"UMSA gui: gamelist_move: properties set = {gamelist_item.getProperty('text')}")
 
     def gamelist_switch_filter(self):
@@ -1453,8 +1448,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.mame_exe = core_settings.mame
         self.mameini = core_settings.mameini
         self.mame_dir = core_settings.mamedir
-        self.progetto = core_settings.progetto
-        self.other_artwork = core_settings.otherart
+        self.progettosnaps = core_settings.progettosnaps
+        self.own_artwork = core_settings.own_artwork
         self.aratio = core_settings.aspectratio
         self.datdir = core_settings.datdir
         self.vgmplay_exe = core_settings.vgmplay
@@ -1471,6 +1466,16 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.nonmame = emu_settings.nonmame
         self.cab_path = emu_settings.cab_path
         self.batomame = emu_settings.batomame
+
+    def artwork_source_roots(self):
+        """Map artwork sources to their configured root directories."""
+
+        return {
+            "progettosnaps": self.progettosnaps,
+            "own_artwork": self.own_artwork,
+            "exodos": self.nonmame.get("exodos", ""),
+            "gb64": self.nonmame.get("gb64", ""),
+        }
 
     def close_filterlist(self, no_update=None):
         """Close filter list window"""
@@ -1607,7 +1612,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 'gb64': ('scan_gb64_to_db', ('', SETTINGS_FOLDER)),
                 'art': (
                     'scan_artwork',
-                    (self.progetto, SETTINGS_FOLDER, os.listdir)
+                    ([self.progettosnaps, self.own_artwork], SETTINGS_FOLDER, os.listdir)
                 ),
             }
             scan_method, scan_args = scans[what]
@@ -2187,9 +2192,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     continue
                 for art in self.all_art[set_info['id']]:
 
-                    source_roots = {"progettosnaps": self.progetto, "progetto": self.progetto,
-                                     "artwork2": self.other_artwork, "otherart": self.other_artwork,
-                                     "exodos": self.nonmame.get("exodos", ""), "gb64": self.nonmame.get("gb64", "")}
+                    source_roots = self.artwork_source_roots()
                     filename = resolve_artwork_path(art, set_info, source_roots)
 
                     art_category = categorize_art_type(art['type'])

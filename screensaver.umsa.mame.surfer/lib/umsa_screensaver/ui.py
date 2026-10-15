@@ -219,7 +219,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         """Read shared Core settings and screensaver-specific settings."""
 
         core_settings = get_core_settings()
-        self.path = (core_settings.otherart, core_settings.progetto)
+        self.path = (core_settings.own_artwork, core_settings.progettosnaps)
         self.settings = {}
 
         ar_norm = 1.7777 # 16:9
@@ -331,6 +331,26 @@ class Saver(xbmcgui.WindowXMLDialog):
                 pic = path.join(cab_path, use_set['machine_name']+'.png')
         return pic
 
+    def resolve_art_path(self, art, source_roots, art_type=None, extension=None):
+        """Resolve an artwork path with the shared Core resolver.
+
+        ``art`` carries the new ``art_set`` fields (source, root_key,
+        relative_path, archive_member). When ``art_type`` is given, an
+        alternate artwork of the same set (the flyer, cover or snap shown
+        next to the main image) is resolved instead of the stored row.
+        """
+
+        if art_type is None:
+            return resolve_artwork_path(art, art, source_roots)
+
+        derived = dict(art)
+        derived['type'] = art_type
+        derived['relative_path'] = None
+        derived['archive_member'] = None
+        if extension is not None:
+            derived['extension'] = extension
+        return resolve_artwork_path(derived, art, source_roots)
+
     def add_video_to_playlist(self):
         """Add a new video to the playlist"""
 
@@ -344,25 +364,22 @@ class Saver(xbmcgui.WindowXMLDialog):
             self.close()
             self.snapshot_crossover(['covers', 'flyers'])
             return
-        source_roots = {"progettosnaps": self.path[1] if len(self.path) > 1 else self.path[0], "progetto": self.path[1] if len(self.path) > 1 else self.path[0],
-                         "artwork2": self.path[0] if len(self.path) > 0 else "", "otherart": self.path[0] if len(self.path) > 0 else "",
+        source_roots = {"progettosnaps": self.path[1] if len(self.path) > 1 else self.path[0],
+                         "own_artwork": self.path[0] if len(self.path) > 0 else "",
                          "exodos": self.parent.umsa.nonmame.get("exodos") if hasattr(self.parent.umsa, "nonmame") else "",
                          "gb64": self.parent.umsa.nonmame.get("gb64") if hasattr(self.parent.umsa, "nonmame") else ""}
-        filename = resolve_artwork_path(rand_vid, rand_vid, source_roots)
+        filename = self.resolve_art_path(rand_vid, source_roots)
         xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
         # For archive-contained videos, Kodi can play zip:// paths directly
         machine_pic = self.get_machine_pic(rand_vid)
         # get left pic
         # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
         # TODO needs fetch info for snap from db for aspect ratio
-        if rand_vid['swl_name'] == 'mame':
-            snapshot = path.join(
-                self.path[rand_vid['path']], 'flyers/flyers',
-                "{}.png".format(rand_vid['name']))
-        else:
-            snapshot = path.join(
-                self.path[rand_vid['path']], 'covers', rand_vid['swl_name'],
-                "{}.png".format(rand_vid['name']))
+        snapshot = rand_vid.get('left_pic')
+        if not snapshot:
+            left_type = 'flyers' if rand_vid['swl_name'] == 'mame' else 'covers'
+            snapshot = self.resolve_art_path(
+                rand_vid, source_roots, art_type=left_type, extension='png')
         xbmc.log(f"UMSA SSaver {snapshot}", xbmc.LOGDEBUG)
         video_item = xbmcgui.ListItem(rand_vid['gamename'])
         video_item.setInfo('video', {
@@ -417,11 +434,11 @@ class Saver(xbmcgui.WindowXMLDialog):
             # remember the software being rendered for the context handoff
             self.remember_art(art)
 
-            source_roots = {"progettosnaps": self.path[1] if len(self.path) > 1 else self.path[0], "progetto": self.path[1] if len(self.path) > 1 else self.path[0],
-                             "artwork2": self.path[0] if len(self.path) > 0 else "", "otherart": self.path[0] if len(self.path) > 0 else "",
+            source_roots = {"progettosnaps": self.path[1] if len(self.path) > 1 else self.path[0],
+                             "own_artwork": self.path[0] if len(self.path) > 0 else "",
                              "exodos": self.parent.umsa.nonmame.get("exodos") if hasattr(self.parent.umsa, "nonmame") else "",
                              "gb64": self.parent.umsa.nonmame.get("gb64") if hasattr(self.parent.umsa, "nonmame") else ""}
-            filename = resolve_artwork_path(art, art, source_roots)
+            filename = self.resolve_art_path(art, source_roots)
 
             # check for bad image
             if art['type'] in ('snap', 'titles', 'covers'):
@@ -451,23 +468,15 @@ class Saver(xbmcgui.WindowXMLDialog):
                     self.getControl(PIC_4TO3).setImage(art['left_pic'])
                     self.getControl(PIC_3TO4).setImage('')
             elif art['type'] in ('snap', 'titles', 'videosnaps'):
-                if art['swl_name'] == 'mame':
-                    snapshot = path.join(
-                        self.path[art['path']], 'flyers/flyers',
-                        "{}.{}".format(art['name'], art['extension']))
-                else:
-                    snapshot = path.join(
-                        self.path[art['path']], 'covers', art['swl_name'],
-                        "{}.{}".format(art['name'], art['extension']))
+                left_type = 'flyers' if art['swl_name'] == 'mame' else 'covers'
+                snapshot = self.resolve_art_path(art, source_roots, art_type=left_type)
                 self.getControl(PIC_1TO1).setImage(snapshot, False)
                 self.getControl(PIC_4TO3).setImage('')
                 self.getControl(PIC_3TO4).setImage('')
             else:
                 # TODO dirty hack, get from db! maybe get_random_art should return it!
-                snapshot = path.join(
-                    self.path[1], 'snap',
-                    art['swl_name'].replace('mame', 'snap'),
-                    "{}.{}".format(art['name'], 'png'))
+                snapshot = self.resolve_art_path(
+                    art, source_roots, art_type='snap', extension='png')
                 snapctrl = PIC_4TO3
                 if self.check_snapshot(snapshot):
                     self.getControl(snapctrl).setImage(snapshot, False)

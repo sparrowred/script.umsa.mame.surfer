@@ -40,7 +40,7 @@ msgid "Support files path"
 msgstr ""
 
 msgctxt "#30203"
-msgid "2nd Artwork path"
+msgid "Own artwork path"
 msgstr ""
 
 msgctxt "#30204"
