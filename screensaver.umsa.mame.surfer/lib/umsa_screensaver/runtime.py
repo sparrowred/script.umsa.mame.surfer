@@ -128,7 +128,7 @@ class ScreensaverRuntime:
         finally:
             try:
                 if self.ggdb is not None:
-                    self.ggdb.close_db()
+                    self.ggdb.close()
             finally:
                 window.clearProperty(_MODE_PROPERTY)
                 window.clearProperty(_RUNNING_PROPERTY)

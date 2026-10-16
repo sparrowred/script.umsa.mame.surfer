@@ -1566,9 +1566,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             progress_dialog = xbmcgui.DialogProgress()
             progress_dialog.create('Updating UMSA database', 'downloading zip...')
-            # close db before update
+            # close db before update (keep status.db open for the re-connect)
             if self.ggdb:
-                self.ggdb.close_db()
+                self.ggdb.close_umsa_db()
 
             def progress(percent, title, message):
                 if message is None:
@@ -2553,7 +2553,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             # TODO output error to log
             pass
         try:
-            self.ggdb.close_db()
+            self.ggdb.close()
         except Exception:
             pass
         self.close()

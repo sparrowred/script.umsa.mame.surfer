@@ -286,15 +286,11 @@ class ArtworkScanner:
             cancel_event = threading.Event()
 
         db_paths = self._db_paths
-        db_conn = connect_sqlite(db_paths.artwork_db)
-        dbc = db_conn.cursor()
-        gdb = connect_sqlite(db_paths.umsa_db)
-        gdbc = gdb.cursor()
-
-        self._initialize_tables(dbc)
-        db_conn.commit()
-
-        self._report(0, 'discovering')
+        # The connections are opened inside the try block below so the cleanup
+        # in its finally also covers a failure while opening or initialising
+        # them (for example an unreadable umsa.db).
+        db_conn = None
+        gdb = None
 
         listdir = self._listdir
 
@@ -410,6 +406,16 @@ class ArtworkScanner:
             }
 
         try:
+            db_conn = connect_sqlite(db_paths.artwork_db)
+            dbc = db_conn.cursor()
+            gdb = connect_sqlite(db_paths.umsa_db)
+            gdbc = gdb.cursor()
+
+            self._initialize_tables(dbc)
+            db_conn.commit()
+
+            self._report(0, 'discovering')
+
             # Discover scan units (type/software_list) without reading files yet.
             units = []
             for idx, path in enumerate(path_list):
@@ -624,11 +630,13 @@ class ArtworkScanner:
                 level='error')
             return finish()
         finally:
-            try:
-                gdb.close()
-            except Exception:
-                pass
-            try:
-                db_conn.close()
-            except Exception:
-                pass
+            if gdb is not None:
+                try:
+                    gdb.close()
+                except Exception:
+                    pass
+            if db_conn is not None:
+                try:
+                    db_conn.close()
+                except Exception:
+                    pass

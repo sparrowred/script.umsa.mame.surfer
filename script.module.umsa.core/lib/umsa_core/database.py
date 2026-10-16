@@ -210,6 +210,18 @@ class DBMod:
         if not filter_lists:
             filter_lists = {}
 
+        # Clean up whatever was opened if setup fails partway through. The
+        # connection attributes may not all exist yet at that point, so the
+        # cleanup helpers look them up defensively.
+        try:
+            self._open_persistent_databases(db_path, filter_lists)
+        except Exception:
+            self.close()
+            raise
+
+    def _open_persistent_databases(self, db_path, filter_lists):
+        """Open the persistent umsa.db/status.db connections and prepare them."""
+
         # connect to umsa db
         self.db_paths = _core_data_paths(db_path)
         self.gdb = connect_sqlite(self.db_paths.umsa_db)
@@ -300,34 +312,66 @@ class DBMod:
     def open_db(self, db_path):
         """Reopen umsa database, needed after update of umsa.db
 
-        Reconnect and import support and artwork databases
+        Reconnect and import support and artwork databases. The persistent
+        status.db connection is left untouched. Any previous umsa.db
+        connection is closed first so it can never be silently overwritten.
         """
+
+        # Never replace an active umsa.db connection without closing it first.
+        self.close_umsa_db()
 
         # connect to umsa db
         self.db_paths = _core_data_paths(db_path)
-        self.gdb = connect_sqlite(self.db_paths.umsa_db)
-        self.gdb.row_factory = sqlite3.Row
+        gdb = connect_sqlite(self.db_paths.umsa_db)
+        gdb.row_factory = sqlite3.Row
         #self.gdb.text_factory = str # PY2
-        self.gdbc = self.gdb.cursor()
+        gdbc = gdb.cursor()
+        self.gdb = gdb
+        self.gdbc = gdbc
 
-        # creat additonal tables
-        self.create_dat_tables(self.gdbc)
-        self.create_art_tables(self.gdbc)
-        self.gdb.commit()
+        attached = set()
+        failed = False
+        try:
+            # creat additonal tables
+            self.create_dat_tables(gdbc)
+            self.create_art_tables(gdbc)
+            gdb.commit()
 
-        # copy dat, art over via attach
-        self.gdbc.execute(
-            "ATTACH DATABASE ? AS dat", (os.fspath(self.db_paths.dat_db),)
-        )
-        self.gdbc.execute(
-            "ATTACH DATABASE ? AS art", (os.fspath(self.db_paths.artwork_db),)
-        )
-        self.gdbc.execute("INSERT INTO main.dat SELECT * FROM dat.dat")
-        self.gdbc.execute("INSERT INTO main.dat_set SELECT * FROM dat.dat_set")
-        self.gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
-        self.gdb.commit()
-        self.gdbc.execute("DETACH DATABASE 'dat'")
-        self.gdbc.execute("DETACH DATABASE 'art'")
+            # copy dat, art over via attach
+            gdbc.execute(
+                "ATTACH DATABASE ? AS dat", (os.fspath(self.db_paths.dat_db),)
+            )
+            attached.add('dat')
+            gdbc.execute(
+                "ATTACH DATABASE ? AS art", (os.fspath(self.db_paths.artwork_db),)
+            )
+            attached.add('art')
+            gdbc.execute("INSERT INTO main.dat SELECT * FROM dat.dat")
+            gdbc.execute("INSERT INTO main.dat_set SELECT * FROM dat.dat_set")
+            gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
+            gdb.commit()
+        except Exception:
+            failed = True
+            # Undo any pending write; the original exception is re-raised.
+            try:
+                gdb.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            # Drop every database that was attached, even on the error path,
+            # so the connection is never left with unexpected attachments. A
+            # failed DETACH must not mask the original exception.
+            for alias in ('art', 'dat'):
+                if alias in attached:
+                    try:
+                        gdbc.execute("DETACH DATABASE '{}'".format(alias))
+                    except Exception:
+                        pass
+            if failed:
+                # Do not keep a half-copied connection around; leave a known,
+                # recoverable state that lets the caller retry open_db().
+                self.close_umsa_db()
 
     def create_dat_tables(self, db_cursor):
         """create dat tables"""
@@ -391,10 +435,59 @@ class DBMod:
             """
         )
 
+    def close_umsa_db(self):
+        """Close the persistent umsa.db connection, keeping status.db open.
+
+        Safe to call more than once and even if __init__ failed before the
+        connection was opened. The connection objects are left in a closed
+        state rather than cleared so callers holding a reference see the
+        connection they closed.
+        """
+
+        gdbc = getattr(self, 'gdbc', None)
+        if gdbc is not None:
+            try:
+                gdbc.close()
+            except Exception:
+                pass
+        gdb = getattr(self, 'gdb', None)
+        if gdb is not None:
+            try:
+                gdb.close()
+            except Exception:
+                pass
+
+    def close(self):
+        """Close every persistent database connection owned by DBMod.
+
+        Safe to call more than once and even if __init__ failed before both
+        connections were opened.
+        """
+
+        self.close_umsa_db()
+
+        sdbc = getattr(self, 'sdbc', None)
+        if sdbc is not None:
+            try:
+                sdbc.close()
+            except Exception:
+                pass
+        sdb = getattr(self, 'sdb', None)
+        if sdb is not None:
+            try:
+                sdb.close()
+            except Exception:
+                pass
+
     def close_db(self):
-        """close database"""
-        self.gdb.close()
-        #self.sdb.close()
+        """Compatibility wrapper: close only the umsa.db connection.
+
+        Historically ``close_db`` closed only ``umsa.db`` and left
+        ``status.db`` open (the database-update sequence relies on that, then
+        calls :meth:`open_db` again). Use :meth:`close` for a full shutdown.
+        """
+
+        self.close_umsa_db()
 
     def scan_gb64_to_db(self, empty, db_path):
         """Read GameBase64 info from zip and artwork."""
@@ -405,28 +498,34 @@ class DBMod:
         # connect to db
         db_paths = _core_data_paths(db_path)
         db_conn = connect_sqlite(db_paths.umsa_db)
-        dbc = db_conn.cursor()
+        try:
+            dbc = db_conn.cursor()
 
-        dbc.execute("SELECT sets.id, sets.name, sets.gamename \
-                     FROM sets JOIN swl ON sets.swllink_id=swl.id \
-                     WHERE swl.name LIKE 'gb64_%'")
-        for i in dbc.fetchall():
-            gb64_sets[i[1]] = i[0]
-            # TODO hack, only first id
-            if i[2] not in gb64_name:
-                gb64_name[i[2]] = i[0]
-        db_conn.close()
+            dbc.execute("SELECT sets.id, sets.name, sets.gamename \
+                         FROM sets JOIN swl ON sets.swllink_id=swl.id \
+                         WHERE swl.name LIKE 'gb64_%'")
+            for i in dbc.fetchall():
+                gb64_sets[i[1]] = i[0]
+                # TODO hack, only first id
+                if i[2] not in gb64_name:
+                    gb64_name[i[2]] = i[0]
+        finally:
+            db_conn.close()
 
         # connect to db
         db_conn3 = connect_sqlite(db_paths.dat_db)
-        dbc = db_conn3.cursor()
-        db_conn2 = connect_sqlite(db_paths.artwork_db)
-        abc = db_conn2.cursor()
-        scan_gb64_nfo(gb64_sets, gb64_name, self.nonmame['gb64'], dbc, abc, self)
-        db_conn3.commit()
-        db_conn3.close()
-        db_conn2.commit()
-        db_conn2.close()
+        db_conn2 = None
+        try:
+            dbc = db_conn3.cursor()
+            db_conn2 = connect_sqlite(db_paths.artwork_db)
+            abc = db_conn2.cursor()
+            scan_gb64_nfo(gb64_sets, gb64_name, self.nonmame['gb64'], dbc, abc, self)
+            db_conn3.commit()
+            db_conn2.commit()
+        finally:
+            if db_conn2 is not None:
+                db_conn2.close()
+            db_conn3.close()
         self.scan_status = False
 
     def scan_exodos_to_db(self, empty, db_path):
@@ -438,28 +537,34 @@ class DBMod:
         # connect to db
         db_paths = _core_data_paths(db_path)
         db_conn = connect_sqlite(db_paths.umsa_db)
-        #db_conn.text_factory = str # PY2
-        dbc = db_conn.cursor()
+        try:
+            #db_conn.text_factory = str # PY2
+            dbc = db_conn.cursor()
 
-        dbc.execute("SELECT sets.id, sets.gamename, sets.name \
-                     FROM sets JOIN swl ON sets.swllink_id=swl.id \
-                     WHERE swl.name = 'exodos'")
-        for i in dbc.fetchall():
-            exodos_sets_names[i[2]] = i[0]
-            exodos_sets[i[1].replace(':','_').replace('\'','_').replace('?','_').lower()] = i[0]
-        db_conn.close()
+            dbc.execute("SELECT sets.id, sets.gamename, sets.name \
+                         FROM sets JOIN swl ON sets.swllink_id=swl.id \
+                         WHERE swl.name = 'exodos'")
+            for i in dbc.fetchall():
+                exodos_sets_names[i[2]] = i[0]
+                exodos_sets[i[1].replace(':','_').replace('\'','_').replace('?','_').lower()] = i[0]
+        finally:
+            db_conn.close()
         # connect to db
         db_conn3 = connect_sqlite(db_paths.dat_db)
-        dbc = db_conn3.cursor()
-        db_conn2 = connect_sqlite(db_paths.artwork_db)
-        abc = db_conn2.cursor()
+        db_conn2 = None
+        try:
+            dbc = db_conn3.cursor()
+            db_conn2 = connect_sqlite(db_paths.artwork_db)
+            abc = db_conn2.cursor()
 
-        scan_exodos(self.nonmame['exodos'],
-                    exodos_sets, exodos_sets_names, dbc, abc, self)
-        db_conn3.commit()
-        db_conn3.close()
-        db_conn2.commit()
-        db_conn2.close()
+            scan_exodos(self.nonmame['exodos'],
+                        exodos_sets, exodos_sets_names, dbc, abc, self)
+            db_conn3.commit()
+            db_conn2.commit()
+        finally:
+            if db_conn2 is not None:
+                db_conn2.close()
+            db_conn3.close()
         self.scan_status = False
 
     def scan_dats(self, datdir, db_path):
@@ -480,55 +585,69 @@ class DBMod:
         # connect to db
         db_paths = _core_data_paths(db_path)
         db_conn = connect_sqlite(db_paths.dat_db)
-        #db_conn.text_factory = str # PY2
-        dbc = db_conn.cursor()
-
-        # create tables for first run
-        self.create_dat_tables(dbc)
-        db_conn.commit()
-
-        # clean table
-        # TODO except exodos, gb64*
-        dbc.execute("DELETE FROM dat")
-        dbc.execute("DELETE FROM dat_set")
-        db_conn.commit()
-
-        # get all sets from umsa database
-        all_sets = {}
         try:
-            gdb = connect_sqlite(db_paths.umsa_db)
-        except sqlite3.OperationalError:
-            return
-        gdb.row_factory = sqlite3.Row
-        gdbc = gdb.cursor()
-        gdbc.execute("SELECT sets.id, sets.name, swl.name as swl \
-                      FROM sets JOIN swl ON sets.swllink_id=swl.id")
-        for i in gdbc.fetchall():
-            all_sets["{}:{}".format(i['swl'], i['name'])] = i['id']
-        gdbc.close()
+            #db_conn.text_factory = str # PY2
+            dbc = db_conn.cursor()
 
-        # scan dat files
-        files_in_datdir = os.listdir(datdir)
-        count = 1.0
-        for datfile in files_in_datdir:
+            # create tables for first run
+            self.create_dat_tables(dbc)
+            db_conn.commit()
+
+            # clean table
+            # TODO except exodos, gb64*
+            dbc.execute("DELETE FROM dat")
+            dbc.execute("DELETE FROM dat_set")
+            db_conn.commit()
+
+            # get all sets from umsa database
+            all_sets = {}
+            gdb = None
             try:
-                fobj = open(
-                    os.path.join(datdir, datfile), 'r', encoding='utf-8', errors='ignore'
-                )
-            except OSError:
-                fobj = False
-            if fobj:
-                self.scan_what = datfile
-                self.scan_perc = int(count/len(files_in_datdir)*100)
+                try:
+                    gdb = connect_sqlite(db_paths.umsa_db)
+                except sqlite3.OperationalError:
+                    return
+                gdb.row_factory = sqlite3.Row
+                gdbc = gdb.cursor()
+                try:
+                    gdbc.execute("SELECT sets.id, sets.name, swl.name as swl \
+                                  FROM sets JOIN swl ON sets.swllink_id=swl.id")
+                    for i in gdbc.fetchall():
+                        all_sets["{}:{}".format(i['swl'], i['name'])] = i['id']
+                finally:
+                    gdbc.close()
+            finally:
+                if gdb is not None:
+                    gdb.close()
 
-                if datfile == 'history.xml':
-                    scan_history(fobj.read(), all_sets, dbc)
-                else:
-                    scan_dat(fobj, all_sets, datfile, dbc)
-                db_conn.commit()
-                fobj.close()
-            count += 1
-        db_conn.close()
+            # scan dat files
+            files_in_datdir = os.listdir(datdir)
+            count = 1.0
+            for datfile in files_in_datdir:
+                try:
+                    fobj = open(
+                        os.path.join(datdir, datfile), 'r', encoding='utf-8', errors='ignore'
+                    )
+                except OSError:
+                    fobj = False
+                if fobj:
+                    self.scan_what = datfile
+                    self.scan_perc = int(count/len(files_in_datdir)*100)
+
+                    try:
+                        if datfile == 'history.xml':
+                            scan_history(fobj.read(), all_sets, dbc)
+                        else:
+                            scan_dat(fobj, all_sets, datfile, dbc)
+                        db_conn.commit()
+                    except Exception:
+                        db_conn.rollback()
+                        raise
+                    finally:
+                        fobj.close()
+                count += 1
+        finally:
+            db_conn.close()
         self.scan_status = False
 
     def add_dat_to_db(self, db_path):
@@ -537,19 +656,35 @@ class DBMod:
         db_paths = _core_data_paths(db_path)
         gdb = connect_sqlite(db_paths.umsa_db)
         gdbc = gdb.cursor()
-        # creat additonal tables
-        self.create_dat_tables(gdbc)
-        gdbc.execute("DELETE FROM dat")
-        gdbc.execute("DELETE FROM dat_set")
-        gdb.commit()
-        # attach dat db and copy
-        gdbc.execute("ATTACH DATABASE ? AS dat", (os.fspath(db_paths.dat_db),))
-        gdbc.execute("INSERT INTO main.dat SELECT * FROM dat.dat")
-        gdbc.execute("INSERT INTO main.dat_set SELECT * FROM dat.dat_set")
-        gdb.commit()
-        # detach
-        gdbc.execute("DETACH DATABASE 'dat'")
-        gdb.close()
+        attached = False
+        try:
+            # creat additonal tables
+            self.create_dat_tables(gdbc)
+            gdbc.execute("DELETE FROM dat")
+            gdbc.execute("DELETE FROM dat_set")
+            gdb.commit()
+            # attach dat db and copy
+            gdbc.execute("ATTACH DATABASE ? AS dat", (os.fspath(db_paths.dat_db),))
+            attached = True
+            gdbc.execute("INSERT INTO main.dat SELECT * FROM dat.dat")
+            gdbc.execute("INSERT INTO main.dat_set SELECT * FROM dat.dat_set")
+            gdb.commit()
+        except Exception:
+            # Undo any pending write; the original exception is re-raised.
+            try:
+                gdb.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            # Detaching after the copy keeps SQLite from committing an
+            # attached database implicitly on close.
+            if attached:
+                try:
+                    gdbc.execute("DETACH DATABASE 'dat'")
+                except Exception:
+                    pass
+            gdb.close()
 
     def scan_artwork(self, paths=None, db_path=None, listdir=None, source=None,
                      cancel_event=None, only_types=None, resume=True, **kwargs):
@@ -608,22 +743,39 @@ class DBMod:
         db_paths = _core_data_paths(db_path)
         gdb = connect_sqlite(db_paths.umsa_db)
         gdbc = gdb.cursor()
-        # sanity: create additonal tables
-        self.create_art_tables(gdbc)
-        # delete existing data
-        gdbc.execute("DELETE FROM art_set")
-        gdb.commit()
-        # attach and copy over
-        gdbc.execute(
-            "ATTACH DATABASE ? AS art", (os.fspath(db_paths.artwork_db),)
-        )
-        gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
-        gdb.commit()
-        gdbc.execute("SELECT COUNT(*) FROM art_set")
-        count = gdbc.fetchone()[0]
-        log(f"UMSA artwork: copied {count} records into umsa.db")
-        gdbc.execute("DETACH DATABASE 'art'")
-        gdb.close()
+        attached = False
+        try:
+            # sanity: create additonal tables
+            self.create_art_tables(gdbc)
+            # delete existing data
+            gdbc.execute("DELETE FROM art_set")
+            gdb.commit()
+            # attach and copy over
+            gdbc.execute(
+                "ATTACH DATABASE ? AS art", (os.fspath(db_paths.artwork_db),)
+            )
+            attached = True
+            gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
+            gdb.commit()
+            gdbc.execute("SELECT COUNT(*) FROM art_set")
+            count = gdbc.fetchone()[0]
+            log(f"UMSA artwork: copied {count} records into umsa.db")
+        except Exception:
+            # Undo any pending write; the original exception is re-raised.
+            try:
+                gdb.rollback()
+            except Exception:
+                pass
+            raise
+        finally:
+            # Detaching after the copy keeps SQLite from committing an
+            # attached database implicitly on close.
+            if attached:
+                try:
+                    gdbc.execute("DETACH DATABASE 'art'")
+                except Exception:
+                    pass
+            gdb.close()
 
     def get_art_types(self):
         """get all types of artwork which contain images
@@ -841,15 +993,18 @@ class DBMod:
         # connect to db
         db_paths = _core_data_paths(db_path)
         db_conn = connect_sqlite(db_paths.umsa_db)
-        #db_conn.text_factory = str # PY2
-        dbc = db_conn.cursor()
+        try:
+            #db_conn.text_factory = str # PY2
+            dbc = db_conn.cursor()
 
-        dbc.execute("SELECT id FROM swl WHERE name = 'vgmplay'")
-        vgmplay_swl_id = dbc.fetchone()[0]
+            dbc.execute("SELECT id FROM swl WHERE name = 'vgmplay'")
+            vgmplay_swl_id = dbc.fetchone()[0]
 
-        dbc.execute("SELECT name, gamename FROM sets \
-            WHERE swllink_id = ? ORDER BY RANDOM() LIMIT 1", (vgmplay_swl_id,))
-        random_vgm = dbc.fetchone()
+            dbc.execute("SELECT name, gamename FROM sets \
+                WHERE swllink_id = ? ORDER BY RANDOM() LIMIT 1", (vgmplay_swl_id,))
+            random_vgm = dbc.fetchone()
+        finally:
+            db_conn.close()
 
         return {'name': random_vgm[0], 'gamename': random_vgm[1]}
 
