@@ -145,9 +145,11 @@ class GB64Scanner:
     def _load_mappings(self):
         """Load ``{set name: id}`` and ``{title: id}`` for the gb64 sets.
 
-        Titles keep the first id seen, matching the historical behaviour. The
-        connection is opened and closed here so nothing is held open while the
-        filesystem is traversed.
+        Titles keep the first id seen, matching the historical behaviour. Rows
+        with an unusable (NULL/empty) set name are skipped, so an all-unusable
+        result comes back empty and the caller aborts instead of scanning junk.
+        The connection is opened and closed here so nothing is held open while
+        the filesystem is traversed.
         """
 
         umsa_db = self._db_paths.umsa_db
@@ -166,6 +168,11 @@ class GB64Scanner:
                 gb64_sets = {}
                 gb64_name = {}
                 for set_id, name, gamename in cursor.fetchall():
+                    if not name:
+                        # An unusable row (NULL/empty set name) cannot resolve
+                        # to an archive; skip it so a mapping made only of such
+                        # rows is rejected below instead of scanning junk.
+                        continue
                     gb64_sets[name] = set_id
                     if gamename not in gb64_name:
                         gb64_name[gamename] = set_id
@@ -268,13 +275,16 @@ class GB64Scanner:
         ``discovery_incomplete`` and ``legacy_cleaned``.
 
         A missing/unreadable root, an unloadable UMSA mapping or an empty
-        GameBase64 set mapping aborts before anything is written. A failed
-        archive preserves its previous DAT and artwork and is left retryable; a
-        missing archive is skipped with a warning and counted in ``missing``.
-        An invalid screenshot reference is a per-archive error that preserves
-        the previous artwork. The legacy ``Screenshots`` unit is removed only
-        when the whole scan completed with no missing archives, no errors, no
-        cancellation, no abort and no incomplete discovery.
+        GameBase64 set mapping (including one made only of unusable rows)
+        aborts before anything is written. A failed archive preserves its
+        previous DAT and artwork and is left retryable; a missing archive is
+        skipped with a warning and counted in ``missing``. An invalid
+        screenshot reference is a per-archive error that preserves the previous
+        artwork. A failed required-root discovery sets ``discovery_incomplete``
+        and increments ``errors`` once per failed root, so an incomplete scan
+        never reports zero errors. The legacy ``Screenshots`` unit is removed
+        only when the whole scan completed with no missing archives, no errors,
+        no cancellation, no abort and no incomplete discovery.
         """
 
         summary = {
@@ -328,15 +338,34 @@ class GB64Scanner:
             return summary
 
         # Inventory both directory trees once, before any database write, so
-        # the filesystem is each traversed a single time.
+        # the filesystem is each traversed a single time. Both roots are
+        # required: an explicit check validates them before traversal so a
+        # missing root can never be mistaken for an empty success. Each failed
+        # root is counted once here (not once per affected unit) so the summary
+        # reports the discovery failure without double-counting it.
         self._report(0, 'reading covers...')
-        cover_files, covers_complete = self._walk_files(
-            os.path.join(root, 'Extras', 'Cover'))
-        screenshot_files, screenshots_complete = self._walk_files(
-            os.path.join(root, SCREENSHOT_DIR))
+        cover_dir = os.path.join(root, 'Extras', 'Cover')
+        if os.path.isdir(cover_dir):
+            cover_files, covers_complete = self._walk_files(cover_dir)
+        else:
+            log(f"UMSA gb64 scan: required directory '{cover_dir}' is "
+                "missing or unreadable", level='error')
+            cover_files, covers_complete = [], False
+        screenshot_dir = os.path.join(root, SCREENSHOT_DIR)
+        if os.path.isdir(screenshot_dir):
+            screenshot_files, screenshots_complete = self._walk_files(
+                screenshot_dir)
+        else:
+            log(f"UMSA gb64 scan: required directory '{screenshot_dir}' is "
+                "missing or unreadable", level='error')
+            screenshot_files, screenshots_complete = [], False
         screenshots = set(screenshot_files)
         if not covers_complete or not screenshots_complete:
             summary['discovery_incomplete'] = True
+        if not covers_complete:
+            summary['errors'] += 1
+        if not screenshots_complete:
+            summary['errors'] += 1
 
         cover_rows = []
         if covers_complete:
@@ -455,9 +484,9 @@ class GB64Scanner:
                     # missing reference cannot be trusted; keep the previous
                     # artwork and mark the unit errored (not done) so a later
                     # retry reprocesses it. The DAT metadata above is kept.
-                    # The summary already reports discovery_incomplete; the
-                    # per-archive error count is not raised here to avoid
-                    # double-counting one discovery failure across many units.
+                    # The discovery failure itself was already counted once in
+                    # summary['errors'] when the root was walked, so no
+                    # per-archive error count is raised here.
                     log(f"UMSA gb64 scan: screenshot tree incomplete, keeping "
                         f"artwork for '{unit}'", level='warning')
                     self._record_unit_error(
