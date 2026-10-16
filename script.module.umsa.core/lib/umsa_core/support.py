@@ -18,6 +18,7 @@ from zipfile import ZipFile
 
 from .logging import log
 from .artwork import root_key_for_path
+from .dat_repository import ORIGIN_EXODOS, ORIGIN_GB64
 
 MARP_URL = "http://replay.marpirc.net"
 YT_URL = "http://www.youtube.com"
@@ -260,8 +261,8 @@ Region: {region}
         # ^ if no match: lowercase
         if (set_name in exodos_sets_names) or (set_name.lower() in exodos_sets_names):
             dbc.execute(
-                "INSERT INTO dat (file, entry) \
-                 VALUES (?, ?)", ('eXoDOS', note)
+                "INSERT INTO dat (file, entry, origin) \
+                 VALUES (?, ?, ?)", ('eXoDOS', note, ORIGIN_EXODOS)
             )
             lastrow = dbc.lastrowid
             # TODO check if key exists 1st
@@ -458,8 +459,8 @@ def scan_gb64_nfo(all_gb64_sets, gb64_name, gb64_path, dbc, abc, other_self):
         datinfo += '\n'+'\n'.join(notesinfo)
      
         dbc.execute(
-            "INSERT INTO dat (file, entry) \
-             VALUES (?, ?)", ('GameBase64', datinfo)
+            "INSERT INTO dat (file, entry, origin) \
+             VALUES (?, ?, ?)", ('GameBase64', datinfo, ORIGIN_GB64)
         )
         lastrow = dbc.lastrowid
         dbc.execute(
@@ -469,217 +470,3 @@ def scan_gb64_nfo(all_gb64_sets, gb64_name, gb64_path, dbc, abc, other_self):
         other_self.scan_perc = int(count/maxno*100)
         count += 1
     other_self.scan_what = 'gamebase64 finished!'
-
-def scan_history(history_string, all_sets, dbc):
-    """Scan history.xml. """
-
-    root = ET.fromstring(history_string)
-    #print(root.tag) # history
-    #print(root.attrib) # version, date
-    
-    for entry in root:
-        new_db_entries = []
-        for child in entry:
-            if child.tag == 'systems':
-                for innerchild in child:
-                    set_info = f"mame:{innerchild.attrib['name']}"
-                    if set_info in all_sets:
-                        new_db_entries.append(all_sets[set_info])
-                    #else:
-                    #    print(f"UMSA - history.xml: not found {set_info}")
-            elif child.tag == 'software':
-                for innerchild in child:
-                    set_info = f"{innerchild.attrib['list']}:{innerchild.attrib['name']}"
-                    if set_info in all_sets:
-                        new_db_entries.append(all_sets[set_info])
-                    #else:
-                    #    print(f"UMSA - history.xml: not found {set_info}")
-            elif child.tag == 'text':
-                # now put into db
-                dbc.execute(
-                    "INSERT INTO dat (file, entry) \
-                     VALUES (?, ?)", ('History', child.text)
-                )
-                lastrow = dbc.lastrowid
-
-                for new_id in new_db_entries:        
-                    dbc.execute(
-                        "INSERT INTO dat_set (id, dat_id) VALUES (?, ?)",
-                        (new_id, lastrow)
-                    )
- 
-def scan_dat(fobj, all_sets, datfile, dbc):
-    """Scan MAME support file and write seperate infos to database.
-
-    TODO check where to put double [CR]
-    TODO score.dat when last line $end
-    """
-
-    swl = []
-    sets = []
-    dat = {}
-    tag = ""
-    flag = None
-
-    for line in fobj:
-        line = line.rstrip()
-        if len(line) < 1:
-            continue
-
-        # into an entry
-        if flag:
-            # save entry
-            if line == '$end':
-
-                # save entries to DB
-                dat_ids = []
-                for tag, text in dat.items():
-
-                    # check sysinfo.dat for stub entries
-                    if tag == "Sysinfo":
-                        if "just a stub" in text:
-                            continue
-                        flag = True
-                        for i in text.split('[CR]'):
-                            if i and i[0] != '=':
-                                flag = False
-                        if flag:
-                            continue
-
-                    dbc.execute(
-                        "INSERT INTO dat (file, entry) \
-                            VALUES (?, ?)", (tag, text)
-                    )
-                    dat_ids.append(dbc.lastrowid)
-
-                # save pointers to sets
-                for swl_name in swl:
-                    for set_name in sets:
-                        if f"{swl_name}:{set_name}" in all_sets:
-                            for i in dat_ids:
-                                dbc.execute(
-                                    "INSERT INTO dat_set (id, dat_id) VALUES (?, ?)",
-                                    (all_sets[f"{swl_name}:{set_name}"], i)
-                                )
-
-                # clear variables
-                tag = ""
-                swl = None
-                sets = None
-                flag = None
-                dat = {}
-
-            # add line to entry
-            elif line == '$bio':
-                if datfile == 'history.dat':
-                    tag = 'History'
-                elif datfile == 'mameinfo.dat':
-                    tag = 'MInfo'
-                elif datfile == 'sysinfo.dat':
-                    tag = "Sysinfo"
-                else:
-                    tag = "Info"
-                if tag not in dat:
-                    dat[tag] = ""
-                else:
-                    dat[tag] += "-----NEXT--------[CR]"
-
-            elif line == '$story':
-                tag = 'Score'
-                if tag not in dat:
-                    dat[tag] = ""
-                else:
-                    dat[tag] += "-----NEXT--------[CR]"
-
-            elif line == '$cmd':
-                tag = 'Command'
-                if tag not in dat:
-                    dat[tag] = ""
-                else:
-                    dat[tag] += "-----NEXT--------[CR]"
-
-            elif line[:2] == '- ' and line[-2:] == ' -':
-                if datfile == 'command.dat':
-                    dat[tag] += "[CR]"+line
-                else:
-                    tag = line[2:-2].lower().capitalize()
-                    if tag == "Tips and tricks":
-                        tag = "Tips/Tricks"
-                    if tag not in dat:
-                        dat[tag] = ""
-                    else:
-                        dat[tag] += "-----NEXT--------[CR]"
-
-
-            elif (line == '$mame'
-                  or line[:7] == 'LEVELS:'
-                  or line[:7].lower() == 'romset:'
-                  or line == 'Other Emulators:'):
-
-                tag = 'Info'
-                if tag not in dat:
-                    dat[tag] = ""
-                else:
-                    dat[tag] += line + "[CR]"
-
-            elif (line in (
-                    'WIP:',
-                    'STORY:',
-                    'STORY AND PLAY INSTRUCTIONS:', # TODO: only 2 times in mameinfo.dat
-                    'START:',
-                    'SETUP:',
-                    'GAMEPLAY:',
-                    'PLAY INSTRUCTIONS:',)):
-
-                tag = line[:-1].lower().capitalize()
-                if tag == 'Play instructions':
-                    tag = 'Play Inst.'
-                elif tag == 'Wip':
-                    tag = 'WIP'
-                elif tag == 'Story and play instructions':
-                    tag = 'Story'
-                if tag not in dat:
-                    dat[tag] = ""
-                else:
-                    dat[tag] += "-----NEXT--------[CR]"
-
-            elif line[:17] == 'Recommended Games':
-                tag = "Rec"
-                if '(' in line:
-                    cat = "- {}:[CR]".format(line[line.find('(')+1:line.find(')')])
-                else:
-                    cat = ""
-                if tag not in dat:
-                    dat[tag] = cat
-                else:
-                    dat[tag] += cat
-
-            else:
-                if tag in dat:
-                    dat[tag] += line + "[CR]"
-                else:
-                    tag = 'others'
-                    if tag not in dat:
-                        dat[tag] = line + "[CR]"
-                    else:
-                        dat[tag] += "-----NEXT--------[CR]"
-                        dat[tag] += line + "[CR]"
-
-        else:
-            # check if entry begins
-            if line[0] == '$' and '=' in line:
-                flag = True
-
-                # remove last ,
-                if line[-1:] == ',':
-                    line = line[:-1]
-
-                # split at =
-                swl_str, sets_str = line[1:].split('=', 1)
-
-                # replace info with mame
-                swl_str = swl_str.replace('info', 'mame')
-
-                # split swl and sets by ,
-                swl = swl_str.split(',')
-                sets = sets_str.split(',')

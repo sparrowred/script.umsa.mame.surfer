@@ -1,14 +1,17 @@
 """Module for umsa.info sqlite3 database.
 
-Artwork table access is centralised in :mod:`umsa_core.artwork_repository`
-(``ArtworkRepository`` owns all ``art_set``/``art_scan_unit`` CRUD and the
-schema definition). A few direct ``art_set`` statements intentionally remain
-here:
+Artwork table access is centralised in :mod:`umsa_core.artwork_repository` and
+DAT table access in :mod:`umsa_core.dat_repository`; DAT parsing lives in
+:mod:`umsa_core.dat_parser` and the DAT scan workflow in
+:mod:`umsa_core.dat_scanner`. ``DBMod`` remains the public facade.
 
-- ``open_db()`` and ``add_art_to_db()`` copy rows between ``artwork.db`` and
-  ``umsa.db`` through ``ATTACH DATABASE``. That cross-database
-  synchronisation owns multiple connections and attached databases, so it
-  stays in ``DBMod`` (see the artwork repository contract).
+A few direct statements intentionally remain here:
+
+- ``open_db()``, ``add_dat_to_db()`` and ``add_art_to_db()`` copy rows between
+  the per-source databases (``dat.db``/``artwork.db``) and ``umsa.db`` through
+  ``ATTACH DATABASE``. That cross-database synchronisation owns multiple
+  connections and attached databases, so it stays in ``DBMod`` (see the
+  repository contracts).
 - ``get_random_art()`` and ``get_artwork_by_software_id()`` join ``art_set``
   with the general UMSA game tables (``sets``/``swl``/``software``) and, for
   ``get_random_art()``, depend on the active ``DBMod`` filter state. These are
@@ -34,9 +37,11 @@ from .artwork import resolve_artwork_path
 from .artwork_repository import ArtworkRepository, create_artwork_tables
 from .artwork_scanner import ArtworkScanner
 from .data_paths import CoreDataPaths
+from .dat_repository import DatRepository, create_dat_tables
+from .dat_scanner import DatScanner
 from .logging import log
 from .sqlite import connect_sqlite
-from .support import scan_dat, scan_exodos, scan_gb64_nfo, scan_history
+from .support import scan_exodos, scan_gb64_nfo
 
 def _core_data_paths(db_path):
     """Adapt legacy database-directory arguments to explicit Core paths."""
@@ -353,6 +358,9 @@ class DBMod:
             self.create_art_tables(gdbc)
             gdb.commit()
 
+            # make sure the attached dat.db carries the current schema too
+            self._upgrade_dat_db(self.db_paths)
+
             # copy dat, art over via attach
             gdbc.execute(
                 "ATTACH DATABASE ? AS dat", (os.fspath(self.db_paths.dat_db),)
@@ -362,8 +370,18 @@ class DBMod:
                 "ATTACH DATABASE ? AS art", (os.fspath(self.db_paths.artwork_db),)
             )
             attached.add('art')
-            gdbc.execute("INSERT INTO main.dat SELECT * FROM dat.dat")
-            gdbc.execute("INSERT INTO main.dat_set SELECT * FROM dat.dat_set")
+            # Replace the DAT data atomically: the delete and the copy live in
+            # one transaction, so a failed copy never leaves the target empty.
+            gdbc.execute("DELETE FROM main.dat_set")
+            gdbc.execute("DELETE FROM main.dat")
+            gdbc.execute(
+                "INSERT INTO main.dat (id, file, entry, origin) "
+                "SELECT id, file, entry, origin FROM dat.dat"
+            )
+            gdbc.execute(
+                "INSERT INTO main.dat_set (id, dat_id) "
+                "SELECT id, dat_id FROM dat.dat_set"
+            )
             gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
             gdb.commit()
         except Exception:
@@ -390,25 +408,34 @@ class DBMod:
                 self.close_umsa_db()
 
     def create_dat_tables(self, db_cursor):
-        """create dat tables"""
+        """create dat tables
 
-        db_cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dat(
-                id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                file    VARCHAR(50),
-                entry   TEXT
-            )
-            """
-        )
-        db_cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dat_set(
-                id      INTEGER,
-                dat_id  INTEGER
-            )
-            """
-        )
+        Delegates to the authoritative DAT schema definition in the DAT
+        repository. The signature is preserved for compatibility with existing
+        callers; the helper also upgrades old databases in place by adding and
+        backfilling the ``origin`` column.
+        """
+
+        create_dat_tables(db_cursor)
+
+    def _upgrade_dat_db(self, db_paths):
+        """Ensure the local ``dat.db`` carries the current DAT schema.
+
+        ``open_db()``/``add_dat_to_db()`` read ``origin`` from the attached
+        ``dat.db``; older databases lack that column, so it is upgraded (and
+        backfilled) before the copy.
+        """
+
+        dat_conn = connect_sqlite(db_paths.dat_db)
+        try:
+            cursor = dat_conn.cursor()
+            try:
+                create_dat_tables(cursor)
+            finally:
+                cursor.close()
+            dat_conn.commit()
+        finally:
+            dat_conn.close()
 
     def create_art_tables(self, db_cursor):
         """create art tables
@@ -502,6 +529,10 @@ class DBMod:
         db_conn2 = None
         try:
             dbc = db_conn3.cursor()
+            # Ensure the DAT schema (and origin column) exists before the
+            # metadata rows are inserted with their origin.
+            self.create_dat_tables(dbc)
+            db_conn3.commit()
             db_conn2 = connect_sqlite(db_paths.artwork_db)
             abc = db_conn2.cursor()
             scan_gb64_nfo(gb64_sets, gb64_name, self.nonmame['gb64'], dbc, abc, self)
@@ -539,6 +570,10 @@ class DBMod:
         db_conn2 = None
         try:
             dbc = db_conn3.cursor()
+            # Ensure the DAT schema (and origin column) exists before the
+            # metadata rows are inserted with their origin.
+            self.create_dat_tables(dbc)
+            db_conn3.commit()
             db_conn2 = connect_sqlite(db_paths.artwork_db)
             abc = db_conn2.cursor()
 
@@ -558,101 +593,70 @@ class DBMod:
         datdir -- directory with dat files
         db_path -- directory for database files
 
-        Todo: split file reading part to other module
+        This is a thin compatibility wrapper around
+        :class:`umsa_core.dat_scanner.DatScanner`. It keeps the public
+        ``scan_dats(datdir, db_path)`` interface, the
+        ``scan_perc``/``scan_what``/``scan_status`` attributes used by
+        ``run_scan_with_progress()`` and the GUI, and returns the scanner's
+        summary dictionary unchanged.
 
-        Idea:
-        scan dat: first split entry and save topics (also dat file name???)
-        then get ids from umsa for all sets at once
-        save all pointers to dat entry
+        See :meth:`DatScanner.scan` for the staging/replacement semantics.
         """
 
+        db_paths = _core_data_paths(db_path) if db_path else self.db_paths
+
+        self.scan_perc = 0
         self.scan_what = 'files'
-        # connect to db
-        db_paths = _core_data_paths(db_path)
-        db_conn = connect_sqlite(db_paths.dat_db)
+        self.scan_status = True
+
+        def progress(percent, what):
+            if percent is not None:
+                self.scan_perc = percent
+            if what is not None:
+                self.scan_what = what
+
+        def is_cancelled():
+            return not self.scan_status
+
         try:
-            #db_conn.text_factory = str # PY2
-            dbc = db_conn.cursor()
-
-            # create tables for first run
-            self.create_dat_tables(dbc)
-            db_conn.commit()
-
-            # clean table
-            # TODO except exodos, gb64*
-            dbc.execute("DELETE FROM dat")
-            dbc.execute("DELETE FROM dat_set")
-            db_conn.commit()
-
-            # get all sets from umsa database
-            all_sets = {}
-            gdb = None
-            try:
-                try:
-                    gdb = connect_sqlite(db_paths.umsa_db)
-                except sqlite3.OperationalError:
-                    return
-                gdb.row_factory = sqlite3.Row
-                gdbc = gdb.cursor()
-                try:
-                    gdbc.execute("SELECT sets.id, sets.name, swl.name as swl \
-                                  FROM sets JOIN swl ON sets.swllink_id=swl.id")
-                    for i in gdbc.fetchall():
-                        all_sets["{}:{}".format(i['swl'], i['name'])] = i['id']
-                finally:
-                    gdbc.close()
-            finally:
-                if gdb is not None:
-                    gdb.close()
-
-            # scan dat files
-            files_in_datdir = os.listdir(datdir)
-            count = 1.0
-            for datfile in files_in_datdir:
-                try:
-                    fobj = open(
-                        os.path.join(datdir, datfile), 'r', encoding='utf-8', errors='ignore'
-                    )
-                except OSError:
-                    fobj = False
-                if fobj:
-                    self.scan_what = datfile
-                    self.scan_perc = int(count/len(files_in_datdir)*100)
-
-                    try:
-                        if datfile == 'history.xml':
-                            scan_history(fobj.read(), all_sets, dbc)
-                        else:
-                            scan_dat(fobj, all_sets, datfile, dbc)
-                        db_conn.commit()
-                    except Exception:
-                        db_conn.rollback()
-                        raise
-                    finally:
-                        fobj.close()
-                count += 1
+            return DatScanner(
+                db_paths,
+                initialize_tables=self.create_dat_tables,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            ).scan(datdir)
         finally:
-            db_conn.close()
-        self.scan_status = False
+            self.scan_status = False
 
     def add_dat_to_db(self, db_path):
         """add dat to database"""
 
         db_paths = _core_data_paths(db_path)
+        # The attached dat.db must carry the current schema (including the
+        # origin column) before it is read below.
+        self._upgrade_dat_db(db_paths)
         gdb = connect_sqlite(db_paths.umsa_db)
         gdbc = gdb.cursor()
         attached = False
         try:
             # creat additonal tables
             self.create_dat_tables(gdbc)
-            gdbc.execute("DELETE FROM dat")
-            gdbc.execute("DELETE FROM dat_set")
-            gdb.commit()
             # attach dat db and copy
             gdbc.execute("ATTACH DATABASE ? AS dat", (os.fspath(db_paths.dat_db),))
             attached = True
-            gdbc.execute("INSERT INTO main.dat SELECT * FROM dat.dat")
-            gdbc.execute("INSERT INTO main.dat_set SELECT * FROM dat.dat_set")
+            # Replace the DAT data atomically: the delete and the copy live in
+            # one transaction, so a failed copy never leaves the target empty
+            # or partially updated.
+            gdbc.execute("DELETE FROM main.dat_set")
+            gdbc.execute("DELETE FROM main.dat")
+            gdbc.execute(
+                "INSERT INTO main.dat (id, file, entry, origin) "
+                "SELECT id, file, entry, origin FROM dat.dat"
+            )
+            gdbc.execute(
+                "INSERT INTO main.dat_set (id, dat_id) "
+                "SELECT id, dat_id FROM dat.dat_set"
+            )
             gdb.commit()
         except Exception:
             # Undo any pending write; the original exception is re-raised.
@@ -728,6 +732,16 @@ class DBMod:
 
         return ArtworkRepository(self.gdb)
 
+    def _get_dat_repository(self):
+        """Return a DAT repository bound to the current umsa.db connection.
+
+        Created per call (never cached) so it can never hold a reference to a
+        connection that ``open_db()`` has since replaced. It never owns or
+        closes ``self.gdb``.
+        """
+
+        return DatRepository(self.gdb)
+
     def add_art_to_db(self, db_path):
         """add artwork to database
 
@@ -796,31 +810,24 @@ class DBMod:
         return repo.get_artwork_for_sets(set_ids)
 
     def get_dat_for_set(self, set_id):
-        """get dat file entries for one set"""
+        """get dat file entries for one set
 
-        set_dats = {}
-        self.gdbc.execute(
-            "SELECT dat.file, dat.entry \
-             FROM dat JOIN dat_set ON dat.id = dat_set.dat_id \
-             WHERE dat_set.id = ?", (set_id,)
-        )
-        for i in self.gdbc.fetchall():
-            set_dats[i['file']] = i['entry']
-        return set_dats
+        Returns a ``{display category: entry text}`` mapping. Delegates to
+        :class:`umsa_core.dat_repository.DatRepository`; the result structure
+        is unchanged.
+        """
+
+        return self._get_dat_repository().get_dat_for_set(set_id)
 
     def get_dat_for_sets(self, set_ids):
-        """get dat file entries for a list of sets"""
+        """get dat file entries for a list of sets
 
-        self.gdbc.execute("SELECT dat_set.id, dat.file, dat.entry \
-                           FROM dat JOIN dat_set ON dat.id = dat_set.dat_id \
-                           WHERE dat_set.id in ({})".format(
-                               ','.join(set_ids)))
-        set_file = {}
-        for i in self.gdbc.fetchall():
-            if i['id'] not in set_file:
-                set_file[i['id']] = {}
-            set_file[i['id']][i['file']] = i['entry']
-        return set_file
+        Returns a ``{set id: {display category: entry text}}`` mapping.
+        Delegates to :class:`umsa_core.dat_repository.DatRepository`; an empty
+        list returns an empty mapping.
+        """
+
+        return self._get_dat_repository().get_dat_for_sets(set_ids)
 
     def get_random_id(self):
         """get a random id"""
