@@ -18,6 +18,7 @@ import stat
 import threading
 
 from .artwork import root_key_for_path
+from .artwork_repository import ArtworkRepository
 from .logging import log
 from .sqlite import connect_sqlite
 
@@ -151,26 +152,6 @@ def _art_list_retry_delay(attempt):
     return delays[-1]
 
 
-def _write_art_unit_status(db_cursor, db_conn, source, root_key, scan_unit,
-                           status, last_error=None):
-    """Persist an ``art_scan_unit`` status, ignoring a write failure.
-
-    Used for the ``running``/``error`` markers that intentionally live
-    outside the atomic artwork-plus-``done`` transaction, so a failure to
-    persist them can never abort the scan.
-    """
-
-    try:
-        db_cursor.execute(
-            "INSERT OR REPLACE INTO art_scan_unit "
-            "(source,root_key,scan_unit,status,last_error,updated_at) "
-            "VALUES (?,?,?,?,?,datetime('now'))",
-            (source, root_key, scan_unit, status, last_error))
-        db_conn.commit()
-    except Exception:
-        pass
-
-
 def _is_dir(path):
     """Return ``(is_directory, error)`` for a filesystem entry.
 
@@ -207,18 +188,16 @@ class ArtworkScanner:
             may be ``None`` to leave it unchanged.
         is_cancelled: Optional predicate that returns ``True`` when the host
             wants the scan to stop.
-        write_unit_status: Optional override for the status-writing helper.
         listdir: Optional directory listing callable (defaults to
             ``os.listdir``).
     """
 
     def __init__(self, db_paths, initialize_tables, progress=None,
-                 is_cancelled=None, write_unit_status=None, listdir=None):
+                 is_cancelled=None, listdir=None):
         self._db_paths = db_paths
         self._initialize_tables = initialize_tables
         self._progress = progress
         self._is_cancelled = is_cancelled or (lambda: False)
-        self._write_unit_status = write_unit_status or _write_art_unit_status
         self._listdir = listdir or os.listdir
 
     def _report(self, percent=None, what=None):
@@ -414,6 +393,8 @@ class ArtworkScanner:
             self._initialize_tables(dbc)
             db_conn.commit()
 
+            repo = ArtworkRepository(db_conn)
+
             self._report(0, 'discovering')
 
             # Discover scan units (type/software_list) without reading files yet.
@@ -509,11 +490,8 @@ class ArtworkScanner:
                 self._report(int((i / total) * 100) if total else 100, urel)
 
                 if resume:
-                    dbc.execute("SELECT status FROM art_scan_unit "
-                                "WHERE source=? AND root_key=? AND scan_unit=?",
-                                (src, rkey, urel))
-                    st = dbc.fetchone()
-                    if st and st[0] == 'done':
+                    status = repo.get_scan_unit_status(src, rkey, urel)
+                    if status == 'done':
                         skipped += 1
                         continue
 
@@ -529,9 +507,12 @@ class ArtworkScanner:
                         f"from UMSA database for unit '{urel}' "
                         f"(source '{src}'), preserving existing artwork",
                         level='error')
-                    self._write_unit_status(
-                        dbc, db_conn, src, rkey, urel, 'error',
-                        f"software list '{swl_name}' missing")
+                    msg = f"software list '{swl_name}' missing"
+                    try:
+                        repo.set_scan_unit_error(src, rkey, urel, msg, db_cursor=dbc)
+                    except Exception as status_exc:
+                        log(f"UMSA artwork scan: could not record error status "
+                            f"for unit '{urel}': {status_exc}", level='error')
                     continue
                 swl_dict = {}
                 gdbc.execute("SELECT id,name FROM sets WHERE swllink_id=?",
@@ -541,8 +522,11 @@ class ArtworkScanner:
 
                 # Mark the unit running before the inventory starts so an
                 # interrupted process can be identified on resume.
-                self._write_unit_status(
-                    dbc, db_conn, src, rkey, urel, 'running')
+                try:
+                    repo.set_scan_unit_running(src, rkey, urel, db_cursor=dbc)
+                except Exception as status_exc:
+                    log(f"UMSA artwork scan: could not mark unit '{urel}' as "
+                        f"running: {status_exc}", level='warning')
 
                 unit_path = os.path.join(rpath, urel)
                 files = listing(unit_path, urel)
@@ -556,8 +540,11 @@ class ArtworkScanner:
                     errors += 1
                     log(f"UMSA artwork scan: skipping unit '{urel}' "
                         "(listing failed)", level='error')
-                    self._write_unit_status(
-                        dbc, db_conn, src, rkey, urel, 'error', 'listing failed')
+                    try:
+                        repo.set_scan_unit_error(src, rkey, urel, 'listing failed', db_cursor=dbc)
+                    except Exception as status_exc:
+                        log(f"UMSA artwork scan: could not record error status "
+                            f"for unit '{urel}': {status_exc}", level='error')
                     continue
 
                 # Enumerate the unit completely before opening the write
@@ -586,30 +573,16 @@ class ArtworkScanner:
                 # transaction, so a crash cannot leave fresh artwork with a
                 # stale status (or a done status with old artwork).
                 try:
-                    dbc.execute(
-                        "DELETE FROM art_set "
-                        "WHERE source=? AND root_key=? AND scan_unit=?",
-                        (src, rkey, urel))
-                    if matched_rows:
-                        dbc.executemany(
-                            "INSERT INTO art_set "
-                            "(id,source,root_key,scan_unit,type,extension,"
-                            "relative_path,archive_member) "
-                            "VALUES (?,?,?,?,?,?,?,?)",
-                            matched_rows)
-                    dbc.execute(
-                        "INSERT OR REPLACE INTO art_scan_unit "
-                        "(source,root_key,scan_unit,status,updated_at) "
-                        "VALUES (?,?,?,?,datetime('now'))",
-                        (src, rkey, urel, 'done'))
-                    db_conn.commit()
+                    repo.replace_scan_unit(src, rkey, urel, matched_rows)
                 except Exception as exc:
                     errors += 1
-                    db_conn.rollback()
                     log(f"UMSA artwork scan: unit '{urel}' failed: {exc}",
                         level='error')
-                    self._write_unit_status(
-                        dbc, db_conn, src, rkey, urel, 'error', str(exc))
+                    try:
+                        repo.set_scan_unit_error(src, rkey, urel, str(exc), db_cursor=dbc)
+                    except Exception as status_exc:
+                        log(f"UMSA artwork scan: could not record error status "
+                            f"for unit '{urel}': {status_exc}", level='error')
                     continue
 
                 processed += 1

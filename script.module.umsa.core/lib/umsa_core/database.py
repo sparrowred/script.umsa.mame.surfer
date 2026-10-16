@@ -1,5 +1,20 @@
 """Module for umsa.info sqlite3 database.
 
+Artwork table access is centralised in :mod:`umsa_core.artwork_repository`
+(``ArtworkRepository`` owns all ``art_set``/``art_scan_unit`` CRUD and the
+schema definition). A few direct ``art_set`` statements intentionally remain
+here:
+
+- ``open_db()`` and ``add_art_to_db()`` copy rows between ``artwork.db`` and
+  ``umsa.db`` through ``ATTACH DATABASE``. That cross-database
+  synchronisation owns multiple connections and attached databases, so it
+  stays in ``DBMod`` (see the artwork repository contract).
+- ``get_random_art()`` and ``get_artwork_by_software_id()`` join ``art_set``
+  with the general UMSA game tables (``sets``/``swl``/``software``) and, for
+  ``get_random_art()``, depend on the active ``DBMod`` filter state. These are
+  mixed application queries rather than artwork-table CRUD and are left here
+  on purpose.
+
 TODO
  - remove usage of detail, use split_gamename
  - optimize logic for filters
@@ -16,6 +31,7 @@ from re import findall, search
 from urllib.request import urlopen
 
 from .artwork import resolve_artwork_path
+from .artwork_repository import ArtworkRepository, create_artwork_tables
 from .artwork_scanner import ArtworkScanner
 from .data_paths import CoreDataPaths
 from .logging import log
@@ -395,45 +411,14 @@ class DBMod:
         )
 
     def create_art_tables(self, db_cursor):
-        """create art tables"""
+        """create art tables
 
-        # Ensure tables exist (new schema only)
+        Delegates to the authoritative artwork schema definition in the
+        artwork repository. The signature is preserved for compatibility
+        with existing callers.
+        """
 
-        db_cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS art_set(
-                art_id          INTEGER PRIMARY KEY,
-                id              INTEGER NOT NULL,
-                source          TEXT NOT NULL,
-                root_key        TEXT NOT NULL,
-                scan_unit       TEXT NOT NULL,
-                type            TEXT NOT NULL,
-                extension       TEXT NOT NULL,
-                relative_path   TEXT,
-                archive_member  TEXT
-            )
-            """
-        )
-        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_id ON art_set(id)")
-        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_source ON art_set(source)")
-        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_type ON art_set(type)")
-        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_scan_unit ON art_set(scan_unit)")
-        db_cursor.execute("CREATE INDEX IF NOT EXISTS idx_art_set_source_root_scan ON art_set(source, root_key, scan_unit)")
-
-        # Create art_scan_unit table
-        db_cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS art_scan_unit(
-                source       TEXT NOT NULL,
-                root_key     TEXT NOT NULL,
-                scan_unit    TEXT NOT NULL,
-                status       TEXT NOT NULL,
-                last_error   TEXT,
-                updated_at   TEXT,
-                PRIMARY KEY (source, root_key, scan_unit)
-            )
-            """
-        )
+        create_artwork_tables(db_cursor)
 
     def close_umsa_db(self):
         """Close the persistent umsa.db connection, keeping status.db open.
@@ -733,6 +718,16 @@ class DBMod:
         finally:
             self.scan_status = False
 
+    def _get_artwork_repository(self):
+        """Return a repository bound to the current umsa.db connection.
+
+        The repository is created per call rather than cached, so it can
+        never hold a reference to a connection that ``open_db()`` has since
+        replaced. It never owns or closes ``self.gdb``.
+        """
+
+        return ArtworkRepository(self.gdb)
+
     def add_art_to_db(self, db_path):
         """add artwork to database
 
@@ -783,12 +778,7 @@ class DBMod:
         except videosnaps, manuals, soundtracks and patches
         """
 
-        art_types = []
-        self.gdbc.execute("SELECT DISTINCT type FROM art_set ORDER BY type")
-        for i in self.gdbc.fetchall():
-            if i['type'] not in ('videosnaps', 'manuals', 'soundtrack', 'ips'):
-                art_types.append(i['type'])
-        return art_types
+        return self._get_artwork_repository().get_art_types()
 
     def get_artwork_for_set(self, set_id):
         """get artwork for one set
@@ -796,34 +786,14 @@ class DBMod:
         TODO think about if dict with key = type is better?
         """
 
-        self.gdbc.execute("SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art_set WHERE id = ?", (set_id,))
-        rows = self.gdbc.fetchall()
-        # return as dicts with both new and legacy-compatible keys where possible
-        result = []
-        for r in rows:
-            d = dict(r)
-
-            result.append(d)
-        return result
+        repo = self._get_artwork_repository()
+        return repo.get_artwork_for_set(set_id)
 
     def get_artwork_for_sets(self, set_ids):
         """get artwork for a list of sets"""
 
-        if not set_ids:
-            return {}
-        self.gdbc.execute(
-            "SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art_set WHERE id in ({})".format(
-                ','.join(set_ids)
-            )
-        )
-        art_set = {}
-        for i in self.gdbc.fetchall():
-            row = dict(i)
-            row['filename'] = row.get('relative_path')
-            if row['id'] not in art_set:
-                art_set[row['id']] = []
-            art_set[row['id']].append(row)
-        return art_set
+        repo = self._get_artwork_repository()
+        return repo.get_artwork_for_sets(set_ids)
 
     def get_dat_for_set(self, set_id):
         """get dat file entries for one set"""
@@ -886,6 +856,12 @@ class DBMod:
         Callers resolve them with
         :func:`umsa_core.artwork.resolve_artwork_path`; the additional left
         image is resolved here for the screensaver.
+
+        The random artwork selection intentionally stays in ``DBMod``: it
+        joins ``art_set`` with ``sets`` and applies the active
+        ``filter_join``/``filter_where`` state, so it is a mixed application
+        query rather than artwork-table CRUD. The isolated left-image lookup
+        is delegated to :class:`ArtworkRepository`.
         """
 
         art_columns = (
@@ -959,16 +935,12 @@ class DBMod:
                 lefttype = 'covers'
             else:
                 lefttype = 'snap'
-            self.gdbc.execute(
-                "SELECT source, root_key, scan_unit, type, extension, \
-                        relative_path, archive_member \
-                FROM art_set WHERE art_set.id = ? AND type = ?",
-                (rand_art['id'],lefttype)
+            leftpic = self._get_artwork_repository().get_artwork_record_for_set_type(
+                rand_art['id'], lefttype
             )
-            leftpic = self.gdbc.fetchone()
             if leftpic:
                 left_path = resolve_artwork_path(
-                    dict(leftpic), end_result, self._art_source_roots())
+                    leftpic, end_result, self._art_source_roots())
                 if left_path:
                     end_result.update({'left_pic': left_path})
 
@@ -1966,6 +1938,10 @@ class DBMod:
         is the fully resolved location of a random matching artwork (empty
         string when none is found) and ``machines`` is a comma separated list
         of machine abbreviations.
+
+        This remains in ``DBMod``: it joins ``art_set`` with the game tables
+        (``sets``/``swl``) and resolves the resulting path, so it is a mixed
+        application query rather than artwork-table CRUD.
 
         TODO
         - an abbreviation for machine name would make text shorter
