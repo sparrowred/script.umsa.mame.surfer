@@ -247,6 +247,69 @@ class DatRepository:
             if close:
                 db_cursor.close()
 
+    def replace_origin_for_set(
+        self, origin: str, set_id: int, file: str, entry: Optional[str]
+    ) -> int:
+        """Replace the ``origin`` metadata attached to one set.
+
+        Used by per-set importers (for example GameBase64) that own exactly one
+        metadata row per set and must stay idempotent across repeated scans.
+        In a single short transaction it removes only the ``origin`` rows
+        currently linked to ``set_id`` and then inserts a fresh ``file``/
+        ``entry`` row linked to ``set_id``.
+
+        Rows of other origins are never touched, and a removed row is deleted
+        only when no remaining ``dat_set`` relationship still needs it, so a row
+        shared with another set survives. On any error the transaction is rolled
+        back and the previous valid rows are kept. The caller's connection is
+        never closed. Returns the id of the inserted row.
+        """
+
+        conn = self._conn
+        had_transaction = conn.in_transaction
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SAVEPOINT umsa_dat_replace_set")
+            try:
+                cursor.execute(
+                    "SELECT dat.id FROM dat_set JOIN dat ON dat.id = dat_set.dat_id "
+                    "WHERE dat.origin = ? AND dat_set.id = ?",
+                    (origin, set_id),
+                )
+                old_ids = [row[0] for row in cursor.fetchall()]
+                for dat_id in old_ids:
+                    cursor.execute(
+                        "DELETE FROM dat_set WHERE dat_id = ? AND id = ?",
+                        (dat_id, set_id),
+                    )
+                    cursor.execute(
+                        "DELETE FROM dat WHERE id = ? AND NOT EXISTS "
+                        "(SELECT 1 FROM dat_set WHERE dat_id = ?)",
+                        (dat_id, dat_id),
+                    )
+                cursor.execute(
+                    "INSERT INTO dat(file, entry, origin) VALUES (?, ?, ?)",
+                    (file, entry, origin),
+                )
+                new_id = cursor.lastrowid
+                if new_id is None:
+                    raise RuntimeError("dat insert did not return a row id")
+                cursor.execute(
+                    "INSERT INTO dat_set(id, dat_id) VALUES (?, ?)",
+                    (set_id, new_id),
+                )
+            except Exception:
+                cursor.execute("ROLLBACK TO umsa_dat_replace_set")
+                cursor.execute("RELEASE umsa_dat_replace_set")
+                raise
+            else:
+                cursor.execute("RELEASE umsa_dat_replace_set")
+                if not had_transaction:
+                    conn.commit()
+            return new_id
+        finally:
+            cursor.close()
+
     def publish_staged(self, origin: str) -> int:
         """Atomically replace one origin's published rows with the staged data.
 

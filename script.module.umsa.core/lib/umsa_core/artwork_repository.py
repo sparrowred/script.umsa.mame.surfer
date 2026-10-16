@@ -334,6 +334,46 @@ class ArtworkRepository:
         """Mark a scan unit as done."""
         self._write_status(source, root_key, scan_unit, "done", db_cursor=db_cursor)
 
+    def delete_scan_unit(self, source: str, root_key: str, scan_unit: str) -> int:
+        """Delete every record of one scan unit and forget its status.
+
+        Intended for retiring a legacy scan unit once its replacement has been
+        written successfully. It is scoped strictly to the given
+        ``(source, root_key, scan_unit)``; other units and sources are never
+        touched. It manages its own short transaction, only commits one it
+        started, and never closes the caller's connection. Returns the number of
+        removed artwork rows.
+        """
+
+        conn = self._conn
+        had_transaction = conn.in_transaction
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SAVEPOINT umsa_art_delete_unit")
+            try:
+                cursor.execute(
+                    "DELETE FROM art_set "
+                    "WHERE source=? AND root_key=? AND scan_unit=?",
+                    (source, root_key, scan_unit),
+                )
+                removed = cursor.rowcount
+                cursor.execute(
+                    "DELETE FROM art_scan_unit "
+                    "WHERE source=? AND root_key=? AND scan_unit=?",
+                    (source, root_key, scan_unit),
+                )
+            except Exception:
+                cursor.execute("ROLLBACK TO umsa_art_delete_unit")
+                cursor.execute("RELEASE umsa_art_delete_unit")
+                raise
+            else:
+                cursor.execute("RELEASE umsa_art_delete_unit")
+                if not had_transaction:
+                    conn.commit()
+            return removed if removed is not None else 0
+        finally:
+            cursor.close()
+
     def replace_scan_unit(
         self, source: str, root_key: str, scan_unit: str, artwork_rows: Iterable[tuple]
     ) -> None:

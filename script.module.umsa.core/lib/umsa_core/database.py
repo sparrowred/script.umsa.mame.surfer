@@ -39,9 +39,10 @@ from .artwork_scanner import ArtworkScanner
 from .data_paths import CoreDataPaths
 from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
+from .gb64_scanner import GB64Scanner
 from .logging import log
 from .sqlite import connect_sqlite
-from .support import scan_exodos, scan_gb64_nfo
+from .support import scan_exodos
 
 def _core_data_paths(db_path):
     """Adapt legacy database-directory arguments to explicit Core paths."""
@@ -121,6 +122,10 @@ def run_scan_with_progress(db, scan_method, scan_args, progress, title, sleep):
     message)``. The scan method must set ``scan_perc``/``scan_what``/
     ``scan_status`` on ``db``.
 
+    Returns the scan method's return value (for example the scanner summary
+    dictionary), or ``None`` when the worker failed. Existing callers that
+    ignore the result are unaffected.
+
     The running flag is set *before* the worker starts, so a scan that finishes
     immediately cannot have its completion overwritten by the caller. The
     worker is wrapped so that an exception is logged and the running flag is
@@ -131,9 +136,11 @@ def run_scan_with_progress(db, scan_method, scan_args, progress, title, sleep):
 
     scan_func = getattr(db, scan_method)
 
+    result = {}
+
     def worker():
         try:
-            scan_func(*scan_args)
+            result['value'] = scan_func(*scan_args)
         except Exception as exc:  # noqa: BLE001 - a scan must never stay stuck
             log(f"UMSA scan: '{scan_method}' worker failed: {exc}",
                 level='error')
@@ -155,6 +162,7 @@ def run_scan_with_progress(db, scan_method, scan_args, progress, title, sleep):
     finally:
         scan_thread.join()
     progress(100, title, 'saving')
+    return result.get('value')
 
 # new db for pics
 # listdir recursive for progettosnaps
@@ -502,47 +510,46 @@ class DBMod:
         self.close_umsa_db()
 
     def scan_gb64_to_db(self, empty, db_path):
-        """Read GameBase64 info from zip and artwork."""
+        """Read GameBase64 info from zip and artwork.
 
-        gb64_sets = {}
-        gb64_name = {}
+        This is a thin compatibility wrapper around
+        :class:`umsa_core.gb64_scanner.GB64Scanner`. It keeps the historical
+        ``scan_gb64_to_db(empty, db_path)`` interface, the
+        ``scan_perc``/``scan_what``/``scan_status`` attributes used by
+        ``run_scan_with_progress()`` and the GUI, and returns the scanner's
+        summary dictionary unchanged.
 
-        # connect to db
-        db_paths = _core_data_paths(db_path)
-        db_conn = connect_sqlite(db_paths.umsa_db)
+        The ``empty`` argument is a legacy placeholder that is never read; the
+        GameBase64 root is taken from the Core ``gb64`` setting instead. See
+        :meth:`GB64Scanner.scan` for the import semantics.
+        """
+
+        db_paths = _core_data_paths(db_path) if db_path else self.db_paths
+        gb64_root = self.nonmame.get('gb64', '') if self.nonmame else ''
+
+        self.scan_perc = 0
+        self.scan_what = 'reading covers...'
+        self.scan_status = True
+
+        def progress(percent, what):
+            if percent is not None:
+                self.scan_perc = percent
+            if what is not None:
+                self.scan_what = what
+
+        def is_cancelled():
+            return not self.scan_status
+
         try:
-            dbc = db_conn.cursor()
-
-            dbc.execute("SELECT sets.id, sets.name, sets.gamename \
-                         FROM sets JOIN swl ON sets.swllink_id=swl.id \
-                         WHERE swl.name LIKE 'gb64_%'")
-            for i in dbc.fetchall():
-                gb64_sets[i[1]] = i[0]
-                # TODO hack, only first id
-                if i[2] not in gb64_name:
-                    gb64_name[i[2]] = i[0]
+            return GB64Scanner(
+                db_paths,
+                initialize_dat=self.create_dat_tables,
+                initialize_art=self.create_art_tables,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            ).scan(gb64_root)
         finally:
-            db_conn.close()
-
-        # connect to db
-        db_conn3 = connect_sqlite(db_paths.dat_db)
-        db_conn2 = None
-        try:
-            dbc = db_conn3.cursor()
-            # Ensure the DAT schema (and origin column) exists before the
-            # metadata rows are inserted with their origin.
-            self.create_dat_tables(dbc)
-            db_conn3.commit()
-            db_conn2 = connect_sqlite(db_paths.artwork_db)
-            abc = db_conn2.cursor()
-            scan_gb64_nfo(gb64_sets, gb64_name, self.nonmame['gb64'], dbc, abc, self)
-            db_conn3.commit()
-            db_conn2.commit()
-        finally:
-            if db_conn2 is not None:
-                db_conn2.close()
-            db_conn3.close()
-        self.scan_status = False
+            self.scan_status = False
 
     def scan_exodos_to_db(self, empty, db_path):
         """Read eXoDOS xml and artwork."""
@@ -756,14 +763,15 @@ class DBMod:
         try:
             # sanity: create additonal tables
             self.create_art_tables(gdbc)
-            # delete existing data
-            gdbc.execute("DELETE FROM art_set")
-            gdb.commit()
             # attach and copy over
             gdbc.execute(
                 "ATTACH DATABASE ? AS art", (os.fspath(db_paths.artwork_db),)
             )
             attached = True
+            # Replace the artwork data atomically: the delete and the copy live
+            # in one transaction, so a failed copy never leaves umsa.db empty
+            # or partially updated.
+            gdbc.execute("DELETE FROM main.art_set")
             gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
             gdb.commit()
             gdbc.execute("SELECT COUNT(*) FROM art_set")

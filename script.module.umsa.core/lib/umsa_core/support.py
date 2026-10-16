@@ -18,7 +18,7 @@ from zipfile import ZipFile
 
 from .logging import log
 from .artwork import root_key_for_path
-from .dat_repository import ORIGIN_EXODOS, ORIGIN_GB64
+from .dat_repository import ORIGIN_EXODOS
 
 MARP_URL = "http://replay.marpirc.net"
 YT_URL = "http://www.youtube.com"
@@ -373,100 +373,3 @@ Region: {region}
 
     other_self.scan_what = 'exodos finished!'
 
-def scan_gb64_nfo(all_gb64_sets, gb64_name, gb64_path, dbc, abc, other_self):
-
-    # Extras/
-    #  Adverts/A/Publisher_Game + \d _\d\w.jpg
-    #  Cover/A/Title_Name{_*}.jpg
-    #  Docs/^
-    #  Maps/^
-    #  Tips/^
-
-    other_self.scan_what = 'reading covers...'
-    cover_path = os.path.join(gb64_path,'Extras','Cover')
-    cover_files = glob.glob(f"{cover_path}/**", recursive=True)
-    maxno = len(cover_files) 
-    count = 1.0
-    hit , miss = 0 , 0
-    for art_entry in cover_files:
-        arttype = 'covers'
-        dirname, basename = os.path.split(art_entry)
-        filebase, filext = os.path.splitext(basename)
-        filesplit = filebase.split('_')
-        if filesplit[-1] == '[Back]':
-            arttype = 'covers - back'
-            del filesplit[-1]
-        if filesplit[-1].startswith('(') and filesplit[-1].endswith(')'):
-            info = filesplit.pop()
-        title_name = ' '.join(filesplit)
-        if title_name in gb64_name:
-            abc.execute(
-                "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
-                (gb64_name[title_name], 'gb64', root_key_for_path(gb64_path) if gb64_path else '', 'Extras/Cover', arttype, filext[1:] if filext.startswith('.') else filext, os.path.relpath(art_entry, gb64_path) if gb64_path else art_entry, None)
-            )
-        other_self.scan_perc = int(count / maxno * 100)
-        count += 1
-
-    other_self.scan_what = 'reading info files from zips...'
-    maxno = len(all_gb64_sets)
-    count = 1.0
-    for setname, setid in all_gb64_sets.items():
-        filename = os.path.join(gb64_path,'Games',setname+'.zip')
-        if os.path.isfile(filename):
-            with ZipFile(filename) as archive:
-                nfo = archive.read('VERSION.NFO').decode('utf-8', 'ignore')
-        else:
-            log(f"UMSA support: gb64: zip not found {filename}", level='warning')
-            continue
-        infopart = 'internal'
-        gameinfo, versioninfo, notesinfo = [],[],[]
-        snap = ''
-        for i in nfo.split('\n'):
-            if ('-----' in i) or ('=====' in i):
-                continue
-            elif 'GAME INFO:' in i:
-                infopart = 'game'
-            elif 'VERSION INFO:' in i:
-                infopart = 'version'
-            elif 'NOTES:' in i:
-                infopart = 'notes'
-            elif 'Screenshot:' in i:
-                snap = i.split(':')[-1].strip().replace('\\','/')
-            elif 'SID:' in i:
-                sid = i.split(':')[-1].strip()
-            else:
-                if infopart == 'game':
-                    gameinfo.append(i)
-                elif infopart == 'version':
-                    versioninfo.append(i)
-                elif infopart == 'notes':
-                    notesinfo.append(i)
-        if snap:
-            abc.execute(
-                "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
-                (setid, 'gb64', root_key_for_path(gb64_path) if gb64_path else '', 'Screenshots', 'snap', snap.split('.')[-1] if '.' in snap else snap[:-3], os.path.join('Screenshots', snap) if gb64_path else f"Screenshots/{snap}", None)
-            )
-            title_image_path = f"{gb64_path}Screenshots/{snap[:-4]}_1{snap[-4:]}"
-            if os.path.isfile(os.path.join(gb64_path, 'Screenshots', title_image_path)):
-                abc.execute(
-                    "INSERT INTO art_set (id, source, root_key, scan_unit, type, extension, relative_path, archive_member) VALUES (?,?,?,?,?,?,?,?)",
-                    (setid, 'gb64', root_key_for_path(gb64_path) if gb64_path else '', 'Screenshots', 'titles', snap.split('.')[-1] if '.' in snap else snap[:-3], os.path.relpath(title_image_path, gb64_path) if gb64_path else title_image_path, None)
-                )
-        
-        # now put into db
-        datinfo = '\n'.join(gameinfo)
-        datinfo += '\n'+'\n'.join(versioninfo)
-        datinfo += '\n'+'\n'.join(notesinfo)
-     
-        dbc.execute(
-            "INSERT INTO dat (file, entry, origin) \
-             VALUES (?, ?, ?)", ('GameBase64', datinfo, ORIGIN_GB64)
-        )
-        lastrow = dbc.lastrowid
-        dbc.execute(
-            "INSERT INTO dat_set (id, dat_id) VALUES (?, ?)",
-            (setid, lastrow)
-        )
-        other_self.scan_perc = int(count/maxno*100)
-        count += 1
-    other_self.scan_what = 'gamebase64 finished!'
