@@ -184,30 +184,27 @@ def vgm_header_info(zip_path, member):
 def parse_mame_ini(ini_file):
     """Parse mame.ini."""
 
-    fobj = False
     mame_ini = {}
     try:
-        fobj = open(ini_file, 'r', encoding='utf-8')
+        with open(ini_file, 'r', encoding='utf-8') as fobj:
+            for line in fobj:
+                line = line.strip()
+                if len(line) == 0:
+                    continue
+                if line[0] == '#':
+                    continue
+                option = line.split(' ', 1)
+                if len(option) > 0:
+                    # linux replace $HOME
+                    home_dir = os.path.expanduser('~')
+                    # can contain multiple directories
+                    if 'path' in option[0]:
+                        mame_ini[option[0].strip()] = option[1].replace('$HOME', home_dir).strip().split(';')
+                    # only one directory
+                    if 'directory' in option[0]:
+                        mame_ini[option[0].strip()] = option[1].replace('$HOME', home_dir).strip()
     except OSError:
-        pass
-    if fobj:
-        for line in fobj:
-            line = line.strip()
-            if len(line) == 0:
-                continue
-            if line[0] == '#':
-                continue
-            option = line.split(' ', 1)
-            if len(option) > 0:
-                # linux replace $HOME
-                home_dir = os.path.expanduser('~')
-                # can contain multiple directories
-                if 'path' in option[0]:
-                    mame_ini[option[0].strip()] = option[1].replace('$HOME', home_dir).strip().split(';')
-                # only one directory
-                if 'directory' in option[0]:
-                    mame_ini[option[0].strip()] = option[1].replace('$HOME', home_dir).strip()
-        fobj.close()
+        return mame_ini
     return mame_ini
 
 
@@ -708,7 +705,8 @@ class Emulation:
                     log(f"UMSA Emu: play random vgm - {random_vgm['name']}.zip not found", level='warning')
                     continue
                 vgm_zipfile = self.emurun['zips'][0]
-                vgm_tracklist = ZipFile(vgm_zipfile).namelist()
+                with ZipFile(vgm_zipfile) as archive:
+                    vgm_tracklist = archive.namelist()
                 random_track = randint(1, len(vgm_tracklist))
                 play_vgm = f'{random_vgm["name"]}:{random_track:03d}'
                 # Parse header and calculate playback plan
@@ -945,11 +943,13 @@ class Emulation:
             # extract zipfile
             os.makedirs(self.emurun['folder'])
             try:
-                zfile = ZipFile(self.emurun['zips'][0])
-                zfile.extractall(self.emurun['folder'])
-                zfile.close()
+                with ZipFile(self.emurun['zips'][0]) as archive:
+                    archive.extractall(self.emurun['folder'])
             except BadZipfile:
-                os.rmdir(self.emurun['folder'])
+                try:
+                    os.rmdir(self.emurun['folder'])
+                except OSError:
+                    pass
                 return "Error: zipfile extraction was unsucessfull."
             zfiles = os.listdir(self.emurun['folder'])
 
@@ -965,15 +965,11 @@ class Emulation:
                     log(f"UMSA Emu extract_rom: NES: 2. is prg... {zfiles}", level='debug')
                     with open(os.path.join(self.emurun['folder'], zfiles[1]), "ab") as prg_file, open(os.path.join(self.emurun['folder'], zfiles[0]), "rb") as chr_file:
                         prg_file.write(chr_file.read())
-                    prg_file.close()
-                    chr_file.close()
                     os.remove(os.path.join(self.emurun['folder'], zfiles[0]))
                 elif zfiles[0][-3:] == 'prg' and zfiles[1][-3:] == 'chr':
                     log(f"UMSA Emu extract_rom: NES: 1. is prg... {zfiles}", level='debug')
                     with open(os.path.join(self.emurun['folder'], zfiles[0]), "ab") as prg_file, open(os.path.join(self.emurun['folder'], zfiles[1]), "rb") as chr_file:
                         prg_file.write(chr_file.read())
-                    prg_file.close()
-                    chr_file.close()
                     os.remove(os.path.join(self.emurun['folder'], zfiles[1]))
                 # rest is simply sorted by name
                 else:
@@ -982,7 +978,6 @@ class Emulation:
                     log(f"UMSA Emu extract_rom: sorted: {zfiles_sort}", level='debug')
                     with open(os.path.join(self.emurun['folder'], zfiles_sort[0]), "ab") as file1, open(os.path.join(self.emurun['folder'], zfiles_sort[1]), "rb") as file2:
                         file1.write(file2.read())
-                    file1.close()
                     os.remove(os.path.join(self.emurun['folder'], zfiles_sort[1]))
                 zfiles = os.listdir(self.emurun['folder'])
             # rename

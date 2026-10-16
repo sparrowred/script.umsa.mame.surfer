@@ -16,9 +16,9 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 from zipfile import ZipFile
 
-from .logging import log
 from .artwork import root_key_for_path
 from .dat_repository import ORIGIN_EXODOS
+from .logging import log
 
 MARP_URL = "http://replay.marpirc.net"
 YT_URL = "http://www.youtube.com"
@@ -116,23 +116,23 @@ def marp_search(short_name='', long_name='', version=''):
         "sort" : "short",
         "mode" : "search"
     }
-    req = urlopen(
+    with urlopen(
         f'{MARP_URL}/index.cgi',
-        data=urlencode(parg).encode('utf-8'), timeout=10)
-    # contains: user_set_score_version.zip, version
-    dl_ver = findall(
-        r'<A HREF=\'(\/inp\/.*?\.zip)\' onMouseOver=".*?">(.*?)</A>',
-        req.read().decode('utf-8', errors='ignore'))
+        data=urlencode(parg).encode('utf-8'), timeout=10) as req:
+        # contains: user_set_score_version.zip, version
+        dl_ver = findall(
+            r'<A HREF=\'(\/inp\/.*?\.zip)\' onMouseOver=".*?">(.*?)</A>',
+            req.read().decode('utf-8', errors='ignore'))
 
     # text output: "no_table" : "on"
     parg['no_table'] = "on"
-    req = urlopen(
+    with urlopen(
         f'{MARP_URL}/index.cgi',
-        data=urlencode(parg).encode('utf-8'), timeout=10)
-    # contains: cadashs (Cadash (Spain, version 1)) #1st : 116155 Jarl (100%)
-    info = findall(
-        r'<LI>\n(.*?) \((.*)\) #(.*?) : (.*?) (.*?) \((.*)\)\n',
-        req.read().decode('utf-8', errors='ignore'))
+        data=urlencode(parg).encode('utf-8'), timeout=10) as req:
+        # contains: cadashs (Cadash (Spain, version 1)) #1st : 116155 Jarl (100%)
+        info = findall(
+            r'<LI>\n(.*?) \((.*)\) #(.*?) : (.*?) (.*?) \((.*)\)\n',
+            req.read().decode('utf-8', errors='ignore'))
 
     ret = []
     for count, marp_info in enumerate(info):
@@ -161,13 +161,15 @@ def marp_download(zip_url, path):
 
     inp_name = os.path.split(zip_url)[1].replace('.zip', '.inp')
     if not os.path.isfile(os.path.join(path, inp_name)):
-        zip_obj = ZipFile(BytesIO(urlopen(f"{MARP_URL}{zip_url}", timeout=30).read()))
-        # extract only first *.inp file from zip
-        for name in zip_obj.namelist():
-            if name[-4:] == '.inp':
-                zip_obj.extract(name, path)
-                os.rename(os.path.join(path, name), os.path.join(path, inp_name))
-                break
+        with urlopen(f"{MARP_URL}{zip_url}", timeout=30) as response:
+            archive_data = response.read()
+        with BytesIO(archive_data) as buffer, ZipFile(buffer) as zip_obj:
+            # extract only first *.inp file from zip
+            for name in zip_obj.namelist():
+                if name[-4:] == '.inp':
+                    zip_obj.extract(name, path)
+                    os.rename(os.path.join(path, name), os.path.join(path, inp_name))
+                    break
     return inp_name
 
 def youtube_search(gamename, machine):
@@ -181,8 +183,8 @@ def youtube_search(gamename, machine):
     """
 
     query_string = urlencode({"search_query" : f'{gamename.split()}+{machine}'})
-    url_open = urlopen(f"{YT_URL}/results?{query_string}", timeout=30)
-    html_content = unescape(url_open.read().decode('utf-8', errors='ignore'))
+    with urlopen(f"{YT_URL}/results?{query_string}", timeout=30) as url_open:
+        html_content = unescape(url_open.read().decode('utf-8', errors='ignore'))
     return findall(r'{"videoId":"(.{11})".*?"text":"(.*?)"', html_content)
 
 def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dbc, abc, other_self):
