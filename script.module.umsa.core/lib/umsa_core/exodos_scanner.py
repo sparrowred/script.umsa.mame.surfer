@@ -143,7 +143,11 @@ class ExodosScanner:
         untouched.
 
         Returns a summary whose keys are ``busy``, ``aborted``, ``errors``,
-        ``matched`` and ``unmatched``.
+        ``matched``, ``unmatched``, ``artwork_units``, ``artwork_rows``,
+        ``artwork_errors`` and ``artwork_aborted``. ``aborted`` describes the
+        metadata phase (or a pre-scan failure); ``artwork_aborted`` describes the
+        artwork phase, and ``artwork_errors`` counts artwork failures. Metadata
+        and artwork are separate databases and are not atomic across each other.
         """
 
         busy_summary = {
@@ -153,7 +157,9 @@ class ExodosScanner:
             'matched': 0,
             'unmatched': 0,
             'artwork_units': 0,
+            'artwork_rows': 0,
             'artwork_errors': 0,
+            'artwork_aborted': False,
         }
 
         try:
@@ -186,7 +192,9 @@ class ExodosScanner:
             'matched': 0,
             'unmatched': 0,
             'artwork_units': 0,
+            'artwork_rows': 0,
             'artwork_errors': 0,
+            'artwork_aborted': False,
         }
 
         if cancel_event is not None and cancel_event.is_set():
@@ -264,15 +272,28 @@ class ExodosScanner:
             # Index the image tree and GameData MP4s. The helper is the legacy
             # artwork/videosnap portion; it neither parses the XML nor writes
             # the DAT metadata. It persists every unit through the repository,
-            # so its failures are reported in the scan summary.
+            # so its report is folded into the scan summary.
             from .support import scan_exodos_artwork
 
-            artwork = scan_exodos_artwork(
-                exodos_path, exodos_sets, art_repo, self._report)
-            summary['artwork_units'] = artwork['units']
-            summary['artwork_errors'] = artwork['errors']
-            summary['errors'] += artwork['errors']
+            try:
+                artwork = scan_exodos_artwork(
+                    exodos_path, exodos_sets, art_repo, self._report)
+            except Exception as exc:
+                # The metadata phase already succeeded and stays committed; an
+                # unexpected artwork failure is reported as a failed artwork
+                # phase so the scan is never mistaken for a complete success.
+                log(f"UMSA exodos scan: artwork phase failed: {exc}",
+                    level='error')
+                summary['artwork_aborted'] = True
+                summary['artwork_errors'] += 1
+                summary['errors'] += 1
+            else:
+                summary['artwork_units'] = artwork['units']
+                summary['artwork_rows'] = artwork['rows']
+                summary['artwork_errors'] = artwork['errors']
+                summary['errors'] += artwork['errors']
 
+            # Persist the metadata phase regardless of the artwork outcome.
             dat_conn.commit()
         finally:
             if art_conn is not None:
