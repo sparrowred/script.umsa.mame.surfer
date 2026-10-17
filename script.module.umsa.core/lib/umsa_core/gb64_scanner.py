@@ -29,6 +29,7 @@ from .artwork_repository import ArtworkRepository, create_artwork_tables
 from .dat_repository import ORIGIN_GB64, DatRepository, create_dat_tables
 from .gb64_parser import parse_cover_filename, parse_version_nfo
 from .logging import log
+from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite
 
 SOURCE = "gb64"
@@ -266,6 +267,46 @@ class GB64Scanner:
     # -- scan ------------------------------------------------------------
 
     def scan(self, gb64_root, cancel_event=None):
+        """Scan a GameBase64 installation under the shared scan lock.
+
+        This public entry point owns the process-wide scan lock for the whole
+        combined metadata/artwork workflow. When another covered scan is
+        already running it returns immediately with ``busy`` set and leaves all
+        data untouched.
+        """
+
+        busy_summary = {
+            'sets': 0,
+            'processed': 0,
+            'zips': 0,
+            'dat': 0,
+            'artwork': 0,
+            'covers': 0,
+            'missing': 0,
+            'errors': 0,
+            'cancelled': False,
+            'aborted': False,
+            'discovery_incomplete': False,
+            'legacy_cleaned': 0,
+            'busy': True,
+        }
+
+        try:
+            lock_ctx = ScanLockContext(scan_coordinator)
+            lock_ctx.__enter__()
+        except ScanBusyError:
+            log("UMSA gb64 scan: rejected, another scan is already running",
+                level='warning')
+            return busy_summary
+
+        try:
+            result = self._scan_locked(gb64_root, cancel_event)
+            result['busy'] = False
+            return result
+        finally:
+            lock_ctx.__exit__(None, None, None)
+
+    def _scan_locked(self, gb64_root, cancel_event=None):
         """Scan a GameBase64 installation.
 
         ``gb64_root`` is the configured GameBase64 directory (the one that

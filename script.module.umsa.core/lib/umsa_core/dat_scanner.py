@@ -25,6 +25,7 @@ from .dat_repository import (
 )
 from .logging import log
 from .sqlite import connect_sqlite
+from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 
 
 class DatScanner:
@@ -101,9 +102,13 @@ class DatScanner:
         unreadable/unparseable input file aborts the scan without publishing,
         leaving the previously stored DAT rows untouched. Cancellation discards
         the staged result and likewise keeps the previous rows.
+
+        The shared scan lock is acquired before any scan-specific preparation
+        or destructive change and held until the final status updates have
+        completed. When another scan already owns the lock the call returns
+        immediately with ``busy`` set and leaves all data untouched.
         """
 
-        db_paths = self._db_paths
         summary = {
             'files': 0,
             'entries': 0,
@@ -111,7 +116,27 @@ class DatScanner:
             'cancelled': False,
             'aborted': False,
             'errors': 0,
+            'busy': False,
         }
+
+        try:
+            lock_ctx = ScanLockContext(scan_coordinator)
+            lock_ctx.__enter__()
+        except ScanBusyError:
+            log("UMSA dat scan: rejected, another scan is already running",
+                level='warning')
+            summary['busy'] = True
+            return summary
+
+        try:
+            return self._scan_locked(datdir, cancel_event, summary)
+        finally:
+            lock_ctx.__exit__(None, None, None)
+
+    def _scan_locked(self, datdir, cancel_event, summary):
+        """Run the DAT scan while the shared lock is held by the caller."""
+
+        db_paths = self._db_paths
 
         # A missing/unreadable UMSA database must abort before any DAT data is
         # touched, so a failed scan can never look like a valid empty result.
@@ -211,33 +236,18 @@ class DatScanner:
                 if summary['cancelled']:
                     break
 
-            if summary['aborted'] or summary['cancelled']:
-                # Retain the previously published rows: drop only the staging.
-                try:
-                    repo.clear_staging()
-                    db_conn.commit()
-                except Exception:
-                    try:
-                        db_conn.rollback()
-                    except Exception:
-                        pass
-            else:
+            # Publish only when every file was read and no cancellation or
+            # abort happened.
+            if not summary['cancelled'] and not summary['aborted']:
                 try:
                     repo.publish_staged(ORIGIN_MAME_SUPPORT)
                     summary['published'] = True
                 except Exception as exc:
-                    log(f"UMSA dat scan: could not publish DAT entries: {exc}",
-                        level='error')
+                    log(f"UMSA dat scan: publish failed: {exc}", level='error')
                     summary['aborted'] = True
                     summary['errors'] += 1
-                    try:
-                        repo.clear_staging()
-                        db_conn.commit()
-                    except Exception:
-                        try:
-                            db_conn.rollback()
-                        except Exception:
-                            pass
+
+            return summary
         finally:
             if db_conn is not None:
                 if staged_cur is not None:
@@ -258,5 +268,3 @@ class DatScanner:
                     db_conn.close()
                 except Exception:
                     pass
-
-        return summary

@@ -1620,8 +1620,15 @@ class UMSA(xbmcgui.WindowXMLDialog):
             def progress(percent, title, message):
                 self.progress_dialog.update(percent, title, message)
 
-            run_scan_with_progress(
+            scan_result = run_scan_with_progress(
                 self.ggdb, scan_method, scan_args, progress, title, xbmc.sleep)
+
+            if isinstance(scan_result, dict) and scan_result.get('busy'):
+                self.progress_dialog.close()
+                self.dialog.notification(
+                    'Scan Status', 'another scan is already running...',
+                    xbmcgui.NOTIFICATION_ERROR, 4000)
+                return
 
             if what in ('exo', 'gb64'):
                 self.ggdb.add_dat_to_db(SETTINGS_FOLDER)

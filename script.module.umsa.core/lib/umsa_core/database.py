@@ -41,6 +41,7 @@ from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .gb64_scanner import GB64Scanner
 from .logging import log
+from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite
 from .support import scan_exodos
 
@@ -552,7 +553,33 @@ class DBMod:
             self.scan_status = False
 
     def scan_exodos_to_db(self, empty, db_path):
-        """Read eXoDOS xml and artwork."""
+        """Read eXoDOS xml and artwork.
+
+        This is the eXoDOS scan orchestration boundary. It holds the shared
+        process-wide scan lock for the whole combined metadata/artwork
+        workflow. When another covered scan is already running it returns
+        immediately with ``busy`` set and leaves all data untouched.
+        """
+
+        summary = {'busy': False}
+
+        try:
+            lock_ctx = ScanLockContext(scan_coordinator)
+            lock_ctx.__enter__()
+        except ScanBusyError:
+            log("UMSA exodos scan: rejected, another scan is already running",
+                level='warning')
+            summary['busy'] = True
+            return summary
+
+        try:
+            self._scan_exodos_locked(db_path)
+        finally:
+            lock_ctx.__exit__(None, None, None)
+        return summary
+
+    def _scan_exodos_locked(self, db_path):
+        """Run the eXoDOS scan while the shared lock is held by the caller."""
 
         exodos_sets = {}
         exodos_sets_names = {}

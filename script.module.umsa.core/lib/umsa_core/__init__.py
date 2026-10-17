@@ -23,6 +23,11 @@ from .persistence import (
     save_software_list,
 )
 from .process import ProcessLaunchError, ProcessRunner, ProcessState, ProcessStatus
+from .scan_coordinator import (
+    ScanBusyError,
+    ScanLockContext,
+    scan_coordinator,
+)
 from .settings import FILTER_CATEGORIES, SharedSettings
 from .sqlite import connect_sqlite
 from .vgm_header import (
@@ -43,6 +48,8 @@ __all__ = [
     "ProcessRunner",
     "ProcessState",
     "ProcessStatus",
+    "ScanBusyError",
+    "ScanLockContext",
     "SharedSettings",
     "VGMHeader",
     "build_artwork_path",
@@ -62,5 +69,6 @@ __all__ = [
     "root_key_for_path",
     "save_filter",
     "save_software_list",
+    "scan_coordinator",
     "set_log",
 ]

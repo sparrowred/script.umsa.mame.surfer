@@ -21,9 +21,26 @@ from __future__ import annotations
 import sqlite3
 from typing import Iterable, Optional
 
+from .scan_coordinator import scan_coordinator
+
 ORIGIN_MAME_SUPPORT = "mame_support"
 ORIGIN_EXODOS = "exodos"
 ORIGIN_GB64 = "gb64"
+
+def _guard_staging_coordinated():
+    """Refuse uncoordinated staging use while another scan holds the lock.
+
+    The scan orchestration layer owns the global scan lock; repository staging
+    operations are internal helpers expected to run inside that locked scope.
+    Using them while a *different* thread owns the lock would corrupt an active
+    scan's staging tables, so it is rejected early with a clear error.
+    """
+
+    if scan_coordinator.is_locked() and not scan_coordinator.owned_by_current_thread():
+        raise RuntimeError(
+            "DAT staging used without the shared scan lock while another scan "
+            "is running"
+        )
 
 
 def create_dat_tables(db_cursor: sqlite3.Cursor) -> None:
@@ -171,6 +188,7 @@ class DatRepository:
     ) -> None:
         """Create the staging tables used by a DAT scan, if not present."""
 
+        _guard_staging_coordinated()
         close = False
         if db_cursor is None:
             db_cursor = self._conn.cursor()
@@ -200,6 +218,7 @@ class DatRepository:
     def clear_staging(self, db_cursor: Optional[sqlite3.Cursor] = None) -> None:
         """Discard every staged DAT entry without touching published data."""
 
+        _guard_staging_coordinated()
         close = False
         if db_cursor is None:
             db_cursor = self._conn.cursor()
@@ -322,6 +341,7 @@ class DatRepository:
         Returns the number of published entries.
         """
 
+        _guard_staging_coordinated()
         conn = self._conn
         had_transaction = conn.in_transaction
         cursor = conn.cursor()

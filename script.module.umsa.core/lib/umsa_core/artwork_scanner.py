@@ -20,6 +20,7 @@ import threading
 from .artwork import root_key_for_path
 from .artwork_repository import ArtworkRepository
 from .logging import log
+from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite
 
 # --- Artwork scan filesystem retry policy -------------------------------------
@@ -215,6 +216,46 @@ class ArtworkScanner:
 
     def scan(self, paths=None, source=None, only_types=None, resume=True,
              cancel_event=None):
+        """Scan artwork folders under the shared scan lock.
+
+        This is the public entry point. It acquires the process-wide scan lock
+        for the whole workflow (discovery, per-unit inventory, database writes
+        and status updates). When another covered scan is already running it
+        returns immediately with ``busy`` set and leaves all data untouched.
+        """
+
+        summary = {
+            'discovered': 0,
+            'processed': 0,
+            'skipped': 0,
+            'inserted': 0,
+            'errors': 0,
+            'cancelled': False,
+            'aborted': False,
+            'discovery_incomplete': False,
+            'busy': False,
+        }
+
+        try:
+            lock_ctx = ScanLockContext(scan_coordinator)
+            lock_ctx.__enter__()
+        except ScanBusyError:
+            log("UMSA artwork scan: rejected, another scan is already running",
+                level='warning')
+            summary['busy'] = True
+            return summary
+
+        try:
+            result = self._scan_locked(
+                paths, source, only_types, resume, cancel_event)
+            # Attach the busy flag to the scanner's own summary dict.
+            result['busy'] = False
+            return result
+        finally:
+            lock_ctx.__exit__(None, None, None)
+
+    def _scan_locked(self, paths=None, source=None, only_types=None, resume=True,
+                     cancel_event=None):
         """Scan artwork folders, unit-based and resumable.
 
         Directory layout is ``<root>/<type>/<software_list>/<set>.<ext>``.
