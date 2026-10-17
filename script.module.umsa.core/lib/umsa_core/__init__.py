@@ -29,7 +29,7 @@ from .scan_coordinator import (
     scan_coordinator,
 )
 from .settings import FILTER_CATEGORIES, SharedSettings
-from .sqlite import connect_sqlite
+from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .vgm_header import (
     PlaybackPlan,
     VGMHeader,
@@ -57,6 +57,7 @@ __all__ = [
     "categorize_art_type",
     "check_image_aspect",
     "connect_sqlite",
+    "connect_sqlite_readonly",
     "find_local_snapshots",
     "get_machine_artwork_path",
     "load_batocera_mapping",

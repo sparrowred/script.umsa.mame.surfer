@@ -4,6 +4,7 @@ import os
 import shutil
 import socket
 import subprocess
+from collections import deque
 from platform import platform
 from random import randint
 from select import select as select_wait
@@ -37,6 +38,8 @@ EXTENSIONS = {
 }
 NONMAME = ('exodos','gb64_quik','gb64_cart','gb64_cass','gb64_flop','whdload_games','whdload_demos')
 CHD_PROCESS_STOP_TIMEOUT = 2
+VGM_RANDOM_BATCH_SIZE = 100
+VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
 
 
 def _time_sleep_ms(milliseconds):
@@ -689,24 +692,72 @@ class Emulation:
         return env
 
     def play_random_vgm_thread(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
-        """Play random vgm until ordered to stop playing."""
+        """Play random vgm until ordered to stop playing.
+
+        Candidates are fetched from the database in batches and kept in an
+        in-memory queue; a new batch is requested only when the queue runs
+        out. Filesystem and archive checks stay in this player. After
+        ``VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE`` candidates in a row cannot
+        start playback, random playback stops.
+        """
 
         self.playrandomvgm = True
         self._start_vgm_server()
+        candidates = deque()
+        consecutive_unplayable = 0
+
+        def note_unplayable(message):
+            """Log an unusable candidate and report whether to stop playback."""
+            nonlocal consecutive_unplayable
+            log(message, level='warning')
+            consecutive_unplayable += 1
+            if consecutive_unplayable >= VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE:
+                log(
+                    'UMSA Emu: play random vgm - stopping after '
+                    f'{VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE} consecutive '
+                    'unplayable candidates',
+                    level='warning')
+                return True
+            return False
+
         try:
             while self.playrandomvgm:
                 if not ggdb:
                     break
-                random_vgm = ggdb.get_random_vgm(db_path)
+                if not candidates:
+                    candidates.extend(
+                        ggdb.get_random_vgm_batch(db_path, VGM_RANDOM_BATCH_SIZE))
+                    if not candidates:
+                        log(
+                            'UMSA Emu: play random vgm - no candidates in '
+                            'database batch, stopping',
+                            level='warning')
+                        break
+                random_vgm = candidates.popleft()
                 self.emurun['swl_name'] = 'vgmplay'
                 self.emurun['set_name'] = random_vgm['name']
                 self.find_roms()
                 if not self.emurun['zips']:
-                    log(f"UMSA Emu: play random vgm - {random_vgm['name']}.zip not found", level='warning')
+                    if note_unplayable(
+                            f"UMSA Emu: play random vgm - {random_vgm['name']}.zip not found"):
+                        break
                     continue
                 vgm_zipfile = self.emurun['zips'][0]
-                with ZipFile(vgm_zipfile) as archive:
-                    vgm_tracklist = archive.namelist()
+                try:
+                    with ZipFile(vgm_zipfile) as archive:
+                        vgm_tracklist = archive.namelist()
+                except (BadZipfile, OSError) as error:
+                    if note_unplayable(
+                            f'UMSA Emu: play random vgm - unreadable '
+                            f'{random_vgm["name"]}.zip: {error}'):
+                        break
+                    continue
+                if not vgm_tracklist:
+                    if note_unplayable(
+                            f'UMSA Emu: play random vgm - no tracks in '
+                            f'{random_vgm["name"]}.zip'):
+                        break
+                    continue
                 random_track = randint(1, len(vgm_tracklist))
                 play_vgm = f'{random_vgm["name"]}:{random_track:03d}'
                 # Parse header and calculate playback plan
@@ -734,6 +785,7 @@ class Emulation:
                         textinfo.setLabel(vgm_nice)
                     except Exception:
                         pass
+                consecutive_unplayable = 0
                 self.play_vgm_thread(play_vgm, sleep=sleep, close_server=False, plan=plan)
         finally:
             self._close_vgm_sockets()

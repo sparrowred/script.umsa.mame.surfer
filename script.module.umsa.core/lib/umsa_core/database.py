@@ -42,7 +42,7 @@ from .game_repository import GameRepository
 from .gb64_scanner import GB64Scanner
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
-from .sqlite import connect_sqlite
+from .sqlite import connect_sqlite, connect_sqlite_readonly
 
 def _core_data_paths(db_path):
     """Adapt legacy database-directory arguments to explicit Core paths."""
@@ -982,25 +982,44 @@ class DBMod:
             'gb64': nonmame.get('gb64', ''),
         }
 
-    def get_random_vgm(self, db_path):
-        """Return random vgm entry from sets."""
+    def get_random_vgm_batch(self, db_path, limit=100):
+        """Return up to ``limit`` random vgmplay entries from a short-lived read-only connection.
 
-        # connect to db
+        The connection is opened only for this query and closed on every exit
+        path. No filesystem inspection is performed here; callers decide
+        which candidates are actually playable.
+        """
+
         db_paths = _core_data_paths(db_path)
-        db_conn = connect_sqlite(db_paths.umsa_db)
+        try:
+            db_conn = connect_sqlite_readonly(db_paths.umsa_db)
+        except sqlite3.Error as error:
+            log(f"UMSA database get_random_vgm_batch: open failed: {error}", level='warning')
+            return []
+
+        dbc = None
         try:
             dbc = db_conn.cursor()
-
-            dbc.execute("SELECT id FROM swl WHERE name = 'vgmplay'")
-            vgmplay_swl_id = dbc.fetchone()[0]
-
-            dbc.execute("SELECT name, gamename FROM sets \
-                WHERE swllink_id = ? ORDER BY RANDOM() LIMIT 1", (vgmplay_swl_id,))
-            random_vgm = dbc.fetchone()
+            vgmplay_row = dbc.execute(
+                "SELECT id FROM swl WHERE name = 'vgmplay'").fetchone()
+            if vgmplay_row is None:
+                log("UMSA database get_random_vgm_batch: no vgmplay software list",
+                    level='warning')
+                return []
+            rows = dbc.execute(
+                "SELECT name, gamename FROM sets \
+                 WHERE swllink_id = ? ORDER BY RANDOM() LIMIT ?",
+                (vgmplay_row[0], limit)).fetchall()
+        except sqlite3.Error as error:
+            log(f"UMSA database get_random_vgm_batch: read failed: {error}",
+                level='warning')
+            return []
         finally:
+            if dbc is not None:
+                dbc.close()
             db_conn.close()
 
-        return {'name': random_vgm[0], 'gamename': random_vgm[1]}
+        return [{'name': row[0], 'gamename': row[1]} for row in rows]
 
     def get_set_ids_for_software(self, software_id):
         """Return all set ids for given software id"""
