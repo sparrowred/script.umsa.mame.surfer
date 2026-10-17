@@ -40,6 +40,7 @@ from .artwork_scanner import ArtworkScanner
 from .data_paths import CoreDataPaths
 from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
+from .game_repository import GameRepository
 from .gb64_scanner import GB64Scanner
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
@@ -784,6 +785,16 @@ class DBMod:
 
         return DatRepository(self.gdb)
 
+    def _get_game_repository(self):
+        """Return a game repository bound to the current umsa.db connection.
+
+        Created per call (never cached) so it can never hold a reference to a
+        connection that ``open_db()`` has since replaced. It never owns or
+        closes ``self.gdb``.
+        """
+
+        return GameRepository(self.gdb)
+
     def add_art_to_db(self, db_path):
         """add artwork to database
 
@@ -1033,15 +1044,7 @@ class DBMod:
     def get_set_ids_for_software(self, software_id):
         """Return all set ids for given software id"""
 
-        sets = []
-        self.gdbc.execute(
-            "SELECT id FROM sets \
-             WHERE softwarelink_id = ?", (software_id,)
-        )
-        for i in self.gdbc.fetchall():
-            sets.append(i[0])
-
-        return sets
+        return self._get_game_repository().get_set_ids_for_software(software_id)
 
     def get_status_for_software(self, software_id):
         """Return play status for given software id"""
@@ -1652,39 +1655,32 @@ class DBMod:
     def get_maker(self):
         """Return list of makers"""
 
-        self.gdbc.execute("SELECT name as id, name FROM maker \
-            WHERE cloneof_id IS NULL ORDER BY name")
-        return self.gdbc.fetchall()
+        return self._get_game_repository().get_maker()
 
     def get_swl(self):
         """Return list of softwarelists"""
 
-        self.gdbc.execute("SELECT name as id, description as name FROM swl ORDER BY name")
-        return self.gdbc.fetchall()
+        return self._get_game_repository().get_swl()
 
     def get_source(self):
         """Return list of softwarelists"""
 
-        self.gdbc.execute("SELECT DISTINCT source FROM sets ORDER BY source")
-        return self.gdbc.fetchall()
+        return self._get_game_repository().get_source()
 
     def get_year(self):
         """Return list of years"""
 
-        self.gdbc.execute("SELECT name as id, name FROM year ORDER BY name")
-        return self.gdbc.fetchall()
+        return self._get_game_repository().get_year()
 
     def get_players(self):
         """Return list of players"""
 
-        self.gdbc.execute("SELECT name as id, name FROM nplayers ORDER BY name")
-        return self.gdbc.fetchall()
+        return self._get_game_repository().get_players()
 
     def get_categories(self):
         """Return list of categories"""
 
-        self.gdbc.execute("SELECT name as id, name FROM category ORDER BY name")
-        return self.gdbc.fetchall()
+        return self._get_game_repository().get_categories()
 
     def get_last_played(self, order):
         """get_last_played"""
@@ -1969,15 +1965,7 @@ class DBMod:
     def search_single(self, my_search):
         """search single"""
 
-        self.gdbc.execute(
-            "SELECT DISTINCT software.id, software.name, year.name as year, maker.name as maker \
-             FROM software \
-                JOIN year ON software.year_id = year.id \
-                JOIN maker ON software.developer_id = maker.id \
-                JOIN sets ON software.id = sets.softwarelink_id \
-             WHERE sets.gamename LIKE ? \
-             ORDER BY software.name LIMIT 1", (my_search+'%',))
-        return self.gdbc.fetchone()
+        return self._get_game_repository().search_single(my_search)
 
     def get_artwork_by_software_id(self, software_id, artwork, source_roots=None):
         """get artwork by software id
@@ -2086,32 +2074,17 @@ class DBMod:
     def get_machine_name(self, machine_id):
         """Get name of machine from id"""
 
-        self.gdbc.execute("SELECT name, gamename FROM sets WHERE id = ?", (machine_id,))
-        machine = self.gdbc.fetchone()
-        return machine[0], machine[1]
+        return self._get_game_repository().get_machine_name(machine_id)
 
     def count_source(self, source):
         """Count all source files in MAME"""
 
-        self.gdbc.execute("SELECT COUNT(DISTINCT software.id) FROM sets \
-            JOIN software ON software.id = sets.softwarelink_id WHERE sets.source = ?", (source,))
-        return self.gdbc.fetchone()[0]
+        return self._get_game_repository().count_source(source)
 
     def count_machines_for_swl(self, swl_name):
         """Count all machines for 1 software list"""
 
-        # TODO test and delete
-        self.gdbc.execute(
-            #"SELECT COUNT(DISTINCT sets.id) \
-            #FROM sets, swl, swl_status ss \
-            #WHERE swl.name = ? \
-            #    AND swl.id = ss.swl_id \
-            #    AND sets.id = ss.system_id",
-            "SELECT COUNT(DISTINCT sets.id) FROM swl_status \
-                JOIN sets ON sets.id = swl_status.system_id \
-                JOIN swl ON swl.id = swl_status.swl_id \
-             WHERE swl.name = ?", (swl_name,))
-        return self.gdbc.fetchone()[0]
+        return self._get_game_repository().count_machines_for_swl(swl_name)
 
     def get_machines(self, swl_name, machine=None):
         "Get original and compatible machines for 1 software list"
@@ -2176,10 +2149,7 @@ class DBMod:
         TODO: Only used by run_emulator, diff_emu: search for rom file in filesystem
         """
 
-        if set_id:
-            self.gdbc.execute("SELECT name FROM sets WHERE id = ?", (set_id,))
-            return self.gdbc.fetchone()[0]
-        return None
+        return self._get_game_repository().get_set_name(set_id)
 
     def get_info_for_id(self, _id):
         """get info for id
