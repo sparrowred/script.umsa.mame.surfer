@@ -374,6 +374,81 @@ class ArtworkRepository:
         finally:
             cursor.close()
 
+    def list_scan_units(self, source: str, root_key: str) -> list:
+        """List every persisted scan unit for an exact ``(source, root_key)``.
+
+        The result is the union of the registered units in ``art_scan_unit`` and
+        the distinct scan units present in ``art_set``. Legacy artwork rows that
+        never received a status record, and registered empty units that never
+        received artwork rows, are therefore both included. Order is stable
+        (sorted) but should not be relied upon for correctness.
+        """
+
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT scan_unit FROM art_scan_unit "
+                "WHERE source=? AND root_key=? "
+                "UNION "
+                "SELECT scan_unit FROM art_set WHERE source=? AND root_key=?",
+                (source, root_key, source, root_key),
+            )
+            units = []
+            for row in cursor.fetchall():
+                units.append(row["scan_unit"])
+            return sorted(u for u in units if u is not None)
+        finally:
+            cursor.close()
+
+    def delete_scan_units(
+        self, source: str, root_key: str, scan_units: Iterable[str]
+    ) -> int:
+        """Delete several scan units of one source/root in a single transaction.
+
+        Every listed unit has its ``art_set`` rows and its ``art_scan_unit``
+        status removed inside one savepoint, so the cleanup is all-or-nothing.
+        It is scoped strictly to the given ``(source, root_key)`` and to the
+        listed units; other units, sources and roots are never touched. It
+        manages its own short transaction, only commits one it started, and
+        never closes the caller's connection. Returns the number of removed
+        artwork rows.
+        """
+
+        units = [unit for unit in scan_units if unit is not None]
+        if not units:
+            return 0
+
+        conn = self._conn
+        had_transaction = conn.in_transaction
+        cursor = conn.cursor()
+        removed = 0
+        try:
+            cursor.execute("SAVEPOINT umsa_art_delete_units")
+            try:
+                for unit in units:
+                    cursor.execute(
+                        "DELETE FROM art_set "
+                        "WHERE source=? AND root_key=? AND scan_unit=?",
+                        (source, root_key, unit),
+                    )
+                    removed += cursor.rowcount or 0
+                    cursor.execute(
+                        "DELETE FROM art_scan_unit "
+                        "WHERE source=? AND root_key=? AND scan_unit=?",
+                        (source, root_key, unit),
+                    )
+            except Exception:
+                cursor.execute("ROLLBACK TO umsa_art_delete_units")
+                cursor.execute("RELEASE umsa_art_delete_units")
+                raise
+            else:
+                cursor.execute("RELEASE umsa_art_delete_units")
+                if not had_transaction:
+                    conn.commit()
+            return removed
+        finally:
+            cursor.close()
+
     def replace_scan_unit(
         self, source: str, root_key: str, scan_unit: str, artwork_rows: Iterable[tuple]
     ) -> None:

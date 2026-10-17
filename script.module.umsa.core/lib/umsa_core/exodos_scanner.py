@@ -22,6 +22,7 @@ from zipfile import ZipFile
 
 from .artwork_repository import ArtworkRepository, create_artwork_tables
 from .dat_repository import ORIGIN_EXODOS, DatRepository, create_dat_tables
+from .exodos_artwork import scan_exodos_artwork
 from .exodos_parser import parse_exodos_metadata
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
@@ -144,10 +145,12 @@ class ExodosScanner:
 
         Returns a summary whose keys are ``busy``, ``aborted``, ``errors``,
         ``matched``, ``unmatched``, ``artwork_units``, ``artwork_rows``,
-        ``artwork_errors`` and ``artwork_aborted``. ``aborted`` describes the
-        metadata phase (or a pre-scan failure); ``artwork_aborted`` describes the
-        artwork phase, and ``artwork_errors`` counts artwork failures. Metadata
-        and artwork are separate databases and are not atomic across each other.
+        ``artwork_errors``, ``artwork_aborted`` and ``artwork_unmatched``.
+        ``aborted`` describes the metadata phase (or a pre-scan failure);
+        ``artwork_aborted`` describes the artwork phase, ``artwork_errors``
+        counts artwork failures and ``artwork_unmatched`` counts GameData
+        archives that could not be mapped to a set. Metadata and artwork are
+        separate databases and are not atomic across each other.
         """
 
         busy_summary = {
@@ -160,6 +163,7 @@ class ExodosScanner:
             'artwork_rows': 0,
             'artwork_errors': 0,
             'artwork_aborted': False,
+            'artwork_unmatched': 0,
         }
 
         try:
@@ -195,6 +199,7 @@ class ExodosScanner:
             'artwork_rows': 0,
             'artwork_errors': 0,
             'artwork_aborted': False,
+            'artwork_unmatched': 0,
         }
 
         if cancel_event is not None and cancel_event.is_set():
@@ -269,15 +274,14 @@ class ExodosScanner:
 
             self._report(percent=100)
 
-            # Index the image tree and GameData MP4s. The helper is the legacy
-            # artwork/videosnap portion; it neither parses the XML nor writes
-            # the DAT metadata. It persists every unit through the repository,
-            # so its report is folded into the scan summary.
-            from .support import scan_exodos_artwork
-
+            # Index the image tree and GameData MP4s. The helper owns the
+            # one-pass filesystem inventories and neither parses the XML nor
+            # writes the DAT metadata. It persists every unit through the
+            # repository, so its report is folded into the scan summary.
             try:
                 artwork = scan_exodos_artwork(
-                    exodos_path, exodos_sets, art_repo, self._report)
+                    exodos_path, exodos_sets, art_repo, self._report,
+                    is_cancelled=self._cancelled)
             except Exception as exc:
                 # The metadata phase already succeeded and stays committed; an
                 # unexpected artwork failure is reported as a failed artwork
@@ -291,7 +295,10 @@ class ExodosScanner:
                 summary['artwork_units'] = artwork['units']
                 summary['artwork_rows'] = artwork['rows']
                 summary['artwork_errors'] = artwork['errors']
+                summary['artwork_unmatched'] = artwork.get('unmatched', 0)
                 summary['errors'] += artwork['errors']
+                if artwork.get('aborted'):
+                    summary['artwork_aborted'] = True
 
             # Persist the metadata phase regardless of the artwork outcome.
             dat_conn.commit()
