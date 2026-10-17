@@ -121,19 +121,30 @@ def _match_set_id(root_folder: str,
                   root_folder_map: Mapping[str, int]) -> Optional[int]:
     """Map a RootFolder component to a UMSA set id.
 
-    An exact mapping match is preferred; the existing intended case-insensitive
-    fallback (lower-casing the RootFolder value) is tried next. Returns ``None``
-    when neither matches.
+    An exact mapping match is preferred. Otherwise a genuine case-insensitive
+    fallback compares the RootFolder against every mapping key (the keys keep
+    their original casing, so lower-casing only the lookup value would never
+    match them). A fallback that matches several keys with *different* set ids
+    is ambiguous and left unmatched, so it can never silently pick the wrong
+    set. Returns ``None`` when nothing matches.
     """
 
     if not root_folder:
         return None
     if root_folder in root_folder_map:
         return root_folder_map[root_folder]
+
     lowered = root_folder.lower()
-    if lowered in root_folder_map:
-        return root_folder_map[lowered]
-    return None
+    matched_id: int | None = None
+    for key, set_id in root_folder_map.items():
+        if key.lower() != lowered:
+            continue
+        if matched_id is None:
+            matched_id = set_id
+        elif matched_id != set_id:
+            # Two different sets share this case-insensitive name: ambiguous.
+            return None
+    return matched_id
 
 
 def parse_exodos_metadata(xml_text: str,

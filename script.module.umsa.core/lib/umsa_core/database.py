@@ -41,6 +41,7 @@ from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .gb64_scanner import GB64Scanner
 from .logging import log
+from .scan_coordinator import ScanBusyError, ScanLockContext
 from .sqlite import connect_sqlite
 
 def _core_data_paths(db_path):
@@ -508,6 +509,35 @@ class DBMod:
 
         self.close_umsa_db()
 
+    def _run_scan_with_shared_state(self, start_what, run):
+        """Run ``run`` while owning the shared scan progress/status fields.
+
+        ``scan_perc``/``scan_what``/``scan_status`` describe the single active
+        scan, so only the invocation that actually acquires the process-wide
+        scan lock may initialise or finalise them. A competing invocation that
+        cannot take the lock delegates straight to the scanner, whose public
+        ``scan()`` returns its ``busy`` summary without touching this instance's
+        progress or cancellation state (in particular it does not clear
+        ``scan_status`` and thereby cancel the active scan).
+        """
+
+        try:
+            lock_ctx = ScanLockContext()
+            lock_ctx.__enter__()
+        except ScanBusyError:
+            return run()
+
+        try:
+            self.scan_perc = 0
+            self.scan_what = start_what
+            self.scan_status = True
+            try:
+                return run()
+            finally:
+                self.scan_status = False
+        finally:
+            lock_ctx.__exit__(None, None, None)
+
     def scan_gb64_to_db(self, empty, db_path):
         """Read GameBase64 info from zip and artwork.
 
@@ -526,10 +556,6 @@ class DBMod:
         db_paths = _core_data_paths(db_path) if db_path else self.db_paths
         gb64_root = self.nonmame.get('gb64', '') if self.nonmame else ''
 
-        self.scan_perc = 0
-        self.scan_what = 'reading covers...'
-        self.scan_status = True
-
         def progress(percent, what):
             if percent is not None:
                 self.scan_perc = percent
@@ -539,7 +565,7 @@ class DBMod:
         def is_cancelled():
             return not self.scan_status
 
-        try:
+        def run():
             return GB64Scanner(
                 db_paths,
                 initialize_dat=self.create_dat_tables,
@@ -547,8 +573,8 @@ class DBMod:
                 progress=progress,
                 is_cancelled=is_cancelled,
             ).scan(gb64_root)
-        finally:
-            self.scan_status = False
+
+        return self._run_scan_with_shared_state('reading covers...', run)
 
     def scan_exodos_to_db(self, empty, db_path):
         """Read eXoDOS xml and artwork.
@@ -564,10 +590,6 @@ class DBMod:
         db_paths = _core_data_paths(db_path) if db_path else self.db_paths
         exodos_root = self.nonmame.get('exodos', '') if self.nonmame else ''
 
-        self.scan_perc = 0
-        self.scan_what = 'reading MS-DOS.xml from zip'
-        self.scan_status = True
-
         def progress(percent, what):
             if percent is not None:
                 self.scan_perc = percent
@@ -577,7 +599,7 @@ class DBMod:
         def is_cancelled():
             return not self.scan_status
 
-        try:
+        def run():
             from .exodos_scanner import ExodosScanner
             return ExodosScanner(
                 db_paths,
@@ -586,8 +608,9 @@ class DBMod:
                 progress=progress,
                 is_cancelled=is_cancelled,
             ).scan(exodos_root)
-        finally:
-            self.scan_status = False
+
+        return self._run_scan_with_shared_state(
+            'reading MS-DOS.xml from zip', run)
 
     def scan_dats(self, datdir, db_path):
         """Read all MAME dat files from a directory
@@ -607,10 +630,6 @@ class DBMod:
 
         db_paths = _core_data_paths(db_path) if db_path else self.db_paths
 
-        self.scan_perc = 0
-        self.scan_what = 'files'
-        self.scan_status = True
-
         def progress(percent, what):
             if percent is not None:
                 self.scan_perc = percent
@@ -620,15 +639,15 @@ class DBMod:
         def is_cancelled():
             return not self.scan_status
 
-        try:
+        def run():
             return DatScanner(
                 db_paths,
                 initialize_tables=self.create_dat_tables,
                 progress=progress,
                 is_cancelled=is_cancelled,
             ).scan(datdir)
-        finally:
-            self.scan_status = False
+
+        return self._run_scan_with_shared_state('files', run)
 
     def add_dat_to_db(self, db_path):
         """add dat to database"""
@@ -694,10 +713,6 @@ class DBMod:
 
         db_paths = _core_data_paths(db_path) if db_path else self.db_paths
 
-        self.scan_status = True
-        self.scan_perc = 0
-        self.scan_what = 'discovering'
-
         def progress(percent, what):
             if percent is not None:
                 self.scan_perc = percent
@@ -707,7 +722,7 @@ class DBMod:
         def is_cancelled():
             return not self.scan_status
 
-        try:
+        def run():
             return ArtworkScanner(
                 db_paths,
                 self.create_art_tables,
@@ -721,8 +736,8 @@ class DBMod:
                 resume=resume,
                 cancel_event=cancel_event,
             )
-        finally:
-            self.scan_status = False
+
+        return self._run_scan_with_shared_state('discovering', run)
 
     def _get_artwork_repository(self):
         """Return a repository bound to the current umsa.db connection.
