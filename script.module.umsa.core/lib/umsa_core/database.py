@@ -29,6 +29,7 @@ import sqlite3  # connect, Row, OperationalError
 import threading
 import time
 import zipfile
+from contextlib import contextmanager
 from io import BytesIO
 from re import findall, search
 from urllib.request import urlopen
@@ -41,7 +42,7 @@ from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .gb64_scanner import GB64Scanner
 from .logging import log
-from .scan_coordinator import ScanBusyError, ScanLockContext
+from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite
 
 def _core_data_paths(db_path):
@@ -114,50 +115,88 @@ def download_and_update_umsa_db(data_dir, progress, title='Updating UMSA databas
     zipfile.ZipFile(BytesIO(db_zip)).extractall(data_dir)
 
 
+@contextmanager
+def _scan_state_ownership(db, start_what):
+    """Own ``db``'s shared scan status/progress fields for one scan.
+
+    ``scan_perc``/``scan_what``/``scan_status`` describe the single active scan,
+    so the process-wide scan lock is taken *before* any of them is touched. The
+    context yields ``True`` once the lock is owned; only then does it initialise
+    the fields and clear ``scan_status`` again on exit. When another scan already
+    owns the lock the context yields ``False`` and never touches the fields, so a
+    competing invocation can neither overwrite the active scan's progress nor
+    clear (and thereby cancel) its status.
+
+    The lock is re-entrant per thread, so the lock-aware scan methods called
+    from inside the block re-acquire it harmlessly.
+    """
+
+    lock_ctx = ScanLockContext(scan_coordinator)
+    try:
+        lock_ctx.__enter__()
+    except ScanBusyError:
+        yield False
+        return
+
+    try:
+        db.scan_perc = 0
+        db.scan_what = start_what
+        db.scan_status = True
+        try:
+            yield True
+        finally:
+            db.scan_status = False
+    finally:
+        lock_ctx.__exit__(None, None, None)
+
+
 def run_scan_with_progress(db, scan_method, scan_args, progress, title, sleep):
     """Run a DBMod scan method in a thread while reporting progress.
 
     ``sleep`` is invoked as ``sleep(1000)`` for each poll (the GUI passes
     ``xbmc.sleep``). ``progress`` is called as ``progress(percent, title,
-    message)``. The scan method must set ``scan_perc``/``scan_what``/
-    ``scan_status`` on ``db``.
+    message)``.
+
+    The worker takes the shared scan lock *before* it initialises
+    ``scan_perc``/``scan_what``/``scan_status``, so only the invocation that
+    genuinely owns the scan may set them. A competing invocation that cannot
+    take the lock calls the scan method anyway - the lock-aware methods return
+    their ``busy`` summary without touching the shared fields - and returns that
+    result without resetting the active scan's progress or cancellation signal.
 
     Returns the scan method's return value (for example the scanner summary
     dictionary), or ``None`` when the worker failed. Existing callers that
     ignore the result are unaffected.
-
-    The running flag is set *before* the worker starts, so a scan that finishes
-    immediately cannot have its completion overwritten by the caller. The
-    worker is wrapped so that an exception is logged and the running flag is
-    always cleared, and the caller joins the worker before returning so the
-    final ``saving`` progress is emitted only once the scan (including its
-    database cleanup) has really finished.
     """
 
     scan_func = getattr(db, scan_method)
 
     result = {}
+    finished = threading.Event()
 
     def worker():
         try:
-            result['value'] = scan_func(*scan_args)
+            # Only the owner of the shared scan lock initialises/clears the
+            # progress and status fields; a rejected invocation leaves them
+            # exactly as the active scan left them.
+            with _scan_state_ownership(db, ''):
+                result['value'] = scan_func(*scan_args)
         except Exception as exc:  # noqa: BLE001 - a scan must never stay stuck
             log(f"UMSA scan: '{scan_method}' worker failed: {exc}",
                 level='error')
         finally:
-            db.scan_status = False
+            finished.set()
 
-    # Initialize before start: otherwise a fast worker can finish and clear the
-    # flag first, and the caller would then set it back to True, leaving the
-    # polling loop to think the scan is still running.
-    db.scan_perc = 0
-    db.scan_what = ''
-    db.scan_status = True
     scan_thread = threading.Thread(target=worker)
     scan_thread.start()
     try:
-        while db.scan_status:
+        # The completion event (not ``db.scan_status``) stops the loop, so a
+        # rejected scan returns immediately even while the active scan keeps
+        # its own ``scan_status`` set.
+        while not finished.is_set():
             sleep(1000)
+            if finished.is_set():
+                break
             progress(db.scan_perc, title, f'scanning {db.scan_what}')
     finally:
         scan_thread.join()
@@ -521,22 +560,8 @@ class DBMod:
         ``scan_status`` and thereby cancel the active scan).
         """
 
-        try:
-            lock_ctx = ScanLockContext()
-            lock_ctx.__enter__()
-        except ScanBusyError:
+        with _scan_state_ownership(self, start_what):
             return run()
-
-        try:
-            self.scan_perc = 0
-            self.scan_what = start_what
-            self.scan_status = True
-            try:
-                return run()
-            finally:
-                self.scan_status = False
-        finally:
-            lock_ctx.__exit__(None, None, None)
 
     def scan_gb64_to_db(self, empty, db_path):
         """Read GameBase64 info from zip and artwork.
