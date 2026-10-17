@@ -379,42 +379,57 @@ class ArtworkRepository:
     ) -> None:
         """Replace artwork records for a scan unit and mark it done atomically.
 
-        This method manages its own short explicit transaction. It:
-        1. Starts a transaction.
-        2. Deletes only records for the specified (source, root_key, scan_unit).
-        3. Inserts all artwork rows.
-        4. Marks the unit as done (clearing any previous error).
-        5. Commits. On any error, it rolls back the transaction.
+        All changes are one logical unit of work executed inside a SQLite
+        savepoint:
 
-        The caller's connection is never closed by this method.
+        1. Deletes only records for the specified (source, root_key, scan_unit).
+        2. Inserts all artwork rows.
+        3. Marks the unit as done (clearing any previous error).
+
+        The savepoint makes the replacement atomic without hijacking the
+        caller's transaction. When no transaction is active, releasing the
+        savepoint commits the operation durably. When the caller already owns a
+        transaction, the savepoint nests inside it: releasing commits only the
+        replacement, and the caller's transaction and unrelated pending work are
+        left untouched for the caller to commit or roll back.
+
+        On any error the savepoint is rolled back, so the previous artwork rows
+        and scan-unit state are preserved and the caller's transaction stays
+        active and usable. The caller's connection is never closed.
         """
-        cursor = self._conn.cursor()
+        conn = self._conn
+        had_transaction = conn.in_transaction
+        cursor = conn.cursor()
         rows = list(artwork_rows)
         try:
-            cursor.execute(
-                "DELETE FROM art_set WHERE source=? AND root_key=? AND scan_unit=?",
-                (source, root_key, scan_unit),
-            )
-            if rows:
-                cursor.executemany(
-                    "INSERT INTO art_set "
-                    "(id,source,root_key,scan_unit,type,extension,"
-                    "relative_path,archive_member) "
-                    "VALUES (?,?,?,?,?,?,?,?)",
-                    rows,
-                )
-            cursor.execute(
-                "INSERT OR REPLACE INTO art_scan_unit "
-                "(source,root_key,scan_unit,status,updated_at) "
-                "VALUES (?,?,?,?,datetime('now'))",
-                (source, root_key, scan_unit, "done"),
-            )
-            self._conn.commit()
-        except Exception:
+            cursor.execute("SAVEPOINT umsa_art_replace_unit")
             try:
-                self._conn.rollback()
+                cursor.execute(
+                    "DELETE FROM art_set "
+                    "WHERE source=? AND root_key=? AND scan_unit=?",
+                    (source, root_key, scan_unit),
+                )
+                if rows:
+                    cursor.executemany(
+                        "INSERT INTO art_set "
+                        "(id,source,root_key,scan_unit,type,extension,"
+                        "relative_path,archive_member) "
+                        "VALUES (?,?,?,?,?,?,?,?)",
+                        rows,
+                    )
+                cursor.execute(
+                    "INSERT OR REPLACE INTO art_scan_unit "
+                    "(source,root_key,scan_unit,status,updated_at) "
+                    "VALUES (?,?,?,?,datetime('now'))",
+                    (source, root_key, scan_unit, "done"),
+                )
             except Exception:
-                pass
-            raise
+                cursor.execute("ROLLBACK TO umsa_art_replace_unit")
+                cursor.execute("RELEASE umsa_art_replace_unit")
+                raise
+            else:
+                cursor.execute("RELEASE umsa_art_replace_unit")
+                if not had_transaction:
+                    conn.commit()
         finally:
             cursor.close()
