@@ -611,8 +611,14 @@ class DBMod:
             db_conn2 = connect_sqlite(db_paths.artwork_db)
             abc = db_conn2.cursor()
 
+            # The scan owns no metadata SQL: it parses the XML once and writes
+            # the complete result through the repository, which atomically
+            # replaces only the eXoDOS origin rows. The connection stays
+            # caller-owned; the repository never closes it.
+            dat_repo = DatRepository(db_conn3)
+
             scan_exodos(self.nonmame['exodos'],
-                        exodos_sets, exodos_sets_names, dbc, abc, self)
+                        exodos_sets, exodos_sets_names, dat_repo, abc, self)
             db_conn3.commit()
             db_conn2.commit()
         finally:

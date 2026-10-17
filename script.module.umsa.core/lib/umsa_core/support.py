@@ -7,7 +7,6 @@ IDEAS:
 
 import glob
 import os
-import xml.etree.ElementTree as ET
 from hashlib import md5
 from html import unescape
 from io import BytesIO
@@ -18,6 +17,7 @@ from zipfile import ZipFile
 
 from .artwork import root_key_for_path
 from .dat_repository import ORIGIN_EXODOS
+from .exodos_parser import parse_exodos_metadata
 from .logging import log
 
 MARP_URL = "http://replay.marpirc.net"
@@ -187,7 +187,7 @@ def youtube_search(gamename, machine):
         html_content = unescape(url_open.read().decode('utf-8', errors='ignore'))
     return findall(r'{"videoId":"(.{11})".*?"text":"(.*?)"', html_content)
 
-def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dbc, abc, other_self):
+def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dat_repo, abc, other_self):
     """Scan eXoDOS xml file for dat infos and artwork path"""
 
     # fetch: Developer, Notes, Source, Genre, Region
@@ -212,78 +212,34 @@ def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dbc, abc, other_sel
 
     # Content/XODOSMetadata.zip xml/all/MS-DOS.xml
     other_self.scan_what = 'reading MS-DOS.xml from zip'
-    xml_file = os.path.join(exodos_path, 'Content', 'XODOSMetadata.zip')
-    with ZipFile(xml_file, 'r') as archive:
-        exodos_xml = archive.read('xml/all/MS-DOS.xml').decode('utf-8', 'ignore')
-    root = ET.fromstring(exodos_xml)
+    try:
+        xml_file = os.path.join(exodos_path, 'Content', 'XODOSMetadata.zip')
+        with ZipFile(xml_file, 'r') as archive:
+            exodos_xml = archive.read('xml/all/MS-DOS.xml').decode('utf-8', 'ignore')
+        parsed = parse_exodos_metadata(exodos_xml, exodos_sets_names)
+    except Exception as exc:
+        # A missing archive member, an unreadable archive or malformed XML must
+        # never look like a valid empty result: abort before any destructive
+        # metadata change so previously published records are preserved.
+        log(f"UMSA support: exodos: cannot read or parse MS-DOS.xml: {exc}",
+            level='error')
+        other_self.scan_what = 'exodos metadata failed'
+        other_self.scan_perc = 0
+        return
 
     other_self.scan_what = 'scanning xml...'
-    maxno = len(root) 
-    count = 1.0
-    for game in root.iter('Game'):
-        for child in game.iter():
-            if child.tag == 'RootFolder':
-                set_name = child.text.split('\\')[-1]
-            elif child.tag == 'Developer':
-                developer = child.text
-            elif child.tag == 'Publisher':
-                publisher = child.text
-            elif child.tag == 'Notes':
-                notes = child.text
-            elif child.tag == 'Series':
-                series = child.text
-            elif child.tag == 'Source':
-                source = child.text
-            elif child.tag == 'Genre':
-                genre = child.text
-            elif child.tag == 'Rating':
-                rating = child.text
-            elif child.tag == 'Region':
-                region = child.text
-            elif child.tag == 'ManualPath':
-                manual = child.text
-            elif child.tag == 'MusicPath':
-                music = child.text
-            elif child.tag == 'VideoUrl':
-                videourl = child.text
-        note = f"""Genre: {genre}
+    for set_name in parsed.unmatched:
+        log(f"UMSA support: exodos: cant find entry for dat {set_name}", level='warning')
 
-Developer: {developer}
-Publisher: {publisher}
-
-{notes}
-
-Source: {source}
-Rating: {rating}
-Series: {series}
-Region: {region}
-"""
-
-        # set_name = RootFolder
-        # ^ if no match: lowercase
-        if (set_name in exodos_sets_names) or (set_name.lower() in exodos_sets_names):
-            dbc.execute(
-                "INSERT INTO dat (file, entry, origin) \
-                 VALUES (?, ?, ?)", ('eXoDOS', note, ORIGIN_EXODOS)
-            )
-            lastrow = dbc.lastrowid
-            # TODO check if key exists 1st
-            if set_name in exodos_sets_names:
-                db_setid = exodos_sets_names[set_name]
-            elif set_name.lower() in exodos_sets_names:
-                db_setid = exodos_sets_names[set_name.lower()]
-            else:
-                log(f"UMSA support: exodos: shouldnt happen {set_name}", level='warning')
-                continue
-
-            dbc.execute(
-                "INSERT INTO dat_set (id, dat_id) VALUES (?, ?)",
-                (db_setid, lastrow)
-            )
-        else:
-            log(f"UMSA support: exodos: cant find entry for dat {set_name}", level='warning')
-        other_self.scan_perc = int(count / maxno * 100)
-        count += 1
+    # The complete result has been parsed and validated before anything is
+    # deleted. An entirely unmatched/empty result must not wipe the previously
+    # published eXoDOS metadata, so it is reported and skipped.
+    if parsed.records:
+        dat_repo.replace_origin(ORIGIN_EXODOS, parsed.records)
+    else:
+        log("UMSA support: exodos: no matched metadata, keeping existing records",
+            level='warning')
+    other_self.scan_perc = 100
 
     # all games w/o box, got the game title, so shasum gametitle and check if box is same
 

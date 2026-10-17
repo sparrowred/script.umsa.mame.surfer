@@ -329,6 +329,82 @@ class DatRepository:
         finally:
             cursor.close()
 
+    def replace_origin(self, origin: str, records,
+                       allow_empty: bool = False) -> int:
+        """Atomically replace the complete ``origin`` metadata set.
+
+        ``records`` is the complete parsed collection. Each record must expose
+        the ``file``, ``entry`` and ``set_ids`` attributes (the same shape as
+        :class:`umsa_core.dat_parser.DatEntry` and
+        :class:`umsa_core.exodos_parser.ExodosMetadata`).
+
+        In a single short transaction it removes every ``dat_set`` relationship
+        belonging to existing ``dat`` rows of ``origin``, deletes those ``dat``
+        rows, inserts each new row with its display category and ``origin``, and
+        inserts the corresponding ``dat_set`` relationship per mapped set id.
+
+        Rows of every other origin (``mame_support``, ``gb64``, ...) are never
+        touched. On any failure the transaction is rolled back and the previously
+        published ``origin`` rows are preserved. The caller's connection is
+        never closed, and a transaction started here is the only one committed.
+        Re-running with the same records is idempotent: the old rows are removed
+        first, so no duplicates are created.
+
+        An empty ``records`` collection is rejected by default, so a malformed
+        parse, a missing input or an entirely unmatched scan can never wipe
+        previously published data. Pass ``allow_empty=True`` to explicitly
+        request a deliberate clearing of ``origin``.
+
+        Returns the number of inserted records.
+        """
+
+        entries = list(records)
+        if not entries and not allow_empty:
+            raise ValueError(
+                "refusing to replace an origin with an empty record collection"
+            )
+
+        conn = self._conn
+        had_transaction = conn.in_transaction
+        cursor = conn.cursor()
+        published = 0
+        try:
+            cursor.execute("SAVEPOINT umsa_dat_replace_origin")
+            try:
+                cursor.execute(
+                    "DELETE FROM dat_set WHERE dat_id IN "
+                    "(SELECT id FROM dat WHERE origin = ?)",
+                    (origin,),
+                )
+                cursor.execute("DELETE FROM dat WHERE origin = ?", (origin,))
+
+                for entry in entries:
+                    set_ids = getattr(entry, "set_ids", ())
+                    cursor.execute(
+                        "INSERT INTO dat(file, entry, origin) VALUES (?, ?, ?)",
+                        (entry.file, entry.entry, origin),
+                    )
+                    new_id = cursor.lastrowid
+                    if new_id is None:
+                        raise RuntimeError("dat insert did not return a row id")
+                    for set_id in set_ids:
+                        cursor.execute(
+                            "INSERT INTO dat_set(id, dat_id) VALUES (?, ?)",
+                            (set_id, new_id),
+                        )
+                    published += 1
+            except Exception:
+                cursor.execute("ROLLBACK TO umsa_dat_replace_origin")
+                cursor.execute("RELEASE umsa_dat_replace_origin")
+                raise
+            else:
+                cursor.execute("RELEASE umsa_dat_replace_origin")
+                if not had_transaction:
+                    conn.commit()
+            return published
+        finally:
+            cursor.close()
+
     def publish_staged(self, origin: str) -> int:
         """Atomically replace one origin's published rows with the staged data.
 
