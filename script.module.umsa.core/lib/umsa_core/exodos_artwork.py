@@ -43,8 +43,19 @@ BOX_FRONT_CATEGORY = 'Box - Front'
 IMAGES_SUBDIR = ('Images', 'MS-DOS')
 GAMEDATA_SUBDIR = ('Content', 'GameData', 'eXoDOS')
 
-# A trailing parenthetical group, e.g. " (1993)" in "Doom (1993)".
-_PARENTHETICAL_SUFFIX = re.compile(r'\s*\([^()]*\)\s*$')
+# Explicit per-phase outcomes. ``complete`` includes a legitimately empty tree,
+# so a missing root can never be mistaken for a successful empty inventory.
+STATE_COMPLETE = 'complete'
+STATE_MISSING = 'missing'
+STATE_INCOMPLETE = 'incomplete'
+STATE_CANCELLED = 'cancelled'
+STATE_SKIPPED = 'skipped'
+
+# The historical GameData naming convention is "<Game Name> (<Year>).zip", so
+# only a trailing four-digit year group may be peeled. Arbitrary parenthetical
+# groups are deliberately NOT stripped: dropping an author/publisher group could
+# collapse an ambiguous title into a different game's set.
+_YEAR_SUFFIX = re.compile(r'\s*\(\d{4}\)\s*$')
 _UNIT_SEPARATORS = re.compile(r'[\\/]+')
 
 
@@ -99,10 +110,12 @@ def _is_videosnap_unit(scan_unit):
 def _match_set_name(base_name, exodos_sets):
     """Map a GameData archive basename to an ``exodos_sets`` key.
 
-    The archive stem is tried exactly first; then trailing parenthetical groups
-    are stripped one at a time and retried, so ``Doom (1993)`` and
-    ``Campaign (Empire Software)(1992)`` both resolve. Returns the matching key
-    or ``None`` when the archive cannot be mapped unambiguously.
+    Only the documented ``"<Game Name> (<Year>).zip"`` convention is peeled: the
+    exact stem is tried first, then trailing four-digit year groups are stripped
+    one at a time and retried. Non-year parenthetical groups (an author or
+    publisher, for example) are never removed, because stripping an arbitrary
+    group could collapse an ambiguous title into a different game's set. Returns
+    the matching key or ``None`` when the archive cannot be mapped confidently.
     """
 
     candidate = posixpath.splitext(base_name or '')[0]
@@ -110,7 +123,7 @@ def _match_set_name(base_name, exodos_sets):
         key = _normalize_name(candidate)
         if key in exodos_sets:
             return key
-        stripped = _PARENTHETICAL_SUFFIX.sub('', candidate).rstrip()
+        stripped = _YEAR_SUFFIX.sub('', candidate).rstrip()
         if stripped == candidate:
             return None
         candidate = stripped
@@ -152,6 +165,12 @@ def _walk_inventory(root, is_cancelled):
         if dirpath != root:
             result.dirs.append(dirpath)
         for name in filenames:
+            # A single directory can hold a very large number of files, so the
+            # cancellation predicate is checked per file and not only per
+            # directory.
+            if is_cancelled():
+                result.cancelled = True
+                return result
             result.files.append(os.path.join(dirpath, name))
 
     result.complete = not failed
@@ -163,7 +182,13 @@ def _cleanup_obsolete_units(art_repo, root_key, present_units, classify):
 
     Never removes a unit that is not recognized by ``classify``, and never
     touches another source or root. All listing and deletion goes through the
-    repository. Returns the number of removed artwork rows.
+    repository, so a deletion failure is rolled back transactionally and leaves
+    every unit in place.
+
+    Returns ``{'removed': int, 'error': str | None}``. ``error`` is a short
+    description when listing or deleting failed; the caller must treat a
+    non-``None`` error as a failed cleanup and surface it in its phase summary
+    rather than as a successful (or silently skipped) cleanup.
     """
 
     present = {tuple(_split_unit(unit)) for unit in present_units}
@@ -172,24 +197,24 @@ def _cleanup_obsolete_units(art_repo, root_key, present_units, classify):
     except Exception as exc:
         log(f"UMSA exodos artwork: cannot list existing units: {exc}",
             level='error')
-        return 0
+        return {'removed': 0, 'error': f'list failed: {exc}'}
 
     obsolete = [
         unit for unit in persisted
         if classify(unit) and tuple(_split_unit(unit)) not in present
     ]
     if not obsolete:
-        return 0
+        return {'removed': 0, 'error': None}
 
     try:
         removed = art_repo.delete_scan_units(SOURCE, root_key, obsolete)
     except Exception as exc:
         log(f"UMSA exodos artwork: cannot remove obsolete units: {exc}",
             level='error')
-        return 0
+        return {'removed': 0, 'error': f'delete failed: {exc}'}
     log(f"UMSA exodos artwork: removed {removed} artwork rows of "
         f"{len(obsolete)} obsolete unit(s)", level='info')
-    return removed
+    return {'removed': removed, 'error': None}
 
 
 # -- image phase -----------------------------------------------------------
@@ -198,10 +223,12 @@ def _scan_images(exodos_path, exodos_sets, art_repo, root_key,
                  report_progress, is_cancelled):
     """Index the ``Images/MS-DOS`` tree in one pass.
 
-    Returns ``{'units', 'rows', 'errors', 'aborted'}``.
+    Returns ``{'units', 'rows', 'errors', 'aborted', 'state'}`` where ``state``
+    is one of ``complete``/``missing``/``incomplete``/``cancelled``.
     """
 
-    result = {'units': 0, 'rows': 0, 'errors': 0, 'aborted': False}
+    result = {'units': 0, 'rows': 0, 'errors': 0, 'aborted': False,
+              'state': STATE_COMPLETE}
     images_root = os.path.join(exodos_path, *IMAGES_SUBDIR)
     report_progress(None, 'scan all exodos art...')
 
@@ -209,14 +236,17 @@ def _scan_images(exodos_path, exodos_sets, art_repo, root_key,
     if not inventory.exists:
         log("UMSA exodos artwork: no Images/MS-DOS tree, skipping image scan",
             level='debug')
+        result['state'] = STATE_MISSING
         return result
     if inventory.cancelled:
         result['aborted'] = True
+        result['state'] = STATE_CANCELLED
         return result
     if not inventory.complete:
         # A partial inventory is not a valid empty result: nothing is replaced
         # and nothing is cleaned up, so the previous artwork survives.
         result['errors'] += 1
+        result['state'] = STATE_INCOMPLETE
         log("UMSA exodos artwork: incomplete image inventory, keeping "
             "existing image artwork", level='error')
         return result
@@ -262,6 +292,7 @@ def _scan_images(exodos_path, exodos_sets, art_repo, root_key,
     for count, path in enumerate(title_files, 1):
         if is_cancelled():
             result['aborted'] = True
+            result['state'] = STATE_CANCELLED
             return result
         try:
             digest = md5sum(path)
@@ -283,6 +314,7 @@ def _scan_images(exodos_path, exodos_sets, art_repo, root_key,
     for count, path in enumerate(inventory.files, 1):
         if is_cancelled():
             result['aborted'] = True
+            result['state'] = STATE_CANCELLED
             return result
         extension = os.path.splitext(path)[1].lower()
         if extension not in IMAGE_EXTENSIONS:
@@ -323,6 +355,12 @@ def _scan_images(exodos_path, exodos_sets, art_repo, root_key,
     for category, rows in image_units.items():
         if category in failed_units:
             continue
+        # Never start a new replacement once cancellation is requested: the
+        # units already published stay, the rest are simply not touched.
+        if is_cancelled():
+            result['aborted'] = True
+            result['state'] = STATE_CANCELLED
+            return result
         try:
             art_repo.replace_scan_unit(SOURCE, root_key, category, rows)
             result['units'] += 1
@@ -334,9 +372,17 @@ def _scan_images(exodos_path, exodos_sets, art_repo, root_key,
     # Cleanup only after a complete, successful, non-cancelled phase. A failed
     # unit is still "present" (it was seen), so it is never a cleanup candidate.
     if result['errors'] == 0 and not result['aborted']:
-        _cleanup_obsolete_units(
-            art_repo, root_key, set(image_units),
-            lambda unit: unit in exodos_type_convert)
+        if is_cancelled():
+            result['aborted'] = True
+            result['state'] = STATE_CANCELLED
+        else:
+            cleanup = _cleanup_obsolete_units(
+                art_repo, root_key, set(image_units),
+                lambda unit: unit in exodos_type_convert)
+            if cleanup['error']:
+                result['errors'] += 1
+                log("UMSA exodos artwork: image cleanup failed: "
+                    f"{cleanup['error']}", level='error')
 
     return result
 
@@ -347,12 +393,14 @@ def _scan_videosnaps(exodos_path, exodos_sets, art_repo, root_key,
                      report_progress, is_cancelled):
     """Index the ``Content/GameData/eXoDOS`` archives in one pass.
 
-    Returns ``{'units', 'rows', 'errors', 'aborted', 'unmatched'}``.
+    Returns ``{'units', 'rows', 'errors', 'aborted', 'unmatched', 'state'}``
+    where ``state`` is one of ``complete``/``missing``/``incomplete``/
+    ``cancelled``.
     """
 
     result = {
         'units': 0, 'rows': 0, 'errors': 0,
-        'aborted': False, 'unmatched': 0,
+        'aborted': False, 'unmatched': 0, 'state': STATE_COMPLETE,
     }
     gamedata_root = os.path.join(exodos_path, *GAMEDATA_SUBDIR)
     report_progress(None, 'scan GameData zips...')
@@ -361,12 +409,15 @@ def _scan_videosnaps(exodos_path, exodos_sets, art_repo, root_key,
     if not inventory.exists:
         log("UMSA exodos artwork: no Content/GameData/eXoDOS tree, skipping "
             "videosnap scan", level='debug')
+        result['state'] = STATE_MISSING
         return result
     if inventory.cancelled:
         result['aborted'] = True
+        result['state'] = STATE_CANCELLED
         return result
     if not inventory.complete:
         result['errors'] += 1
+        result['state'] = STATE_INCOMPLETE
         log("UMSA exodos artwork: incomplete GameData inventory, keeping "
             "existing videosnaps", level='error')
         return result
@@ -386,6 +437,7 @@ def _scan_videosnaps(exodos_path, exodos_sets, art_repo, root_key,
     for count, archive_path in enumerate(inventory.files, 1):
         if is_cancelled():
             result['aborted'] = True
+            result['state'] = STATE_CANCELLED
             return result
         if not archive_path.lower().endswith('.zip'):
             continue
@@ -403,9 +455,15 @@ def _scan_videosnaps(exodos_path, exodos_sets, art_repo, root_key,
             log(f"UMSA exodos artwork: archive "
                 f"'{os.path.basename(archive_path)}' matched no set",
                 level='warning')
+        cancelled = False
         try:
             with ZipFile(archive_path, 'r') as archive:
                 for entry in archive.namelist():
+                    # A single archive can hold thousands of members, so
+                    # cancellation is checked per member, not only per archive.
+                    if is_cancelled():
+                        cancelled = True
+                        break
                     if entry.endswith('/'):
                         # Directory entry: never a videosnap.
                         continue
@@ -424,6 +482,19 @@ def _scan_videosnaps(exodos_path, exodos_sets, art_repo, root_key,
             report_progress(int(count / maxno * 100) if maxno else 100, None)
             continue
 
+        if cancelled:
+            # The unit was only partially inventoried: never publish it.
+            result['aborted'] = True
+            result['state'] = STATE_CANCELLED
+            return result
+
+        # Never start a new replacement once cancellation is requested: the
+        # units already published stay, the rest are simply not touched.
+        if is_cancelled():
+            result['aborted'] = True
+            result['state'] = STATE_CANCELLED
+            return result
+
         try:
             # The unit is always published, even with zero rows: an archive
             # without a mapped set is a valid, registered empty unit.
@@ -435,8 +506,16 @@ def _scan_videosnaps(exodos_path, exodos_sets, art_repo, root_key,
         report_progress(int(count / maxno * 100) if maxno else 100, None)
 
     if result['errors'] == 0 and not result['aborted']:
-        _cleanup_obsolete_units(
-            art_repo, root_key, present_units, _is_videosnap_unit)
+        if is_cancelled():
+            result['aborted'] = True
+            result['state'] = STATE_CANCELLED
+        else:
+            cleanup = _cleanup_obsolete_units(
+                art_repo, root_key, present_units, _is_videosnap_unit)
+            if cleanup['error']:
+                result['errors'] += 1
+                log("UMSA exodos artwork: videosnap cleanup failed: "
+                    f"{cleanup['error']}", level='error')
 
     return result
 
@@ -456,7 +535,10 @@ def scan_exodos_artwork(exodos_path, exodos_sets, art_repo,
     other phase.
 
     Returns ``{'units': int, 'rows': int, 'errors': int, 'aborted': bool,
-    'unmatched': int}``.
+    'unmatched': int, 'image_state': str, 'videosnap_state': str}``. The state
+    fields distinguish a complete (possibly empty) inventory from a
+    ``missing``/``incomplete``/``cancelled`` one, and are ``skipped`` for a
+    phase that was never attempted.
     """
 
     if report_progress is None:
@@ -467,6 +549,7 @@ def scan_exodos_artwork(exodos_path, exodos_sets, art_repo,
     summary = {
         'units': 0, 'rows': 0, 'errors': 0,
         'aborted': False, 'unmatched': 0,
+        'image_state': STATE_SKIPPED, 'videosnap_state': STATE_SKIPPED,
     }
     if not exodos_path:
         summary['aborted'] = True
@@ -480,16 +563,27 @@ def scan_exodos_artwork(exodos_path, exodos_sets, art_repo,
     summary['units'] += image_result['units']
     summary['rows'] += image_result['rows']
     summary['errors'] += image_result['errors']
+    summary['image_state'] = image_result['state']
     summary['aborted'] = summary['aborted'] or image_result['aborted']
 
-    if not summary['aborted'] and not is_cancelled():
-        video_result = _scan_videosnaps(
-            exodos_path, exodos_sets, art_repo, root_key,
-            report_progress, is_cancelled)
-        summary['units'] += video_result['units']
-        summary['rows'] += video_result['rows']
-        summary['errors'] += video_result['errors']
-        summary['unmatched'] += video_result['unmatched']
-        summary['aborted'] = summary['aborted'] or video_result['aborted']
+    # A cancellation detected at the phase boundary must not silently skip the
+    # videosnap phase while the overall result still looks successful.
+    if summary['aborted']:
+        summary['videosnap_state'] = STATE_SKIPPED
+        return summary
+    if is_cancelled():
+        summary['aborted'] = True
+        summary['videosnap_state'] = STATE_CANCELLED
+        return summary
+
+    video_result = _scan_videosnaps(
+        exodos_path, exodos_sets, art_repo, root_key,
+        report_progress, is_cancelled)
+    summary['units'] += video_result['units']
+    summary['rows'] += video_result['rows']
+    summary['errors'] += video_result['errors']
+    summary['unmatched'] += video_result['unmatched']
+    summary['videosnap_state'] = video_result['state']
+    summary['aborted'] = summary['aborted'] or video_result['aborted']
 
     return summary

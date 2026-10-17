@@ -393,9 +393,10 @@ class ArtworkRepository:
                 "SELECT scan_unit FROM art_set WHERE source=? AND root_key=?",
                 (source, root_key, source, root_key),
             )
-            units = []
-            for row in cursor.fetchall():
-                units.append(row["scan_unit"])
+            # Index the single selected column positionally so the method works
+            # with both the default tuple rows and ``sqlite3.Row`` rows, without
+            # depending on the caller's row factory.
+            units = [row[0] for row in cursor.fetchall()]
             return sorted(u for u in units if u is not None)
         finally:
             cursor.close()

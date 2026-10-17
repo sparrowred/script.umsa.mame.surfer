@@ -145,12 +145,15 @@ class ExodosScanner:
 
         Returns a summary whose keys are ``busy``, ``aborted``, ``errors``,
         ``matched``, ``unmatched``, ``artwork_units``, ``artwork_rows``,
-        ``artwork_errors``, ``artwork_aborted`` and ``artwork_unmatched``.
-        ``aborted`` describes the metadata phase (or a pre-scan failure);
+        ``artwork_errors``, ``artwork_aborted``, ``artwork_unmatched``,
+        ``artwork_image_state`` and ``artwork_videosnap_state``. ``aborted``
+        describes the metadata phase (or a pre-scan failure);
         ``artwork_aborted`` describes the artwork phase, ``artwork_errors``
         counts artwork failures and ``artwork_unmatched`` counts GameData
-        archives that could not be mapped to a set. Metadata and artwork are
-        separate databases and are not atomic across each other.
+        archives that could not be mapped to a set. The two ``*_state`` fields
+        distinguish a complete (possibly empty) inventory from a
+        ``missing``/``incomplete``/``cancelled``/``skipped`` one. Metadata and
+        artwork are separate databases and are not atomic across each other.
         """
 
         busy_summary = {
@@ -164,6 +167,8 @@ class ExodosScanner:
             'artwork_errors': 0,
             'artwork_aborted': False,
             'artwork_unmatched': 0,
+            'artwork_image_state': 'skipped',
+            'artwork_videosnap_state': 'skipped',
         }
 
         try:
@@ -200,6 +205,8 @@ class ExodosScanner:
             'artwork_errors': 0,
             'artwork_aborted': False,
             'artwork_unmatched': 0,
+            'artwork_image_state': 'skipped',
+            'artwork_videosnap_state': 'skipped',
         }
 
         if cancel_event is not None and cancel_event.is_set():
@@ -296,6 +303,10 @@ class ExodosScanner:
                 summary['artwork_rows'] = artwork['rows']
                 summary['artwork_errors'] = artwork['errors']
                 summary['artwork_unmatched'] = artwork.get('unmatched', 0)
+                summary['artwork_image_state'] = artwork.get(
+                    'image_state', 'skipped')
+                summary['artwork_videosnap_state'] = artwork.get(
+                    'videosnap_state', 'skipped')
                 summary['errors'] += artwork['errors']
                 if artwork.get('aborted'):
                     summary['artwork_aborted'] = True
