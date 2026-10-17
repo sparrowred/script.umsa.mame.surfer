@@ -99,6 +99,8 @@ class ArtworkRepository:
         Returns a list of dict-like rows (matching sqlite3.Row behaviour via
         the connection's row factory) as fetched from the database. The
         caller's connection row factory is respected.
+
+        TODO think about if dict with key = type is better?
         """
         cursor = self._conn.cursor()
         try:

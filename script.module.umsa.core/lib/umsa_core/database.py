@@ -20,8 +20,6 @@ A few direct statements intentionally remain here:
 
 TODO
  - remove usage of detail, use split_gamename
- - optimize logic for filters
- - move artwork scanning to tools
 """
 
 import os
@@ -233,11 +231,6 @@ def split_gamename(complete_name):
     """Split the complete name of a MAME description into the name and details plus version.
 
     Return: gamename, detail
-
-    TODO
-    - only save complete mame set name and split when needed (not here)
-      ^ can remove 2 columns from maston_variant db table (2 or 1?)
-    - make util function for web and kodi add-on
     """
 
     gamename, detail, details = '', '', []
@@ -295,7 +288,6 @@ class DBMod:
         self.db_paths = _core_data_paths(db_path)
         self.gdb = connect_sqlite(self.db_paths.umsa_db)
         self.gdb.row_factory = sqlite3.Row
-        #self.gdb.text_factory = str # PY2
         self.gdbc = self.gdb.cursor()
 
         # sanity
@@ -306,7 +298,6 @@ class DBMod:
         # connect to status db
         self.sdb = connect_sqlite(self.db_paths.status_db)
         self.sdb.row_factory = sqlite3.Row
-        #self.sdb.text_factory = str # PY2
         self.sdbc = self.sdb.cursor()
 
         # defines filter with self.filter_tables, self.filter_where
@@ -353,31 +344,6 @@ class DBMod:
         )
         self.sdb.commit()
 
-        # update from older database versions
-
-        # emu.mode
-        try:
-            self.sdbc.execute('SELECT EXISTS(SELECT 1 FROM emu WHERE mode="mode")')
-        except sqlite3.OperationalError:
-            self.sdbc.execute('ALTER TABLE emu ADD COLUMN mode INT NOT NULL DEFAULT 0')
-        # sets.marp
-        try:
-            self.sdbc.execute('SELECT EXISTS(SELECT 1 FROM sets WHERE marp="marp")')
-        except sqlite3.OperationalError:
-            self.sdbc.execute('ALTER TABLE sets ADD COLUMN marp TEXT')
-        # sets.youtube
-        try:
-            self.sdbc.execute('SELECT EXISTS(SELECT 1 FROM sets WHERE youtube="youtube")')
-        except sqlite3.OperationalError:
-            self.sdbc.execute('ALTER TABLE sets ADD COLUMN youtube TEXT')
-        # art_set.filename
-        # TODO sqlite3.OperationalError: no such table: art_set
-        #try:
-        #    self.sdbc.execute('SELECT EXISTS(SELECT 1 FROM art_set WHERE filename="filename")')
-        #except sqlite3.OperationalError:
-        #    self.sdbc.execute('ALTER TABLE art_set ADD COLUMN filename TEXT')
-        self.sdb.commit()
-
     def open_db(self, db_path):
         """Reopen umsa database, needed after update of umsa.db
 
@@ -393,7 +359,6 @@ class DBMod:
         self.db_paths = _core_data_paths(db_path)
         gdb = connect_sqlite(self.db_paths.umsa_db)
         gdb.row_factory = sqlite3.Row
-        #self.gdb.text_factory = str # PY2
         gdbc = gdb.cursor()
         self.gdb = gdb
         self.gdbc = gdbc
@@ -849,10 +814,7 @@ class DBMod:
         return self._get_artwork_repository().get_art_types()
 
     def get_artwork_for_set(self, set_id):
-        """get artwork for one set
-
-        TODO think about if dict with key = type is better?
-        """
+        """get artwork for one set"""
 
         repo = self._get_artwork_repository()
         return repo.get_artwork_for_set(set_id)
@@ -937,7 +899,7 @@ class DBMod:
 
         # get with filter if on
         if self.use_filter:
-            # TODO: doesnt work when filter = everything but filter = on
+            # TODO doesnt work when filter = everything but filter = on
             statement = "SELECT {} FROM art_set JOIN sets ON sets.id = art_set.id {} \
                          WHERE art_set.type IN ({}) AND {} \
                          ORDER BY RANDOM() LIMIT 1".format(
@@ -1027,7 +989,6 @@ class DBMod:
         db_paths = _core_data_paths(db_path)
         db_conn = connect_sqlite(db_paths.umsa_db)
         try:
-            #db_conn.text_factory = str # PY2
             dbc = db_conn.cursor()
 
             dbc.execute("SELECT id FROM swl WHERE name = 'vgmplay'")
@@ -1144,7 +1105,6 @@ class DBMod:
         Optional: now = now-(Y-m-d H:M)
         """
 
-        # TODO remove and test
         if not timestamp:
             return ""
         if now:
@@ -1951,15 +1911,6 @@ class DBMod:
                             GROUP BY t.id ORDER BY t.%s" % select_placeholders
         self.gdbc.execute(select_statement)
 
-        # TODO: why does this not work
-        # IndexError: tuple index out of range
-        #self.gdbc.execute(
-        #    "SELECT t.id, t.{}, count(distinct s.id) \
-        #     FROM {} t, software s, sets v \
-        #     WHERE t.id = v.{}_id and s.id = v.softwarelink_id {} \
-        #     GROUP BY t.id ORDER BY t.{}".format(select_placeholders)
-        #)
-
         return self.gdbc.fetchall()
 
     def search_single(self, my_search):
@@ -1996,13 +1947,6 @@ class DBMod:
                WHERE sets.softwarelink_id = ? AND sets.swllink_id = swl.id",
             (software_id,)
         )
-        # get full
-        #self.gdbc.execute(
-        #    "SELECT gamename FROM sets WHERE sets.id IN \
-        #     ( SELECT DISTINCT system_id FROM swl, sets \
-        #       WHERE sets.softwarelink_id = ? AND sets.swllink_id = swl.id )",
-        #    (software_id,)
-        #)
         for j in self.gdbc.fetchall():
             all_machines.append(j[0])
 
@@ -2247,7 +2191,6 @@ class DBMod:
             best_machine = machines[1]
 
         # get country from detail
-        #for c in reversed(sorted(COUNTRIES.keys())):
         for country_sorted in sorted(COUNTRIES.keys()):
             for country in COUNTRIES[country_sorted]:
                 if country in detail.lower():
@@ -2270,6 +2213,10 @@ class DBMod:
         get all sets nicely sorted (last played, prefered history, year)
         includes a best machine to use for swl set
 
+        all_sets.append is used instead of .extend
+        so we have all_sets[software_with_same_name][sets] = {infos}
+        and not all_sets[[software1],[software2]]
+
         TODO:
         - better document this function
         - have lists for each software with same name order by year
@@ -2278,10 +2225,6 @@ class DBMod:
         - include preferred country (select it or make it first in list?)
         - maybe dont order select by year, done later,
           order by name so usa, jap... are sorted correct
-
-        all_sets.append is used instead of .extend
-        so we have all_sets[software_with_same_name][sets] = {infos}
-        and not all_sets[[software1],[software2]]
         """
 
         time1 = time.time()
