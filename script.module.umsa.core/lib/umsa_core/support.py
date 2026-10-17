@@ -16,8 +16,6 @@ from urllib.request import urlopen
 from zipfile import ZipFile
 
 from .artwork import root_key_for_path
-from .dat_repository import ORIGIN_EXODOS
-from .exodos_parser import parse_exodos_metadata
 from .logging import log
 
 MARP_URL = "http://replay.marpirc.net"
@@ -187,92 +185,51 @@ def youtube_search(gamename, machine):
         html_content = unescape(url_open.read().decode('utf-8', errors='ignore'))
     return findall(r'{"videoId":"(.{11})".*?"text":"(.*?)"', html_content)
 
-def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dat_repo, abc, other_self):
-    """Scan eXoDOS xml file for dat infos and artwork path"""
 
-    # fetch: Developer, Notes, Source, Genre, Region
-    # also: ManualPath, MusicPath, but these are media > check against filesystem
+def scan_exodos_artwork(exodos_path, exodos_sets, abc, report_progress=None):
+    """Index eXoDOS artwork and GameData MP4s into ``art_set``.
 
-    '''
-    exodos directory structure:
+    ``exodos_sets`` maps the normalized gamename to the set id. ``abc`` is the
+    caller-owned artwork DB cursor. This is the legacy image/videosnap portion
+    of the eXoDOS scan; it neither parses ``MS-DOS.xml`` nor writes the eXoDOS
+    DAT metadata.
+    """
 
-    # contains batch and dosbox.conf
-    Content/!DOSmetadata.zip/eXo/eXoDOS/!dos/<shortname>/<description>/
-
-    # contains artwork
-    Content/XODOSMetadata.zip/Images/MS-DOS/
-
-    # contains extra content like pdf,mp4, names equal to .bat in !DOSmetadata.zip
-    Content/GameData/eXoDOS/
-
-    # contains game files in zips, names equal to .bat in !DOSmetadata.zip
-    eXo/eXoDOS/
-
-    '''
-
-    # Content/XODOSMetadata.zip xml/all/MS-DOS.xml
-    other_self.scan_what = 'reading MS-DOS.xml from zip'
-    try:
-        xml_file = os.path.join(exodos_path, 'Content', 'XODOSMetadata.zip')
-        with ZipFile(xml_file, 'r') as archive:
-            exodos_xml = archive.read('xml/all/MS-DOS.xml').decode('utf-8', 'ignore')
-        parsed = parse_exodos_metadata(exodos_xml, exodos_sets_names)
-    except Exception as exc:
-        # A missing archive member, an unreadable archive or malformed XML must
-        # never look like a valid empty result: abort before any destructive
-        # metadata change so previously published records are preserved.
-        log(f"UMSA support: exodos: cannot read or parse MS-DOS.xml: {exc}",
-            level='error')
-        other_self.scan_what = 'exodos metadata failed'
-        other_self.scan_perc = 0
-        return
-
-    other_self.scan_what = 'scanning xml...'
-    for set_name in parsed.unmatched:
-        log(f"UMSA support: exodos: cant find entry for dat {set_name}", level='warning')
-
-    # The complete result has been parsed and validated before anything is
-    # deleted. An entirely unmatched/empty result must not wipe the previously
-    # published eXoDOS metadata, so it is reported and skipped.
-    if parsed.records:
-        dat_repo.replace_origin(ORIGIN_EXODOS, parsed.records)
-    else:
-        log("UMSA support: exodos: no matched metadata, keeping existing records",
-            level='warning')
-    other_self.scan_perc = 100
-
-    # all games w/o box, got the game title, so shasum gametitle and check if box is same
+    if report_progress is None:
+        def report_progress(percent=None, what=None):
+            pass
 
     art_path = os.path.join(exodos_path, 'Images', 'MS-DOS')
     art_type_indicator = len(art_path.split('/'))
     log(f"UMSA support: art path and ind.: {art_path} : {art_type_indicator}", level='debug')
-    pics = ('.gif','.png','.jpg')
+    pics = ('.gif', '.png', '.jpg')
 
-    other_self.scan_what = 'scan md5sum for titles...'
+    report_progress(None, 'scan md5sum for titles...')
     # get md5sum from all titles to sort out wrong title boxfronts
     titles = []
-    alltitles = glob.glob(f"{os.path.join(art_path,'Screenshot - Game Title')}/**", recursive=True)
+    alltitles = glob.glob(
+        f"{os.path.join(art_path, 'Screenshot - Game Title')}/**", recursive=True)
     maxno = len(alltitles)
     log(f"UMSA support: found {maxno} title screenshot to scan for md5", level='info')
     count = 1.0
     for titlefile in alltitles:
         if os.path.splitext(titlefile)[1].lower() in pics:
             titles.append(md5sum(titlefile))
-        other_self.scan_perc = int(count / maxno * 100)
+        report_progress(int(count / maxno * 100) if maxno else 100, None)
         count += 1
-    
-    other_self.scan_what = 'scan all exodos art...'
-    other_self.scan_perc = 0
+
+    report_progress(None, 'scan all exodos art...')
+    report_progress(0, None)
     allart = glob.glob(f"{art_path}/**", recursive=True)
-    maxno = len(allart) 
+    maxno = len(allart)
     count = 1.0
     for art_entry in allart:
         dirname, basename = os.path.split(art_entry)
-        pic_fullname, extension =  os.path.splitext(basename)
+        pic_fullname, extension = os.path.splitext(basename)
         if extension.lower() in pics:
             pic_name, empty, pic_no = pic_fullname.rpartition('-')
             if pic_name.lower() in exodos_sets:
-                if dirname.split('/')[art_type_indicator] == 'Box - Front': # get md5, check against titles
+                if dirname.split('/')[art_type_indicator] == 'Box - Front':  # get md5, check against titles
                     if md5sum(art_entry) in titles:
                         continue
                 abc.execute(
@@ -286,14 +243,14 @@ def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dat_repo, abc, othe
                      os.path.relpath(art_entry, exodos_path) if exodos_path else art_entry,
                      None)
                 )
-        other_self.scan_perc = int(count / maxno * 100)
+        report_progress(int(count / maxno * 100) if maxno else 100, None)
         count += 1
 
-    other_self.scan_what = 'scan GameData zips...'
-    other_self.scan_perc = 0
+    report_progress(None, 'scan GameData zips...')
+    report_progress(0, None)
     gamedata_zip_path = os.path.join(exodos_path, 'Content', 'GameData', 'eXoDOS')
     gamedata_zips = glob.glob(f"{gamedata_zip_path}/**", recursive=True)
-    maxno = len(gamedata_zips) 
+    maxno = len(gamedata_zips)
     count = 1.0
     allext = {}
     allext['mp4notfound'] = 0
@@ -325,9 +282,7 @@ def scan_exodos(exodos_path, exodos_sets, exodos_sets_names, dat_repo, abc, othe
                     else:
                         log(f"UMSA support: found {entry} but {exodos_name} not found in exodos_sets", level='warning')
                         allext['mp4notfound'] += 1
-        other_self.scan_perc = int(count / maxno * 100)
+        report_progress(int(count / maxno * 100) if maxno else 100, None)
         count += 1
     log(f"UMSA support: {allext}", level='debug')
-
-    other_self.scan_what = 'exodos finished!'
-
+    report_progress(None, 'exodos finished!')

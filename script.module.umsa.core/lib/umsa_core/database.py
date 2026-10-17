@@ -41,9 +41,7 @@ from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .gb64_scanner import GB64Scanner
 from .logging import log
-from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite
-from .support import scan_exodos
 
 def _core_data_paths(db_path):
     """Adapt legacy database-directory arguments to explicit Core paths."""
@@ -555,77 +553,41 @@ class DBMod:
     def scan_exodos_to_db(self, empty, db_path):
         """Read eXoDOS xml and artwork.
 
-        This is the eXoDOS scan orchestration boundary. It holds the shared
-        process-wide scan lock for the whole combined metadata/artwork
-        workflow. When another covered scan is already running it returns
-        immediately with ``busy`` set and leaves all data untouched.
+        This is a thin compatibility wrapper around
+        :class:`umsa_core.exodos_scanner.ExodosScanner`. It keeps the historical
+        ``scan_exodos_to_db(empty, db_path)`` interface, the
+        ``scan_perc``/``scan_what``/``scan_status`` attributes used by
+        ``run_scan_with_progress()`` and the GUI, and returns the scanner's
+        summary dictionary unchanged.
         """
 
-        summary = {'busy': False}
+        db_paths = _core_data_paths(db_path) if db_path else self.db_paths
+        exodos_root = self.nonmame.get('exodos', '') if self.nonmame else ''
+
+        self.scan_perc = 0
+        self.scan_what = 'reading MS-DOS.xml from zip'
+        self.scan_status = True
+
+        def progress(percent, what):
+            if percent is not None:
+                self.scan_perc = percent
+            if what is not None:
+                self.scan_what = what
+
+        def is_cancelled():
+            return not self.scan_status
 
         try:
-            lock_ctx = ScanLockContext(scan_coordinator)
-            lock_ctx.__enter__()
-        except ScanBusyError:
-            log("UMSA exodos scan: rejected, another scan is already running",
-                level='warning')
-            summary['busy'] = True
-            return summary
-
-        try:
-            self._scan_exodos_locked(db_path)
+            from .exodos_scanner import ExodosScanner
+            return ExodosScanner(
+                db_paths,
+                initialize_dat=self.create_dat_tables,
+                initialize_art=self.create_art_tables,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            ).scan(exodos_root)
         finally:
-            lock_ctx.__exit__(None, None, None)
-        return summary
-
-    def _scan_exodos_locked(self, db_path):
-        """Run the eXoDOS scan while the shared lock is held by the caller."""
-
-        exodos_sets = {}
-        exodos_sets_names = {}
-
-        # connect to db
-        db_paths = _core_data_paths(db_path)
-        db_conn = connect_sqlite(db_paths.umsa_db)
-        try:
-            #db_conn.text_factory = str # PY2
-            dbc = db_conn.cursor()
-
-            dbc.execute("SELECT sets.id, sets.gamename, sets.name \
-                         FROM sets JOIN swl ON sets.swllink_id=swl.id \
-                         WHERE swl.name = 'exodos'")
-            for i in dbc.fetchall():
-                exodos_sets_names[i[2]] = i[0]
-                exodos_sets[i[1].replace(':','_').replace('\'','_').replace('?','_').lower()] = i[0]
-        finally:
-            db_conn.close()
-        # connect to db
-        db_conn3 = connect_sqlite(db_paths.dat_db)
-        db_conn2 = None
-        try:
-            dbc = db_conn3.cursor()
-            # Ensure the DAT schema (and origin column) exists before the
-            # metadata rows are inserted with their origin.
-            self.create_dat_tables(dbc)
-            db_conn3.commit()
-            db_conn2 = connect_sqlite(db_paths.artwork_db)
-            abc = db_conn2.cursor()
-
-            # The scan owns no metadata SQL: it parses the XML once and writes
-            # the complete result through the repository, which atomically
-            # replaces only the eXoDOS origin rows. The connection stays
-            # caller-owned; the repository never closes it.
-            dat_repo = DatRepository(db_conn3)
-
-            scan_exodos(self.nonmame['exodos'],
-                        exodos_sets, exodos_sets_names, dat_repo, abc, self)
-            db_conn3.commit()
-            db_conn2.commit()
-        finally:
-            if db_conn2 is not None:
-                db_conn2.close()
-            db_conn3.close()
-        self.scan_status = False
+            self.scan_status = False
 
     def scan_dats(self, datdir, db_path):
         """Read all MAME dat files from a directory
