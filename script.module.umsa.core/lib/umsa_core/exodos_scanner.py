@@ -151,9 +151,10 @@ class ExodosScanner:
         ``artwork_aborted`` describes the artwork phase, ``artwork_errors``
         counts artwork failures and ``artwork_unmatched`` counts GameData
         archives that could not be mapped to a set. The two ``*_state`` fields
-        distinguish a complete (possibly empty) inventory from a
-        ``missing``/``incomplete``/``cancelled``/``skipped`` one. Metadata and
-        artwork are separate databases and are not atomic across each other.
+        distinguish a complete (possibly empty) inventory from a ``missing``,
+        ``inaccessible``, ``not_a_directory``, ``incomplete`` or ``cancelled``
+        one, and are ``skipped`` for a phase that was never attempted. Metadata
+        and artwork are separate databases and are not atomic across each other.
         """
 
         busy_summary = {

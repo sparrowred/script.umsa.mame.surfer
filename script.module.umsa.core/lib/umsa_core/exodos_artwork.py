@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import stat
 from zipfile import ZipFile
 
 from .artwork import root_key_for_path
@@ -43,10 +44,17 @@ BOX_FRONT_CATEGORY = 'Box - Front'
 IMAGES_SUBDIR = ('Images', 'MS-DOS')
 GAMEDATA_SUBDIR = ('Content', 'GameData', 'eXoDOS')
 
-# Explicit per-phase outcomes. ``complete`` includes a legitimately empty tree,
-# so a missing root can never be mistaken for a successful empty inventory.
+# Per-phase inventory outcomes. ``complete`` is a legitimate, successful
+# inventory and may be empty; every other value means "the root was not read in
+# full", so none of them ever authorizes stale-unit cleanup. ``missing`` means
+# the path does not exist, ``inaccessible`` that it exists but cannot be
+# examined, ``not_a_directory`` that it exists but is not a directory,
+# ``incomplete`` that the walk reported a traversal error and ``cancelled`` that
+# the caller asked to stop. ``skipped`` is a phase that never started.
 STATE_COMPLETE = 'complete'
 STATE_MISSING = 'missing'
+STATE_INACCESSIBLE = 'inaccessible'
+STATE_NOT_A_DIRECTORY = 'not_a_directory'
 STATE_INCOMPLETE = 'incomplete'
 STATE_CANCELLED = 'cancelled'
 STATE_SKIPPED = 'skipped'
@@ -111,45 +119,73 @@ def _match_set_name(base_name, exodos_sets):
     """Map a GameData archive basename to an ``exodos_sets`` key.
 
     Only the documented ``"<Game Name> (<Year>).zip"`` convention is peeled: the
-    exact stem is tried first, then trailing four-digit year groups are stripped
-    one at a time and retried. Non-year parenthetical groups (an author or
-    publisher, for example) are never removed, because stripping an arbitrary
-    group could collapse an ambiguous title into a different game's set. Returns
-    the matching key or ``None`` when the archive cannot be mapped confidently.
+    exact stem is tried first, then at most one trailing four-digit year group
+    is stripped and retried. This is deliberately legacy-conservative: stripping
+    more than one year group (or any non-year group) could collapse an ambiguous
+    title into a different game's set. Returns the matching key or ``None`` when
+    the archive cannot be mapped confidently.
     """
 
     candidate = posixpath.splitext(base_name or '')[0]
-    while candidate:
-        key = _normalize_name(candidate)
+    key = _normalize_name(candidate)
+    if key in exodos_sets:
+        return key
+    stripped = _YEAR_SUFFIX.sub('', candidate).rstrip()
+    if stripped != candidate:
+        key = _normalize_name(stripped)
         if key in exodos_sets:
             return key
-        stripped = _YEAR_SUFFIX.sub('', candidate).rstrip()
-        if stripped == candidate:
-            return None
-        candidate = stripped
     return None
 
 
 class _Inventory:
-    """The result of one ``os.walk`` over a root."""
+    """The result of one ``os.walk`` over a root.
+
+    ``state`` is one of the per-phase inventory states and starts at ``missing``
+    so an unclassified root can never be mistaken for a successful empty one.
+    """
 
     def __init__(self, root):
         self.root = root
-        self.exists = False
-        self.complete = False
-        self.cancelled = False
+        self.state = STATE_MISSING
         self.files = []
         self.dirs = []
 
 
+def _probe_root(root):
+    """Classify a root path before walking it.
+
+    ``complete`` only means "an existing, statable directory"; the walk itself
+    decides whether the inventory is complete. Separating a missing path from an
+    existing-but-inaccessible one and from a path that is not a directory means
+    a permission error or a file can never be mistaken for an empty tree.
+    """
+
+    try:
+        info = os.stat(root)
+    except (FileNotFoundError, NotADirectoryError):
+        return STATE_MISSING
+    except OSError:
+        # The path exists but cannot be examined (for example EACCES on the
+        # path or a parent directory). Never treat this as an empty tree.
+        return STATE_INACCESSIBLE
+    if not stat.S_ISDIR(info.st_mode):
+        return STATE_NOT_A_DIRECTORY
+    return STATE_COMPLETE
+
+
 def _walk_inventory(root, is_cancelled):
-    """Walk ``root`` once, recording files, directories and completeness."""
+    """Walk ``root`` once, recording files, directories and the final state."""
 
     result = _Inventory(root)
-    if not root or not os.path.isdir(root):
+    if not root:
         return result
 
-    result.exists = True
+    root_state = _probe_root(root)
+    if root_state != STATE_COMPLETE:
+        result.state = root_state
+        return result
+
     failed = False
 
     def onerror(exc):
@@ -160,7 +196,7 @@ def _walk_inventory(root, is_cancelled):
 
     for dirpath, _dirnames, filenames in os.walk(root, onerror=onerror):
         if is_cancelled():
-            result.cancelled = True
+            result.state = STATE_CANCELLED
             return result
         if dirpath != root:
             result.dirs.append(dirpath)
@@ -169,11 +205,11 @@ def _walk_inventory(root, is_cancelled):
             # cancellation predicate is checked per file and not only per
             # directory.
             if is_cancelled():
-                result.cancelled = True
+                result.state = STATE_CANCELLED
                 return result
             result.files.append(os.path.join(dirpath, name))
 
-    result.complete = not failed
+    result.state = STATE_INCOMPLETE if failed else STATE_COMPLETE
     return result
 
 
@@ -224,7 +260,8 @@ def _scan_images(exodos_path, exodos_sets, art_repo, root_key,
     """Index the ``Images/MS-DOS`` tree in one pass.
 
     Returns ``{'units', 'rows', 'errors', 'aborted', 'state'}`` where ``state``
-    is one of ``complete``/``missing``/``incomplete``/``cancelled``.
+    is ``complete`` or one of the non-publishing states ``missing``,
+    ``inaccessible``, ``not_a_directory``, ``incomplete`` or ``cancelled``.
     """
 
     result = {'units': 0, 'rows': 0, 'errors': 0, 'aborted': False,
@@ -233,22 +270,22 @@ def _scan_images(exodos_path, exodos_sets, art_repo, root_key,
     report_progress(None, 'scan all exodos art...')
 
     inventory = _walk_inventory(images_root, is_cancelled)
-    if not inventory.exists:
-        log("UMSA exodos artwork: no Images/MS-DOS tree, skipping image scan",
-            level='debug')
-        result['state'] = STATE_MISSING
-        return result
-    if inventory.cancelled:
+    if inventory.state == STATE_CANCELLED:
         result['aborted'] = True
         result['state'] = STATE_CANCELLED
         return result
-    if not inventory.complete:
-        # A partial inventory is not a valid empty result: nothing is replaced
-        # and nothing is cleaned up, so the previous artwork survives.
-        result['errors'] += 1
-        result['state'] = STATE_INCOMPLETE
-        log("UMSA exodos artwork: incomplete image inventory, keeping "
-            "existing image artwork", level='error')
+    if inventory.state != STATE_COMPLETE:
+        # The root was not read in full, so this is not a valid empty result:
+        # nothing is replaced and nothing is cleaned up, and the previous
+        # artwork survives. A genuinely empty tree reports ``complete`` instead.
+        result['state'] = inventory.state
+        if inventory.state == STATE_INCOMPLETE:
+            result['errors'] += 1
+            log("UMSA exodos artwork: incomplete Images/MS-DOS inventory, "
+                "keeping existing image artwork", level='error')
+        else:
+            log(f"UMSA exodos artwork: Images/MS-DOS is "
+                f"{inventory.state}, skipping image scan", level='debug')
         return result
 
     def record_error(scan_unit, exc):
@@ -394,7 +431,8 @@ def _scan_videosnaps(exodos_path, exodos_sets, art_repo, root_key,
     """Index the ``Content/GameData/eXoDOS`` archives in one pass.
 
     Returns ``{'units', 'rows', 'errors', 'aborted', 'unmatched', 'state'}``
-    where ``state`` is one of ``complete``/``missing``/``incomplete``/
+    where ``state`` is ``complete`` or one of the non-publishing states
+    ``missing``, ``inaccessible``, ``not_a_directory``, ``incomplete`` or
     ``cancelled``.
     """
 
@@ -406,20 +444,22 @@ def _scan_videosnaps(exodos_path, exodos_sets, art_repo, root_key,
     report_progress(None, 'scan GameData zips...')
 
     inventory = _walk_inventory(gamedata_root, is_cancelled)
-    if not inventory.exists:
-        log("UMSA exodos artwork: no Content/GameData/eXoDOS tree, skipping "
-            "videosnap scan", level='debug')
-        result['state'] = STATE_MISSING
-        return result
-    if inventory.cancelled:
+    if inventory.state == STATE_CANCELLED:
         result['aborted'] = True
         result['state'] = STATE_CANCELLED
         return result
-    if not inventory.complete:
-        result['errors'] += 1
-        result['state'] = STATE_INCOMPLETE
-        log("UMSA exodos artwork: incomplete GameData inventory, keeping "
-            "existing videosnaps", level='error')
+    if inventory.state != STATE_COMPLETE:
+        # The root was not read in full: nothing is replaced and nothing is
+        # cleaned up, so existing videosnaps survive. An empty tree reports
+        # ``complete`` instead.
+        result['state'] = inventory.state
+        if inventory.state == STATE_INCOMPLETE:
+            result['errors'] += 1
+            log("UMSA exodos artwork: incomplete Content/GameData/eXoDOS "
+                "inventory, keeping existing videosnaps", level='error')
+        else:
+            log(f"UMSA exodos artwork: Content/GameData/eXoDOS is "
+                f"{inventory.state}, skipping videosnap scan", level='debug')
         return result
 
     def record_error(scan_unit, exc):
@@ -537,8 +577,8 @@ def scan_exodos_artwork(exodos_path, exodos_sets, art_repo,
     Returns ``{'units': int, 'rows': int, 'errors': int, 'aborted': bool,
     'unmatched': int, 'image_state': str, 'videosnap_state': str}``. The state
     fields distinguish a complete (possibly empty) inventory from a
-    ``missing``/``incomplete``/``cancelled`` one, and are ``skipped`` for a
-    phase that was never attempted.
+    ``missing``/``inaccessible``/``not_a_directory``/``incomplete``/``cancelled``
+    one, and are ``skipped`` for a phase that was never attempted.
     """
 
     if report_progress is None:
