@@ -3,14 +3,16 @@
 This module owns the eXoDOS import workflow: it loads the eXoDOS set mapping
 from ``umsa.db`` once, reads and parses ``MS-DOS.xml`` from
 ``Content/XODOSMetadata.zip`` once, writes the resulting DAT metadata atomically
-through :mod:`umsa_core.dat_repository`, and then runs the legacy
-artwork/videosnap helper to index the image tree and the GameData MP4s.
+through :mod:`umsa_core.dat_repository`, and then indexes the image tree and the
+GameData MP4s. Artwork is persisted per scan unit through
+:mod:`umsa_core.artwork_repository`, so each unit is replaced atomically.
 
 The scanner never imports or touches :class:`DBMod` and owns its own short-lived
-worker connections. All DAT metadata mutations live in the repository; the
-scanner only coordinates them. A missing/unreadable root, a missing mapping or
-an unreadable/malformed XML aborts before any destructive change, so previously
-published records are preserved.
+worker connections. All DAT metadata mutations live in the repository; artwork
+mutations live in the artwork repository. A missing/unreadable root, a missing
+mapping or an unreadable/malformed XML aborts before any destructive change, so
+previously published records are preserved. DAT and artwork databases are
+replaced independently: the scan does not claim atomicity across them.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from __future__ import annotations
 import os
 from zipfile import ZipFile
 
-from .artwork_repository import create_artwork_tables
+from .artwork_repository import ArtworkRepository, create_artwork_tables
 from .dat_repository import ORIGIN_EXODOS, DatRepository, create_dat_tables
 from .exodos_parser import parse_exodos_metadata
 from .logging import log
@@ -150,6 +152,8 @@ class ExodosScanner:
             'errors': 0,
             'matched': 0,
             'unmatched': 0,
+            'artwork_units': 0,
+            'artwork_errors': 0,
         }
 
         try:
@@ -181,6 +185,8 @@ class ExodosScanner:
             'errors': 0,
             'matched': 0,
             'unmatched': 0,
+            'artwork_units': 0,
+            'artwork_errors': 0,
         }
 
         if cancel_event is not None and cancel_event.is_set():
@@ -216,9 +222,9 @@ class ExodosScanner:
             self._init_dat_schema(dat_conn)
             art_conn = connect_sqlite(self._db_paths.artwork_db)
             self._init_art_schema(art_conn)
-            art_cursor = art_conn.cursor()
 
             dat_repo = DatRepository(dat_conn)
+            art_repo = ArtworkRepository(art_conn)
 
             # Read and parse the XML once, before any destructive change.
             self._report(what='reading MS-DOS.xml from zip')
@@ -257,14 +263,17 @@ class ExodosScanner:
 
             # Index the image tree and GameData MP4s. The helper is the legacy
             # artwork/videosnap portion; it neither parses the XML nor writes
-            # the DAT metadata.
+            # the DAT metadata. It persists every unit through the repository,
+            # so its failures are reported in the scan summary.
             from .support import scan_exodos_artwork
 
-            scan_exodos_artwork(exodos_path, exodos_sets, art_cursor,
-                                self._report)
+            artwork = scan_exodos_artwork(
+                exodos_path, exodos_sets, art_repo, self._report)
+            summary['artwork_units'] = artwork['units']
+            summary['artwork_errors'] = artwork['errors']
+            summary['errors'] += artwork['errors']
 
             dat_conn.commit()
-            art_conn.commit()
         finally:
             if art_conn is not None:
                 art_conn.close()

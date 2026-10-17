@@ -400,8 +400,12 @@ class ArtworkRepository:
         conn = self._conn
         had_transaction = conn.in_transaction
         cursor = conn.cursor()
-        rows = list(artwork_rows)
         try:
+            # Materialise the replacement inside the try so the cursor is closed
+            # even when consuming ``artwork_rows`` raises. Nothing is written
+            # before the savepoint, so a failure here leaves the database
+            # untouched.
+            rows = list(artwork_rows)
             cursor.execute("SAVEPOINT umsa_art_replace_unit")
             try:
                 cursor.execute(
