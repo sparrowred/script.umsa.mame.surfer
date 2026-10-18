@@ -29,10 +29,13 @@ status_repository", step 4.5) and **`b84341e`** ("refactor(database): move emula
 configuration to emulator_repository", step 4.6) and for **implemented step 4.7 —
 the explicit-state filter/query composition** (`gamelist_filter.py` new + `database.py`
 facade + parameterisation) — **committed as `479e202` (order fix), `10f9fbd`
-(filter-state accessors), `da65a62` (extraction) and `bc631eb` (parameterisation)**.
-Documentation history: this directory was first tracked in `ec400f4` ("add
+(filter-state accessors), `da65a62` (extraction) and `bc631eb` (parameterisation)** —
+plus the follow-up bounded retry-without-filters fix **committed as `bd83a4d`** ("fix:
+retry-loop for filters", 7 count-based regression tests; full suite **661 passed / 5
+skipped / 18 subtests**). Documentation history: this directory was first tracked in
+`ec400f4` ("add
 docs/database_refactor") and refreshed in `5514efd` ("update docs", docs-only since
-`b84341e`); the four 4.7 code commits sit on top. Current **HEAD is `bc631eb`**
+`b84341e`); the 4.7 code commits sit on top. Current **HEAD is `bd83a4d`**
 (tracked tree clean, no pending working-tree changes).
  **Status:** steps 4.0, 4.2, 4.2a,
 4.2b, 4.3, 4.4, 4.5-pre, 4.5, 4.6 and 4.7 are implemented; step **4.6.1a (`status.db`
@@ -47,8 +50,10 @@ only which *connections repositories accept*, with an explicit `ValueError`; 4.5
 4.6 moved the `sets` and `emu`/`emu_conn` DDL without changing them; 4.6.1a *would*
 add four tables and the `PRAGMA user_version` migration mechanism in **one version
 increment**, plus a one-time import that deletes the legacy `lastgames.txt` /
-`filter_*.txt` inputs after commit — all gated on the open questions **Q1–Q6** in the
-audit document (the former Q7 ordering question is resolved: 4.7 → 4.6.1 → 4.6.2).
+`filter_*.txt` inputs after commit — its questions **Q1–Q6 are resolved as D12–D19** in
+the audit document (2026-10-18), with only the §16.2 Kodi-runtime verification items left
+to check during implementation (the former Q7 ordering question is resolved:
+4.7 → 4.6.1 → 4.6.2).
 
 ## Global contracts every step must honour
 
@@ -604,7 +609,7 @@ schema-helper calls in `_open_persistent_databases`.
 
 **Remaining work for 4.7 and beyond:** step 4.7 is now **done** (see its section
 above), so the next planned work is **4.6.1a** (the one-time `status.db` migration,
-gated on Q1–Q6), then row-leak closure (4.8, which now sees
+with its Q1–Q6 questions resolved as D12–D19), then row-leak closure (4.8, which now sees
 `get_emulators`/`get_emulator` returning plain dicts — already unambiguous shapes) and
 the `database.py` reorganisation proposal (4.9). The 4.6.1a audit below documents the
 **confirmed dependency on 4.7** (now satisfied): the persisted filter selections are
@@ -618,8 +623,9 @@ and acceptance criteria were not changed by it. Text-file persistence
 
 **Status: PLANNED — not implemented.** Read-only audit of the code as of `b84341e`
 (last code commit; steps 4.5/4.6 committed as `fcdefe5`/`b84341e`), documentation
-reconciled at **HEAD `5514efd`**;
-full contract findings, schemas, import/cleanup design and open questions
+reconciled at **HEAD `5514efd`** and **updated 2026-10-18** (decisions D12–D19 recorded,
+line references re-checked at HEAD `bd83a4d`);
+full contract findings, schemas, import/cleanup design and the recorded decisions
 live in [`history_persistence_audit.md`](history_persistence_audit.md) — no production
 code, schema, migration, test or user file was changed. Scope: **three related
 concepts in one migration** plus a one-time legacy import and cleanup:
@@ -637,10 +643,12 @@ concepts in one migration** plus a one-time legacy import and cleanup:
   `UMSA.exit()` (`gui.py:2560-2566`) — the confirmed defect: unclean window teardown
   loses the session. **Decided:** persist immediately after a successful display (the
   successful end of `UMSA.select_software`, `gui.py:2186`; its failure branch
-  `gui.py:2037-2043` simply does not persist), never derived from play history.
+  `gui.py:2037-2043` simply does not persist), never derived from play history, duplicates
+  preserved (D12), and retention raised from 10 to the newest **100** entries (D19).
 - **Filter selections** (`filter_<name>.txt`, `data_paths.py:60-65`): fixed five-line
   comma format (`persistence.py:10-61`, byte-pinned by `tests/test_persistence.py:64-104`),
-  values are opaque id strings fed to `define_filter` (`database.py:1176-1240`); loaded
+  values are opaque id strings fed to `define_filter` (`database.py:1212`, via the
+  `gamelist_filter` service); loaded
   at `onInit` (`gui.py:344`), loaded/saved by the Load/Save Filter dialog
   (`gui.py:1304-1356`); truncated files raise `IndexError`, write failures are silently
   swallowed. Real profile has **zero** filter files; `lastgames.txt` holds 10 valid ids.
@@ -650,11 +658,13 @@ concepts in one migration** plus a one-time legacy import and cleanup:
   be preserved and listed (unknown file).
 - **Screensaver lifecycle** (feature not implemented): one `get_random_art` per loop
   iteration (`ui.py:432-446`); `remember_art` fires *before* bad-image rejection so it is
-  not a display boundary; candidate boundaries are the post-render point (`ui.py:571`) and
-  `Player.onPlayBackStarted` (`ui.py:712`) for videos. No history exists anywhere;
+  not a display boundary. **Boundaries decided (D16):** images recorded at the post-render
+  point (`ui.py:454-571`, before the wait loop) and videos on `Player.onAVStarted()` (the
+  `set_id` travels as the `umsa_set_id` unique ID, Kodi 20+ guard); `ui.py:712`'s
+  `onPlayBackStarted` is not used for recording. No history exists anywhere;
   random selection is history-blind.
 
-**Planned design (pending the open questions):** four new tables —
+**Planned design (decided — D12–D19):** four new tables —
 `gui_lastgames(position, software_id)`, `filter_selections(filter_name, category,
 position, value)`, `screensaver_history(id, set_id, software_id, displayed_at)` and a
 `status_meta` import marker. **One schema migration, one `PRAGMA user_version`
@@ -670,19 +680,24 @@ while other files still import) → write data + terminal marker + pending-delet
 **one commit** → only then delete recognized inputs (valid *and* invalid) → notify via
 the existing Kodi-side layer (no Kodi imports in `umsa_core`). Marker values:
 `completed` / `completed_discards` / `completed_no_source` / `failed`; terminal states
-never re-import; interrupted deletion degrades to **cleanup only**; `failed` is reported
-but never auto-retried (explicit retry only); cleanup failures record and report the
-remaining path and retry deletion only. Unknown files are never deleted. Expected final
+never re-import; interrupted deletion degrades to **cleanup only**; a durably recorded
+`failed` is reported but never auto-retried (explicit retry via a new `retry_import`
+script command in `addon.py:18-37`), while an outcome that could not be committed retries
+at the next GUI startup with **no fallback status file** (D18); cleanup failures record and
+report the
+remaining path and retry deletion only. Unknown files are never deleted (D17: only
+`lastgames.txt` + validated `filter_*.txt`). Expected final
 Core userdata (verified against the real profile and `umsa_db.zip`, which contains only
 `umsa.db`): `settings.xml` + `umsa.db`/`status.db`/`dat.db`/`artwork.db`.
 
-**Open questions blocking implementation:** Q1 lastgames duplicates + failed-display
-cleanup (order/duplicate handling), Q2 validation strictness (data-loss decision), Q3
-filter semantics / whether runtime filter state starts persisting, Q4 screensaver
-duplicates + ordering + display boundary + identifier, Q5 unexpected userdata files
-(`lastsaver.txt`), Q6 DB-failure recovery incl. the marker-impossible fallback —
-section 16 of the audit document. **All six must be resolved before implementation
-starts (D11).** The former Q7 (ordering) is **resolved**: 4.7 → 4.6.1 → 4.6.2.
+**Questions Q1–Q6 — resolved 2026-10-18 as decisions D12–D19:** Q1 lastgames duplicates
++ failed-display entries (D12), Q2 validation strictness (D13 strip/digits + D14
+line-count tolerance), Q3 filter semantics / runtime filter state not persisted (D15),
+Q4 screensaver duplicates + ordering + display boundary + identifier (D16), Q5 unexpected
+userdata files (`lastsaver.txt` preserved, D17), Q6 DB-failure recovery (D18 — `retry_import`
+command, no fallback file) — all recorded in section 1.1/16 of the audit document, with
+`gui_lastgames` retention raised to **100** (D19). Only the §16.2 Kodi-runtime
+verification items remain; the former Q7 (ordering) is **resolved**: 4.7 → 4.6.1 → 4.6.2.
 
 **Dependencies:** conventions from 4.2–4.6 (Row contract, repository style, savepoint
 ownership); **Phase 4.7 for the filter-selection consumption path** — persisted
@@ -906,10 +921,11 @@ guard); no behaviour change. Not urgent — schedule after 4.6.
 4.5-pre ✅ (Q4 bugfix, committed as 8bb8a8d) ──► 4.5 ✅ (StatusRepository, committed as fcdefe5) ──► 4.6 ✅ (EmulatorRepository, committed as b84341e)   (status.db; parallel to 4.2-4.4)
 4.6.1a 📋   (`status.db` history & legacy-file migration — one migration, one-time
              import + cleanup: PLANNED ONLY, history_persistence_audit.md;
-             gated on open questions Q1-Q6; order CONFIRMED: after 4.7 (D11);
-             4.6.2 = screensaver history writes, gated on Q4)
+             Q1-Q6 RESOLVED as D12-D19 (only 16.2 Kodi checks left);
+             order CONFIRMED: after 4.7 (D11);
+             4.6.2 = screensaver history writes (decided D16))
 4.7 ✅ ──► (accessors `10f9fbd` + order fix `479e202` first; extraction `da65a62`;
-             parameterisation `bc631eb`)
+             parameterisation `bc631eb`; retry-loop fix `bd83a4d`)
 4.8                         (after 4.3-4.6; touches GUI)
 4.9                         (proposal; after 4.6)
 ```
@@ -918,20 +934,23 @@ Steps 4.2a/4.2b (`9f2fd40`), 4.3 (`9041812`), 4.4 (delegation + the two CHD
 compatibility fixes, `4d5e70c`), 4.5-pre (the Q4 `save_further_media` bugfix, `8bb8a8d`),
 4.5 (`StatusRepository`, **committed as `fcdefe5`**), 4.6 (`EmulatorRepository`,
 **committed as `b84341e`**) and 4.7 (the explicit-state filter/query composition,
-**committed as `479e202` + `10f9fbd` + `da65a62` + `bc631eb`**) are implemented and
-committed; the tracked tree is clean at the current **HEAD `bc631eb`** (docs commits
+**committed as `479e202` + `10f9fbd` + `da65a62` + `bc631eb`**, plus the retry-loop fix
+**`bd83a4d`**) are implemented and
+committed; the tracked tree is clean at the current **HEAD `bd83a4d`** (docs commits
 `ec400f4` + `5514efd` for this directory sit below the 4.7 code commits). **Step 4.6.1a
 (one `status.db` migration for GUI lastgames + filter selections + screensaver history,
 one-time legacy import and cleanup) is now the next implementation step, planning
 only** — ordering **confirmed by the maintainer as 4.7 → 4.6.1 → 4.6.2 (D11)**: the
 persisted filter selections are fed into the now-explicit `define_filter` state, and
 **4.7's text-file persistence (`lastgames.txt`, `filter_*.txt`) stays in place** — it
-moves only in the later migration. The six open questions Q1–Q6 (lastgames duplicates,
+moves only in the later migration. The six questions Q1–Q6 (lastgames duplicates,
 validation strictness, filter semantics, screensaver semantics, unknown files, DB-failure
-recovery) must be resolved **before** any 4.6.1 implementation.
+recovery) are **resolved as D12–D19** (recorded in `history_persistence_audit.md`
+§1.1/§16), so implementation may start; the §16.2 Kodi-runtime verifications are folded
+into that task.
 Steps 4.5-4.6 (status.db) proceeded independently of the 4.2-4.4 chain; 4.7 is
 deliberately late and 4.8 deliberately last. Every step lands with: characterisation
 tests, facade delegation, unchanged public API, and a green full suite
 (`.venv-debian-vm/bin/python -m pytest tests/ -q`; **661 passed**, 5 skipped, 18 subtests
-with the bounded retry-loop fix in the working tree — the step-4.7 baseline was
+with the bounded retry-loop fix committed as `bd83a4d` — the step-4.7 baseline was
 **654 passed** at HEAD `bc631eb`).

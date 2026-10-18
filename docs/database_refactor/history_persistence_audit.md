@@ -1,9 +1,11 @@
 # Phase 4.6.1a — `status.db` history & legacy-file migration: audit and plan
 
 **Status: PLANNED — NOTHING IMPLEMENTED.** No production code, schema, migration, test or
-user file was changed by this audit or by this document. Every schema, API, migration,
-import and cleanup step below is a *proposal* pending the maintainer answers in
-section 16.
+user file was changed by this audit or by this document. **The design questions Q1–Q6 are
+resolved** — the maintainer's phase brief answered Q1, Q3, Q4 and Q5, the follow-up
+decisions answered Q2 and Q6, and both are recorded as **D12–D19** (section 1.1) plus the
+per-section updates. What remains open is limited to **Kodi-runtime verification items**
+(section 16.2), which are not design decisions and cannot be settled by code inspection.
 
 **Scope of this update:** the finalized direction for moving three related but distinct
 concepts into `status.db`, all under **one** versioned schema migration, followed by
@@ -15,16 +17,21 @@ their cleanup:
 3. Screensaver display history (new, last 100 successfully displayed sets →
    `screensaver_history`; starts empty, **no import**).
 
-Basis: read-only inspection of the code as of `b84341e` — the **last code commit**;
-steps 4.5 (`fcdefe5`) and 4.6 (`b84341e`) are committed and the tracked tree was clean —
-plus `git log -S` history searches, verification against the **real Kodi profile on this
-machine** (`/home/opencode/.kodi/userdata/addon_data/script.module.umsa.core/`) and the
-contents of the distributed `umsa_db.zip` (section 12). Line references are to that
+Basis: read-only inspection of the code as of `b84341e` — the **last code commit** at the
+time of the original audit; steps 4.5 (`fcdefe5`) and 4.6 (`b84341e`) are committed and the
+tracked tree was clean — plus `git log -S` history searches, verification against the
+**real Kodi profile on this machine** (`/home/opencode/.kodi/userdata/addon_data/script.module.umsa.core/`)
+and the contents of the distributed `umsa_db.zip` (section 12). Line references are to that
 code. This document itself lives in the tracked `docs/database_refactor/` directory
 (first committed in `ec400f4`, refreshed in `5514efd`); the audit snapshot is of code
 `b84341e` — since then Phase 4.7 landed (`479e202` + `10f9fbd` + `da65a62` + `bc631eb`),
 which satisfies this document's 4.7 dependency without changing its scope (front-end
-text-file persistence is untouched).
+text-file persistence is untouched), and the bounded retry-without-filters fix landed as
+`bd83a4d`. **Re-verified 2026-10-18 at HEAD `bd83a4d` (tracked tree clean, full suite
+661 passed / 5 skipped / 18 subtests):** every line reference in sections 2–5 and 7–10 was
+re-checked against that tree, the runtime facts in sections 5 and 16.2 were re-checked
+against the installed Kodi **21.3 (Omega)** and Kodistubs 21.0.0, and the profile inventory
+in section 12 was re-read (unchanged).
 
 Scope restrictions that bound this document: documentation/audit updates only; no
 production-code changes; no migrations or schema changes; no tests added or modified; no
@@ -51,7 +58,25 @@ kept the legacy files as permanent backups).
 | **D8** | **Three concepts stay separate** — different tables, different writers, different lifecycles: navigation history, filter selections, screensaver history. |
 | **D9** | **No Kodi imports in `umsa_core`.** The import/migration logic is Kodi-free Core code; the user notification is issued through the existing Kodi-side layer (section 13). |
 | **D10** | **Existing data is preserved:** all current play history (`sets`), emulator configuration (`emu`, `emu_conn`) and further-media rows survive untouched — the migration only adds tables. |
-| **D11** | **Ordering (former Q7, confirmed by the maintainer):** Phase **4.7 → 4.6.1 → 4.6.2**. 4.7's existing scope and acceptance criteria are unchanged; **text-file persistence (`lastgames.txt`, `filter_*.txt`) stays in place during 4.7** and moves only in the later one-time `status.db` migration. Rationale accepted: database-backed filter loading built before the explicit-state filter/query refactor would bind persistence to the old implicit-state API. **Q1–Q6 must be resolved before any 4.6.1 implementation.** |
+| **D11** | **Ordering (former Q7, confirmed by the maintainer):** Phase **4.7 → 4.6.1 → 4.6.2**. 4.7's existing scope and acceptance criteria are unchanged; **text-file persistence (`lastgames.txt`, `filter_*.txt`) stays in place during 4.7** and moves only in the later one-time `status.db` migration. Rationale accepted: database-backed filter loading built before the explicit-state filter/query refactor would bind persistence to the old implicit-state API. **Q1–Q6 (the gate named here) are now resolved — see 1.1 and section 16.** |
+
+### 1.1 Confirmed by the maintainer's phase brief and follow-up decisions (2026-10-18)
+
+The maintainer's phase brief (which answered Q1, Q3, Q4 and Q5) plus the follow-up
+decisions (Q2 token/line semantics, Q6 recovery) close **Q1–Q6**. D1–D11 above are
+untouched; these rows are the
+new binding rules. Every row is a *decision*, not a proposal.
+
+| # | Decision |
+|---|---|
+| **D12** | **History entries exist only after a successful display (Q1 resolved).** A lastgames entry is appended **only once `select_software` has succeeded** — the early return (`gui.py:2038-2043`) must leave neither an in-memory nor a persisted entry, so the insert-and-advance currently done by the five call sites (and by `software_move`'s append) moves into `select_software`'s success funnel (or `select_software` must report success to its callers; it returns `None` on both paths today, `gui.py:2186`). **Repeated display events stay separate entries** — duplicates are preserved, no dedup. Order stays file order (index 0 = oldest, newest = resume point) and the pointer behaviour of `software_move` is unchanged: the established navigation semantics must not change. |
+| **D13** | **Token validation: strip, then decimal digits (Q2, token half).** Every candidate id token is whitespace-stripped and must then be a non-empty decimal-integer string (`^[0-9]+$`). Whitespace around ids is accepted (matching today's `int()` semantics in `load_software_list`, `persistence.py:91`), so a hand-edited `"12, 34"` is **not** a data loss. A token that is not a decimal integer after stripping, or undecodable bytes, makes the **whole file** malformed → discarded whole, recorded as a warning, still deleted after the commit (D3/D5). |
+| **D14** | **Line count is not a validity criterion (Q2, line half) — today's tolerance kept.** `lastgames.txt`: line 1 is the data, any further lines are **ignored, unreported** (today's reader only calls `readline()`); a zero-byte file *or* an empty first line means **no entries**. `filter_<name>.txt`: lines map **positionally** onto the five categories, extra lines are **ignored, unreported** (today's reader stops after five), and **missing trailing lines count as empty categories** (today's reader raises `IndexError`, `persistence.py:36` — a crash the import must not inherit). Empty lines and empty categories stay valid. Files we ship can only ever contain one line / five lines (`save_software_list`, `save_filter`), so tolerance only ever affects hand-edited input, and never partially reinterprets it. |
+| **D15** | **No new runtime-state persistence (Q3 resolved).** `act_filter` (the active filter *name*), `use_filter` and `order` are **not** persisted — verified they are not persisted today either (`database.py:280-281`, `gui.py:345-346`), so adding them would visibly change what the GUI shows on the next start. Only the five selections per named filter move into `filter_selections`. The **public Core API dictionary keys stay exactly as they are** (`"Softwarelists"`, `"Game Categories"`, `"Machine Categories"`, `"Players"`, `"Years"` — `persistence.py:13-19`); the database may store the **internal** keys `softwarelists`, `game_categories`, `machine_categories`, `years`, `players` **with an explicit, documented mapping table** used on read and write (verified: the dict-literal order at `persistence.py:13-19` differs from the file-line order at `persistence.py:29-35` — `Players`/`Years` are swapped — so the mapping is by *name*, never by position). The Load/Save Filter dialog keeps offering exactly the imported names (replacing the `os.listdir` scan with `list_filter_names()` changes nothing visible). |
+| **D16** | **Screensaver history semantics (Q4 resolved).** Records are keyed by **`set_id`** (the `sets.id` that `get_random_art` returns as `art['id']`, `database.py:908`); the **software id is stored alongside** (`art['s_id']` = `sets.softwarelink_id`) and stays the value the context-menu handoff uses today (`ui.py:192-195`, `ui.py:143`). Bound: **at most 100 distinct sets, ordered by most recent successful display**; re-displaying a set moves its single row to the newest position (only the newest copy is retained) — i.e. one row per set, not an event log; rows are pruned past the newest 100 inside the same savepoint as the write. **Images** are recorded only after the iteration's controls have been populated — immediately after the render block (`ui.py:454-571`), **before** the wait loop — because `remember_art` fires before the bad-image rejection (`ui.py:435` vs `ui.py:444-446`) and is therefore not a boundary. **Videos** are recorded only once the stream is available, in `Player.onAVStarted()` (verified present in Kodistubs 21.0.0, annotated `@python_v18`, so available on every Kodi the add-ons support) — not in `onPlayBackStarted`, and never at enqueue time. **Orphan `set_id` rows are never silently substituted:** if the set no longer resolves in `umsa.db` (`get_info_by_set_and_swl` raises `TypeError` on no match, `game_repository.py:482-484`), the row is kept, the handoff is refused with a logged + notified "set no longer available", and no other set is shown instead. |
+| **D17** | **Deletion scope (Q5 resolved).** Only `lastgames.txt` and validated `filter_*.txt` are ever deleted (D6). `lastsaver.txt` — for which **no writer exists in any revision**, only `load_lastsaver` + its single consumer (`gamelist_strategies.py:153`) — and every other unknown file are **preserved and reported to the maintainer**, never added to the cleanup scope by name-guessing. |
+| **D18** | **Database-failure recovery (Q6 resolved).** (a) If `status.db` cannot be read or written such that the required outcome **cannot be committed**, the failure is **reported and the import retries at the next GUI startup** — no marker exists in that case, so "no marker" *is* the retry signal — and **no separate fallback status file may be introduced** (this reverses the "no fallback is adopted until you decide" holding position in 9.3). (b) A durably recorded **`failed` state stays terminal** (D4 unchanged): it is reported on every startup and retried only through a new explicit frontend script command `retry_import`, registered beside `del_db`/`del_status` in `addon.py:18-37`. (c) A **deletion** failure never re-triggers the import — cleanup-only on the next startup (D4). |
+| **D19** | **`gui_lastgames` retention is the newest 100, not 10** (maintainer change). Storage keeps the newest **100** ids (`position` 0..99) instead of today's `self.last[-10:]` trim (`gui.py:2566`); the in-memory session list, the pointer and the navigation behaviour are unchanged. This is the one deliberate *visible* behaviour change of the phase: after a restart the GUI resumes with up to 100 entries of backward history instead of 10. The legacy import reads whatever the file holds and writes at most the newest 100. |
 
 ---
 
@@ -69,7 +94,7 @@ kept the legacy files as permanent backups).
   splits on `,`, `int()` per token. Missing/unreadable → `OSError` → `[]`; non-integer
   token → `ValueError` **propagates** (pinned by `tests/test_persistence.py:118-123`).
 - Identity: **software ids** (`software.id`), the same value `get_random_id()`
-  (`database.py:852-865`) hands out for padding.
+  (`database.py:864`) hands out for padding.
 - Real-world sample (verified): the profile on this machine holds exactly one line of
   **10 valid ids** (60 bytes, last written 2026-10-18) — the migration will import real
   data here, not just a hypothetical file.
@@ -99,14 +124,18 @@ kept the legacy files as permanent backups).
 | `gui.py:1430-1436` | `open_software` — screensaver handoff (`VgmCommandMonitor.onNotification`, `gui.py:216-222`) |
 
 All five run `lastptr += 1; last.insert(lastptr, id)` **before** `select_software(...)`.
-Consequences, still open (Q1):
+Consequences — **decided in D12**:
 
-- **Duplicates** are allowed (clicking an id already in history inserts it again).
-- **Failed displays leave phantom entries**, because `select_software` fails
-  (`get_all_for_software` empty → notification + `return`, `gui.py:2037-2043`) *after*
-  the insert, and it returns `None` on both the failure and the success path
-  (`gui.py:2186`), so callers cannot tell them apart.
-- The in-memory list is **unbounded**; only the writer trims to `self.last[-10:]`.
+- **Duplicates** are allowed (clicking an id already in history inserts it again) and
+  **stay allowed**: repeated display events are preserved as separate entries.
+- **Failed displays must not leave phantom entries.** Today they do: `select_software`
+  fails (`get_all_for_software` empty → notification + `return`, `gui.py:2038-2043`)
+  *after* the insert, and it returns `None` on both the failure and the success path
+  (`gui.py:2186`), so callers cannot tell them apart. **Required change:** the
+  insert-and-advance moves into `select_software`'s success path (or callers must receive
+  an explicit success signal), so a failed display leaves the list exactly as it was.
+- The in-memory list is **unbounded** (unchanged); persistence keeps the newest **100**
+  (D19), replacing the writer's `self.last[-10:]` trim.
 
 Not affected: hover/selection movement, filter changes, and gameplay (play history is
 written by `write_status_after_play`, `gui.py:2539-2542` — a separate concept, D7/D8).
@@ -117,13 +146,15 @@ The **only** write is `UMSA.exit()` (`gui.py:2560-2566`), reached only via the
 clean-exit paths (`gui.py:642, 672, 1199, 1233`). Kodi destroying the window (shutdown,
 window killed, crash) bypasses it and the session's history is lost.
 
-**Persistence point (D7, decided):** the successful end of `UMSA.select_software`
+**Persistence point (D7 + D12, decided):** the successful end of `UMSA.select_software`
 (`gui.py:2186`) — the single funnel of all five insertion paths, and the only place that
-knows the display succeeded (the early return at `gui.py:2037-2043` simply does not
-persist). One ordered full-replace write of the trimmed tail per successful display
-replaces the exit-time file write. Whether the pre-inserted id is also **removed again**
-when the display fails is open (Q1), because that decides what "successfully displayed"
-leaves behind in the list.
+knows the display succeeded (the early return at `gui.py:2038-2043` neither appends nor
+persists). One ordered full-replace write of the newest 100 ids per successful display
+(D19) replaces the exit-time file write. Because the entry now appears only on success,
+"successfully displayed" is by construction what the stored history contains; the
+`None`-on-both-paths return has to be resolved as part of the wiring (success signal or
+in-funnel insert), which is an implementation detail of the decided behaviour, not an open
+question.
 
 ### 2.5 Robustness today
 
@@ -133,8 +164,9 @@ leaves behind in the list.
 | malformed line (`"12,nope"`) | `ValueError` propagates out of `onInit` — GUI startup breaks, no recovery (pinned, `tests/test_persistence.py:118-123`) |
 | > 10 ids on disk | loaded fully; trimmed only at the next save |
 
-The import (section 8) must therefore not reuse the crash-prone path blindly: a malformed
-file becomes a **discarded input with a warning**, never a startup failure.
+The import (section 8) must therefore not reuse the crash-prone path blindly: a file with
+a non-integer token becomes a **discarded input with a warning** (D13), never a startup
+failure, while line-count irregularities are tolerated rather than discarded (D14).
 
 ---
 
@@ -143,7 +175,7 @@ file becomes a **discarded input with a warning**, never a startup failure.
 ### 3.1 Path and format
 
 - `CoreDataPaths.filter_file(name)` = `<core profile dir>/filter_<name>.txt`
-  (`data_paths.py:60-65`); `filters_dir` is the same directory (`data_paths.py:48-50`),
+  (`data_paths.py:60-65`); `filters_dir` is the same directory (`data_paths.py:49-50`),
   and `SETTINGS_FOLDER = CORE_DATA_PATHS.filters_dir` (`gui.py:80`).
 - Format (`save_filter`, `persistence.py:42-61`): **exactly five lines**, always in this
   order — `Softwarelists`, `Game Categories`, `Machine Categories`, `Years`, `Players` —
@@ -158,17 +190,18 @@ file becomes a **discarded input with a warning**, never a startup failure.
 - **Write failures are swallowed** (`save_filter` returns silently on `OSError`,
   `persistence.py:47-50`) — same "silently not persisted" family of defect as lastgames.
 - **Values are opaque database-id strings**, not display names: `build_filter_lists`
-  (`database.py:84-98`) builds active/inactive from `str(entry[0])` (row ids), and
-  `define_filter` (`database.py:1176-1240`) interpolates them into
+  (`database.py:94`) builds active/inactive from `str(entry[0])` (row ids), and
+  `define_filter` (`database.py:1212`, a one-line facade over `gamelist_filter.py` since step 4.7) feeds them into
   `swl.id IN (...)`, `category.id IN (...)`, `nplayers.id IN (...)`, `year.id IN (...)`.
-  Values are therefore effectively decimal integers, but **nothing validates them** —
-  which is exactly why the import's validation strictness is a data-loss decision (Q2).
+  Values are therefore effectively decimal integers, and the import validates exactly
+  that: strip, then `^[0-9]+$`, whole file discarded otherwise (**D13**); line count is
+  not validated (**D14**).
 
 ### 3.2 Discovery, load and save call sites
 
 - **Startup:** `onInit` loads `filter_default.txt` into `self.filter_lists` and sets
   `self.act_filter = 'default'` (`gui.py:344-346`) — *before* `DBMod` is constructed
-  (`gui.py:356-361`), which is a sequencing constraint for the post-migration load
+  (`gui.py:357`), which is a sequencing constraint for the post-migration load
   (section 14).
 - **Load/Save Filter dialog** (`filter_category`, `gui.py:1304-1356`): names come from
   `os.listdir(SETTINGS_FOLDER)` filtered by the loose prefix test `i[:7] == 'filter_'`,
@@ -176,11 +209,11 @@ file becomes a **discarded input with a warning**, never a startup failure.
   Save → `save_filter(filter_file(name), self.filter_lists)` + `self.act_filter = name`.
 - **Consumption:** `DBMod.__init__(..., filter_lists, ...)` → `define_filter` on open
   (`database.py:309, 1176`), and again after every Load Filter.
-- **Not persisted today:** the active filter *name* only lives for the session (fresh
-  start always reads `default`), and the runtime query state `use_filter` / `order`
-  (`database.py:270-271`) is never written anywhere. Whether any of this should start
-  being persisted is Q3 — it would change visible filter behaviour, so it is not decided
-  here.
+- **Not persisted today, and still not persisted (D15):** the active filter *name* only
+  lives for the session (fresh start always reads `default`, `gui.py:345-346`), and the
+  runtime query state `use_filter` / `order` (`database.py:280-281`) is never written
+  anywhere — so none of it starts being persisted in this step, and the visible filter
+  behaviour on the next start is unchanged.
 - Real-world profile check: **zero `filter_*.txt` files exist** on this machine (the user
   never saved a named filter), so the import's filter branch currently has no sources
   here; other installations may have many.
@@ -207,18 +240,18 @@ source):
   future history table would be a separate maintainer-triggered step.
 - **`lastsaver.txt` is not a recognized migration input**, so the cleanup rule (D5/D6)
   does not cover it: if such a file ever exists in the profile, it is an *unknown* file →
-  preserved, listed, and asked about (Q5).
+  preserved and reported, never deleted (**D17**, resolving Q5).
 
 ---
 
-## 5. Screensaver — display lifecycle and open semantics
+## 5. Screensaver — display lifecycle and decided semantics
 
 (Unchanged findings; the bound is now decided.)
 
 - Modes: `videos`, `cross`, `slide`, `wall` (`arguments.py:9`); `ScreensaverRuntime`
   holds the screensaver's own `DBMod` (`runtime.py:99-108`).
 - **Art selection** (cross/slide/wall): one `get_random_art(self.art_types)` per loop
-  iteration (`ui.py:432-446`; `database.py:867-974`) — the dict carries **both** the set
+  iteration (`ui.py:433-446`; `database.py:881`) — the dict carries **both** the set
   id (`art['id']` = `sets.id`) and the software id (`art['s_id']` =
   `sets.softwarelink_id`).
 - `remember_art(art)` (`ui.py:192-195`, called at `ui.py:435`) stores only one
@@ -229,20 +262,36 @@ source):
   abortable by keypress). Videos mode returns early (`ui.py:409-414`); playlist
   insertion stores the software id in the ListItem `'Votes'` tag (`ui.py:390`) and
   actual playback is confirmed asynchronously in `Player.onPlayBackStarted`
-  (`ui.py:712+`).
+  (`ui.py:712+`) — **the decision records on `onAVStarted` instead** (see the D16 bullet
+  below). **`set_id` does not travel with the video at all today** — only the
+  software id does, read back via `getVotes()` for the context handoff (`ui.py:143`).
+- `get_random_art` returns **`None`** when the query finds no artwork
+  (`database.py:938-940`), not an empty dict — `remember_art(None)` handles that
+  (`ui.py:195`), but any recording hook must too.
 - **No history exists anywhere** (no memory list, no file, no DB write) and random
   selection is history-blind, so nothing depends on this feature yet — it starts empty
   (D2).
-- **Still open (Q4), recorded as required:** duplicate display events vs unique sets;
-  history ordering key; the exact successful-display boundary per mode; and the stored
-  identifier (set id / software id / both) — the brief says "sets", so the recommendation
-  is `set_id` with a nullable `software_id`.
+- **Decided (D16, resolving Q4):** records are keyed by `set_id` with the software id
+  stored alongside for the context menu; **at most 100 distinct sets** ordered by most
+  recent successful display, re-display moving the single row to the newest position;
+  images recorded immediately after the render block (`ui.py:454-571`) and **before** the
+  wait loop; videos recorded in **`Player.onAVStarted()`**, which exists in the installed
+  runtime (`onAVStarted` is annotated `@python_v18`, i.e. Kodi ≥ 18 — verified against
+  Kodistubs 21.0.0 and the Kodi **21.3 (Omega)** on this machine); orphan `set_id`s kept
+  and reported, never substituted. The **mechanism for carrying `set_id` on a video** is
+  the video unique-ID API — `InfoTagVideo.setUniqueID('umsa_set_id', …)` written on the
+  playlist ListItem and read back as `getUniqueID('umsa_set_id')` — which is `@python_v20`
+  and therefore guarded with a capability check: on a Kodi older than 20 the set id cannot
+  be carried, video displays are then not recorded (logged), while the existing
+  `Votes`-based software-id handoff keeps working unchanged. See 16.2 for what that
+  leaves to verify in Kodi.
 
 ---
 
 ## 6. Storage model — four new tables, one schema
 
-All four live in `status.db` alongside the existing tables (D1, D10). All are proposals.
+All four live in `status.db` alongside the existing tables (D1, D10). The schemas below
+are the decided design (D12–D19, section 1.1); nothing has been implemented yet.
 
 ### 6.1 `gui_lastgames` — backward-navigation state
 
@@ -255,10 +304,14 @@ CREATE TABLE IF NOT EXISTS gui_lastgames (
 
 - Order is data (position as primary key); read with `ORDER BY position`.
 - **No timestamps, no UNIQUE constraint** — it is navigation state, not play history and
-  not screensaver history; duplicates remain representable until Q1 says otherwise.
-- **Write semantics: full replace** of the newest ten ids in one savepoint (mirrors
-  `save_software_list`'s whole-file rewrite; the in-memory list stays authoritative).
-- Written immediately after a successful display (D7), *not* at shutdown.
+  not screensaver history; **duplicates are representable and deliberately preserved**
+  (D12).
+- **Write semantics: full replace of the newest 100 ids** (D19) in one savepoint —
+  positions 0..99, oldest → newest, mirroring `save_software_list`'s whole-file rewrite
+  (which today trims to `self.last[-10:]`, `gui.py:2566`); the in-memory list stays
+  authoritative for the session and is not trimmed.
+- Written immediately after a successful display (D7 + D12), *not* at shutdown; a failed
+  display writes nothing and leaves no entry.
 - The pointer (`lastptr`) is not persisted — restart resumes at the newest entry, exactly
   like today.
 
@@ -278,34 +331,44 @@ CREATE TABLE IF NOT EXISTS filter_selections (
 - One row per selected value; an empty category or an empty file has **no rows** (the
   faithful equivalent of an empty line); a filter that does not exist has no rows (the
   faithful equivalent of a missing file).
-- **Verbatim preservation:** the five category labels are exactly the `load_filter` /
-  `save_filter` key names (`persistence.py:13-19, 29-35`); values keep their file order
-  via `position` (order is not load-bearing for queries — `define_filter` uses `IN (...)`
-  and `build_filter_lists` uses set membership — but the brief requires preserving
-  ordering semantics); `filter_name` is the filename part of `filter_<name>.txt`.
+- **Category keys:** the table stores the **internal** keys `softwarelists`,
+  `game_categories`, `machine_categories`, `years`, `players` (D15); the public Core API
+  keeps returning the exact legacy labels `load_filter` / `save_filter` use
+  (`persistence.py:13-19, 29-35`) through an explicit name mapping. **Mapping is by name,
+  never by position** — the dict literal and the file-line order differ (`Players` before
+  `Years` vs after).
+- **Verbatim preservation:** values keep their file order via `position` (order is not
+  load-bearing for queries — `define_filter` uses `IN (...)` and `build_filter_lists` uses
+  set membership — but ordering semantics are preserved as stored data); values are
+  whitespace-stripped on import (D13) and `filter_name` is the filename part of
+  `filter_<name>.txt`.
 - **Write semantics: full replace per `filter_name`** in one savepoint, mirroring
   `save_filter`'s whole-file rewrite.
-- The active-filter name, `use_filter` and `order` are **not** part of this table (they
-  are not persisted today) — Q3.
-- Exact row mapping is Q3's confirmation item; nothing is reinterpreted (no re-labelling,
-  no id→name conversion, no cross-checking against `umsa.db` — the two databases are
-  separate connections and no referential check is planned).
+- The active-filter name, `use_filter` and `order` are **not** part of this table —
+  nothing runtime-persisted is added (D15).
+- No id→name conversion, no cross-checking against `umsa.db` — the two databases are
+  separate connections and no referential check is planned (ids stay opaque strings).
 
 ### 6.3 `screensaver_history` — last 100 displayed sets (empty at creation)
 
 ```sql
 CREATE TABLE IF NOT EXISTS screensaver_history (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,  -- monotonic display-event identity
-    set_id       INTEGER NOT NULL,                   -- pending Q4 (brief says "sets")
-    software_id  INTEGER,                            -- pending Q4
-    displayed_at DATETIME                            -- 'YYYY-MM-DD HH:MM' (proposed)
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,  -- monotonic recency identity
+    set_id       INTEGER NOT NULL UNIQUE,            -- one row per set (D16)
+    software_id  INTEGER,                            -- kept for the context menu (D16)
+    displayed_at DATETIME                            -- 'YYYY-MM-DD HH:MM'
 )
 ```
 
-- Retrieval: `ORDER BY id DESC LIMIT 100`; prune beyond the newest 100 inside the same
-  savepoint as the insert.
-- Duplicate events, ordering key and identifier are Q4 (schema may simplify if the
-  answer is "unique sets only").
+- **Write (D16):** on each successful display, the existing row for that `set_id` (if any)
+  is deleted and re-inserted, which moves it to the newest position and keeps only the
+  newest copy; then rows beyond the newest 100 (`ORDER BY id DESC LIMIT 100`) are pruned
+  — all inside one savepoint. Retrieval: `ORDER BY id DESC LIMIT 100`.
+- **No foreign key to `umsa.db`:** `sets` lives in a different database on a different
+  connection, so referential integrity cannot be expressed in SQLite here. An orphaned
+  `set_id` is therefore *kept* and handled at read time (D16: report, never substitute).
+- `displayed_at` is advisory only — ordering is the monotonic `id`, so no clock
+  dependency.
 - No import, ever — starts empty (D2).
 
 ### 6.4 `status_meta` — durable import marker
@@ -339,9 +402,12 @@ per-file state machine (section 9).
   `create_emulator_tables()` (`emulator_repository.py:48-83`) and the new
   `create_history_tables()` — one definition per table, `CREATE TABLE IF NOT EXISTS`
   throughout, so the body is idempotent for both fresh and legacy databases.
-- **Call site:** `DBMod._open_persistent_databases` (`database.py:289-316`) replaces the
-  two direct helper calls (`database.py:314-315`) with `apply_migrations(self.sdb)` on
+- **Call site:** `DBMod._open_persistent_databases` (`database.py:301-328`) replaces the
+  two direct helper calls (`database.py:326-327`) with `apply_migrations(self.sdb)` on
   the real `status.db` connection. Never `umsa.db`, never any other connection.
+- **Trigger: GUI startup only, when required** (brief §4) — `version 0` ⇒ migrate, then
+  the import check of section 10 runs; the screensaver, the scanners and any background
+  thread never trigger a migration or an import.
 
 ### 7.2 Why one increment 0 → 1 covers everything
 
@@ -379,7 +445,9 @@ Core function, Kodi-free, e.g. `history_repository.import_legacy_files(connectio
    `data_paths.py:60-65`). No wildcard search outside the profile, no recursion.
 2. **Read and validate every discovered source** (per-file all-or-nothing, 8.2).
 3. **Preserve semantics:** lastgames keep their file order (index 0 → `position` 0,
-   newest last); filter files keep category labels, value order and value strings (6.2).
+   newest last), duplicates included (D12), capped at the newest 100 (D19); filter files
+   keep category membership, value order and value strings (6.2), stored under the
+   internal category keys through the explicit mapping (D15).
 4. **Malformed file = discarded as a whole**, recorded as a warning (its *contents* are
    never partially imported) — and valid files are still imported in the same run.
 5. **Record a terminal outcome** (section 9), including whether any inputs were
@@ -394,24 +462,34 @@ Special outcomes:
 
 - **No sources at all** (both configured sets empty after checking every path) → record
   `completed_no_source` and stop. No searching, no retrying on later startups (D4).
-- **Import failure** (see 9.3) → record `failed` where possible, do not delete anything,
-  do not auto-retry.
+- **Import failure** (see 9.3) → record `failed` where possible and do not delete
+  anything; the recorded state is terminal and retries only via `retry_import` (D18b).
+  If not even the failure can be recorded, nothing was committed → **report and retry at
+  the next GUI startup** (D18a), with no fallback file.
 
-### 8.2 Per-file validation rules (what "malformed" means — Q2 decides strictness)
+### 8.2 Per-file validation rules (decided — D13/D14)
 
 The reader helpers are intentionally *not* reused blindly here, because they crash on
-exactly the inputs the import must survive (`ValueError`, `IndexError`,
-`UnicodeDecodeError`). Proposed rules, each file validated as a unit:
+exactly the inputs the import must survive (`ValueError` on a non-integer token,
+`IndexError` on a short filter file, `UnicodeDecodeError` on bad bytes). Decided rules,
+each file validated as a unit:
 
-| Source | Proposed valid shape | On failure |
+| Source | Valid shape (decided) | On failure |
 |---|---|---|
-| `lastgames.txt` | decodable text; **exactly one** non-empty line (optional trailing newline) of non-empty decimal-integer tokens, no spaces | whole file discarded, warning recorded, still counted as a recognized input for deletion (D5) |
-| `filter_<name>.txt` | decodable text; **exactly five** lines; each line empty or comma-separated non-empty tokens; name part passes `filter_file()` validation | same: whole file discarded + warning + still deleted afterwards |
+| `lastgames.txt` | decodable text; **line 1 is the data** (further lines ignored, unreported); every token whitespace-stripped and then a non-empty decimal integer; empty file or empty first line = **no entries** (not malformed) | a non-integer token or undecodable bytes → **whole file discarded**, warning recorded, still counted as a recognized input for deletion (D5) |
+| `filter_<name>.txt` | decodable text; lines map **positionally** onto the five categories (extra lines ignored unreported, missing trailing lines = empty categories); each non-empty line: tokens whitespace-stripped and then non-empty decimal integers; name part passes `filter_file()` validation (`data_paths.py:60-65`) | a non-integer token or undecodable bytes → same: **whole file discarded** + warning + still deleted afterwards |
 
-Open (Q2): whether "exactly one line / exactly five lines / integer tokens only" should
-be this strict, or looser (first-line-only like today's loader, extras ignored). This is
-the one validation decision that can turn a *partially readable* file into a *discarded*
-file, so it is deliberately not guessed (section 8 / mandatory clarification rule).
+Why this shape (both halves were open as Q2):
+
+- **Tokens (D13):** the writers we ship emit bare `str(id)` values (`save_filter`,
+  `save_software_list`), and today's lastgames loader already accepts spaces via `int()`
+  (`persistence.py:91`) — so strip-then-validate imports every hand-edited file that
+  today's loaders would accept, and rejects only what cannot be an id.
+- **Line count (D14):** both loaders are tolerant today (first line only; five lines,
+  extras ignored) and the tolerance decision keeps that — no file that today's code would
+  *read* is turned into a *discard* by line count alone. This deliberately does **not**
+  mean "discard anything shorter/longer than the writers emit"; only token errors and
+  decode errors discard a file.
 
 Deliberately **not** validated: whether an id still exists in `umsa.db`
 (`umsa.db` may be absent or being re-downloaded at first startup; ids are opaque
@@ -437,17 +515,17 @@ Single `status_meta` row, key `legacy_import`, JSON value:
 | `completed` | imported and recorded, nothing discarded | never import again (D4); run `pending_cleanup` if non-empty |
 | `completed_discards` | imported, ≥1 invalid file discarded | same, and the notification names the discarded files |
 | `completed_no_source` | no legacy sources found at all — intentional completion | never import again, never search again |
-| `failed` | import attempted and failed; **awaiting explicit retry** | report the stored failure, attempt nothing (9.3) |
+| `failed` | import attempted and failed; **awaiting explicit retry** | report the stored failure, attempt nothing; retry only via `retry_import` (9.3, D18b) |
 
 - A terminal value is terminal **forever** — there is no path from any `completed*`
-  back to an import attempt (D4).
+  back to an import attempt (D4); `failed` leaves only via the explicit command (D18b).
 - `discarded` is stored (not just printed) so the discard warning can be reported again
   on a later startup, not only in the very first notification.
 - `pending_cleanup` is written **in the same commit as the data and the status**, and
   shrinks as files are removed; it is empty/absent once cleanup is done.
 - This is deliberately *not* a per-file state machine: one status plus two small
   path/name lists (a three-key variant would be equivalent; single-row JSON is the
-  recommendation).
+  decided shape).
 
 ### 9.2 Commit-before-delete invariant
 
@@ -463,25 +541,25 @@ is written back with small follow-up transactions. Therefore:
   paths listed; re-running deletion treats "file does not exist" as success. Bounded and
   safe.
 
-### 9.3 Failure and explicit retry
+### 9.3 Failure and retry — decided (D18)
 
 - Any exception inside step 2–6 → **no data commit** (single transaction rolls back), no
   file deletions, and a best-effort second small transaction writing `status = "failed"`
   (+ error text).
-- Next startup: **report the stored `failed` state** (notification), attempt nothing —
-  no silent re-attempt (D4).
-- Retry is **explicit**: after the underlying problem is reviewed/corrected, the user
-  triggers a retry (proposed vehicle: a dedicated frontend script command, e.g.
-  `RunScript(plugin.program.umsa.mame.surfer,retry_import)`, alongside the existing
-  `del_db` / `del_status` commands in `addon.py:18-37`), which clears the marker and
-  re-runs 8.1. Exact trigger is Q6.
-- **Documented limitation (must be confirmed — Q6):** if `status.db` itself cannot be
-  written (disk full, corrupt file, read-only profile), even the `failed` marker cannot
-  be recorded. The plan then has *no* durable state at all, and the next startup would
-  simply see "no marker" and re-attempt — i.e. exactly the silent automatic retry the
-  brief forbids, or alternatively the valid sources would be left in place forever with
-  no visible signal. **No fallback is adopted here**: neither silent retry nor any
-  discard of valid data will be chosen without the maintainer's explicit approval.
+- **If that second transaction also cannot commit** (disk full, corrupt file, read-only
+  profile — `status.db` unreadable/unwritable): **no durable state exists at all**, so the
+  failure is **reported** through the Kodi-side notification and the import **retries at
+  the next GUI startup**, because "no marker" is the retry signal. **No fallback status
+  file and no non-database marker of any kind** (D18a) — this is the brief's explicit
+  instruction and it replaces the earlier holding position of "no fallback is adopted
+  until you decide". Valid sources are never discarded without a committed outcome.
+- **If `failed` *was* recorded**: the next startup **reports the stored state and attempts
+  nothing** — no silent re-attempt (D4).
+- Retry is **explicit** (D18b): after the underlying problem is reviewed/corrected, the
+  user triggers a retry through a dedicated frontend script command —
+  `RunScript(plugin.program.umsa.mame.surfer,retry_import)` — registered alongside the
+  existing `del_db` / `del_status` commands in `addon.py:18-37`, which clears the marker
+  and re-runs 8.1.
 - Related, already-defined destructive action to keep in mind: `del_status`
   (`addon.py:31-35`) deletes `status.db`, which also erases the marker. Because the
   legacy inputs were deleted after the successful import, a post-`del_status` startup
@@ -501,10 +579,12 @@ All checks happen during GUI startup (brief §4), after `DBMod` is open:
 | marker `completed*`, `pending_cleanup` empty | nothing; never import again |
 | marker `completed*`, `pending_cleanup` non-empty (deletion was interrupted) | **cleanup only** — delete the listed paths, update the list, report leftovers; **no re-import** (D4) |
 | marker `completed_discards` (any time) | report the discarded files in the notification |
-| marker `failed` | report the stored failure state, start **no** attempt (9.3) |
+| marker `failed` | report the stored failure state, start **no** attempt; retry only via `retry_import` (9.3, D18b) |
+| import attempted, **nothing committed** (incl. `status.db` not writable) | **report + retry at the next GUI startup** — no marker exists, so the next startup re-enters the import; no fallback file (9.3, D18a) |
+| `status.db` unusable so early that `DBMod.__init__` itself raises | startup aborts with all sources untouched (7.2); nothing was attempted, so the next startup naturally retries (D18a) |
 
 - Ordering constraint found in the audit: `onInit` currently loads the default filter
-  **before** `DBMod` is created (`gui.py:344` vs `gui.py:356-361`), while the migration
+  **before** `DBMod` is created (`gui.py:344` vs `gui.py:357`), while the migration
   runs at `DBMod` open. The post-migration load of `filter_selections` therefore requires
   reordering those statements (DB first, then read selections) — a mechanical
   implementation detail with no intended visible behaviour change, recorded so it is not
@@ -530,8 +610,8 @@ All checks happen during GUI startup (brief §4), after `DBMod` is open:
   unrecognized/unknown file (D6). No wildcard/glob deletion outside the exact recognized
   patterns, no directory-wide cleanup.
 - **Unknown files** (e.g. a `lastsaver.txt`, or anything else found in the profile at
-  implementation time): preserved, listed for the maintainer, and asked about before
-  being added to any cleanup scope (Q5).
+  implementation time): **preserved and reported** to the maintainer; never added to the
+  cleanup scope without a new explicit decision (**D17**, resolving Q5).
 
 ---
 
@@ -576,19 +656,26 @@ unexpected files applies to *this* machine; on other installations section 11's
   construction):
   - `create_history_tables(cursor)` — authoritative DDL for the four new tables (called
     from the migration).
-  - `read_lastgames() -> list[int]` / `replace_lastgames(ids) -> None` (trim to newest 10).
+  - `read_lastgames() -> list[int]` / `replace_lastgames(ids) -> None` (keep the newest
+    **100**, D19).
   - `read_filter_selections(name) -> dict[str, list[str]]` /
-    `replace_filter_selections(name, lists) -> None` / `list_filter_names() -> list[str]`.
+    `replace_filter_selections(name, lists) -> None` / `list_filter_names() -> list[str]`
+    (internal category keys internally, public labels at the boundary — D15).
   - `import_legacy_files(paths) -> ImportResult` (section 8) and
-    `record_import_result(...)` / `get_import_marker()`.
-  - later, for the screensaver: `record_screensaver_display(...)`,
-    `get_screensaver_history(limit=100)`.
+    `record_import_result(...)` / `get_import_marker()` / `clear_import_marker()` (the
+    last one only from the explicit `retry_import` path — D18b).
+  - later, for the screensaver: `record_screensaver_display(set_id, software_id)`,
+    `get_screensaver_history(limit=100)` (D16).
 - **DBMod facades** (the connection-attribute guard forbids add-ons touching `.sdb`, so
   both the GUI and the screensaver go through `DBMod`): `load_lastgames` /
   `save_lastgames`, `load_filter_selections` / `save_filter_selections` /
   `list_filter_names`, `get_import_marker` / `run_legacy_import` (later
   `record_screensaver_display`), each a one-line delegate to a per-call
-  `_get_history_repository()` mirroring `_get_status_repository` (`database.py:747-755`).
+  `_get_history_repository()` mirroring `_get_status_repository` (`database.py:759-767`).
+- **Frontend retry command:** `addon.py` gains `retry_import` beside `del_db` /
+  `del_status` (`addon.py:18-37`); it clears a recorded `failed` marker through the
+  facade and re-runs the import — **the only path that may clear a recorded failure**
+  (D18b).
 - **Notification:** issued from the Kodi side after the Core function returns its
   result. Per the instruction to use the existing adapter: add a small notification
   helper to **`lib/umsa_core_kodi.py`** (the single permitted Kodi adapter in the core
@@ -608,7 +695,7 @@ The five responsibilities stay separate:
 |---|---|---|
 | GUI lastgames persistence (immediate) + its one-time import/cleanup | `history_repository.py` + `status_migrations.py` + GUI call sites | **4.6.1** (this plan) |
 | Filter-selection persistence + its one-time import/cleanup | same repository/migration, `filter_selections` table, GUI Load/Save call sites | **4.6.1** (same migration, D1) |
-| Screensaver history (writes only, starts empty) | same repository, `screensaver_history` table, screensaver call sites | **4.6.2** (gated on Q4) |
+| Screensaver history (writes only, starts empty) | same repository, `screensaver_history` table, screensaver call sites | **4.6.2** (semantics decided in D16; implementation still follows 4.6.1) |
 | Filter *query* composition, filter-state accessors, parameterisation | `gamelist_filter.py` (4.7) | **4.7** — acceptance criteria unchanged |
 | Play history (`sets.last_played`/`time_played`/`play_count`) | untouched; separate concept (D7/D8) | — |
 
@@ -632,9 +719,10 @@ avoidable follow-up changes. Two accompanying rules:
   text-file persistence (`load_filter`/`save_filter`, `lastgames.txt` via
   `save_software_list`) **stays in place during 4.7** — nothing is migrated early; the
   files move only inside the later one-time `status.db` migration (sections 8–11).
-- **Q1–Q6 (section 16) must be resolved before any 4.6.1 implementation**, since they
-  decide validation strictness, deletion scope, filter semantics, screensaver semantics
-  and DB-failure recovery.
+- **Q1–Q6 (section 16) are resolved** (D12–D19, section 1.1), so the documented gate on
+  4.6.1 is cleared: validation rules, deletion scope, filter semantics, screensaver
+  semantics and DB-failure recovery are all decided. Only the Kodi-runtime verification
+  items in 16.2 remain, and they are checked during implementation, not before it.
 
 The schema/import pieces remain code-disjoint from 4.7 and *could* technically land
 earlier, but that option is no longer part of the plan.
@@ -643,10 +731,11 @@ earlier, but that option is no longer part of the plan.
 
 ## 15. Implementation and regression-test plan (later task — not executed)
 
-**Preconditions (D11):** Phase 4.7 lands first with its existing scope and acceptance
-criteria (text-file persistence untouched), and Q1–Q6 are resolved and recorded in
-section 16 before any 4.6.1 work. Then, ordered and characterisation-first, none of it
-done now:
+**Preconditions (D11):** Phase 4.7 has landed with its existing scope and acceptance
+criteria (text-file persistence untouched — committed through `bd83a4d`), and Q1–Q6 are
+resolved and recorded as D12–D19 (section 1.1) and in section 16. The only remaining
+pre-implementation checks are the Kodi-runtime verifications in 16.2, which are performed
+*while* implementing. Then, ordered and characterisation-first, none of it done now:
 
 1. **Migration module** — `status_migrations.py`, single `MIGRATIONS = {1: ...}`
    calling the three `create_*` helpers; swap the call site; tests: fresh DB (all seven
@@ -654,98 +743,147 @@ done now:
    `emu_conn` rows at version 0 (rows byte-preserved, version → 1), injected failure
    (version stays 0, rollback), and update the three `user_version == 0` assertions.
 2. **History repository** — four tables via `create_history_tables`; round-trips for
-   lastgames (order, trim-to-10, duplicates), filter selections (five categories, value
-   order, empty categories, replace-per-name), marker read/write; Row-contract
+   lastgames (order, cap at the newest **100** — D19, duplicates preserved — D12),
+   filter selections (five categories via the internal-key mapping — D15, value order,
+   empty/missing lines, replace-per-name), screensaver history (one row per set,
+   move-up on re-display, prune past 100 — D16), marker read/write; Row-contract
    rejection; savepoint ownership.
-3. **Import + validation** — valid lastgames (order preserved), valid filters, malformed
-   file A alongside valid file B (B imported, A discarded + recorded), all-empty (→
-   `completed_no_source`), marker-present re-run (no-op, DB state kept), failure →
-   `failed` + no deletion + no auto-retry on the next simulated startup.
+3. **Import + validation** — valid lastgames (order preserved), valid filters, a token
+   with surrounding whitespace (accepted and normalised — D13), extra lines in either
+   file (ignored, unreported — D14), a non-integer token or undecodable bytes in file A
+   alongside valid file B (B imported, A discarded + recorded), an empty/short filter
+   file (imported as empty categories), all-empty (→ `completed_no_source`),
+   marker-present re-run (no-op, DB state kept), recorded failure → `failed` + no
+   deletion + **no** auto-retry on the next simulated startup, uncommittable outcome →
+   no marker + retry on the next simulated startup with **no fallback file** (D18).
 4. **Cleanup** — deletion after commit; interrupted deletion → cleanup-only path;
    un-deletable file → path recorded and reported; **unknown files untouched**
-   (assert a `lastsaver.txt` and a stray `.txt` survive every path).
-5. **GUI wiring** — immediate lastgames persist at `select_software` success, DB-backed
-   filter load/save replacing `load_filter`/`save_filter` calls (reordered around `DBMod`
+   (assert a `lastsaver.txt` and a stray `.txt` survive every path) — D17.
+5. **GUI wiring** — entry appended **only** on `select_software` success and persisted
+   immediately with the newest 100 ids (D12/D19), DB-backed filter load/save replacing
+   `load_filter`/`save_filter` calls (reordered around `DBMod`
    creation), DB-backed Load/Save Filter name list replacing the `os.listdir` scan
-   (`gui.py:1311-1313`), notification at startup. `tests/test_persistence.py`'s pinned
+   (`gui.py:1311-1313`), `retry_import` command wired beside `del_db`/`del_status`
+   (`addon.py:18-37`), notification at startup. `tests/test_persistence.py`'s pinned
    file behaviours stay green — the helpers remain for the import path.
-6. **Screensaver history (4.6.2, after Q4)** — repository methods + boundary hooks.
+6. **Screensaver history (4.6.2)** — repository methods plus the boundary hooks: record
+   after the render block for images (`ui.py:454-571`, before the wait loop — D15/D16),
+   record in `Player.onAVStarted()` for videos with the `set_id` carried through the
+   `umsa_set_id` unique ID (guarded for Kodi < 20), orphan rows reported and never
+   substituted, context-menu software id unchanged.
 7. Full suite + per-file ruff/mypy comparisons. No Kodi-runtime automation exists
-   (`AGENTS.md`) — GUI/screensaver behaviour is verified manually.
+   (`AGENTS.md`) — GUI/screensaver behaviour is verified manually, including the 16.2
+   items.
 
 No test is added or modified by this document.
 
 ---
 
-## 16. Open questions requiring a decision
+## 16. Question status — Q1–Q6 resolved, verification items remaining
 
-Unanswered items are exactly the ones the brief requires asking about (data-loss,
-deletion, order/duplicates, filter semantics, screensaver semantics, display boundary,
-DB-failure recovery). None of them has been guessed in the sections above. **These six
-questions gate any 4.6.1 implementation (D11);** the former Q7 (ordering vs Phase 4.7)
-is resolved — see D11 and section 14.
+The six questions that gated this phase are **answered**; every resolution is recorded
+with its binding decision and the evidence behind it. Nothing below is a proposal.
 
-- **Q1 — GUI lastgames duplicates and failed displays (order/duplicate handling).**
-  (a) Preserve today's duplicate-insert behaviour, or dedup? (b) On a *failed* display
-  (`gui.py:2037-2043`), leave the pre-inserted id in the list (status quo) or
-  rewind/remove it so history only contains displayed games? (c) Confirm order stays
-  file order (oldest→newest, newest = resume point) with duplicates allowed by schema.
-  *Recommendation:* preserve duplicates (no behaviour change), **remove** the entry on a
-  failed display (it is what "successfully displayed" means), keep order as is.
-- **Q2 — Validation strictness (data-loss decision, must not be guessed).** Proposed:
-  exactly one line for `lastgames.txt`; exactly five lines + decimal-integer tokens for
-  `filter_*.txt`; anything else = whole file discarded + warning + still deleted after
-  commit. Alternatives: first-line-only/extra-lines-ignored (what today's loaders do)
-  or non-integer values accepted verbatim. This decides which files lose their contents.
-  *Recommendation:* strict (matches the writers we ship), with the discard reported by
-  name in the notification and recorded in the marker.
-- **Q3 — Filter semantics beyond the files.** Confirm: verbatim id strings per the five
-  fixed category labels; value order preserved via `position`; empty category = no rows;
-  `filter_name` = filename part; empty/missing file ≡ no rows. Also decide whether the
-  **active filter name**, `use_filter` and `order` start being persisted (they are not
-  today — persisting them would change what the GUI shows on the next start) and whether
-  the Load/Save dialog should keep offering exactly the imported names.
-  *Recommendation:* verbatim import as stated; persist none of the runtime state in this
-  step (no behaviour change).
-- **Q4 — Screensaver history semantics.** (a) Duplicate display events allowed (event
-  log) or unique sets with recency move-up? (b) Ordering key (monotonic `id` vs
-  `displayed_at`)? (c) The successful-display boundary: post-render in the
-  cross/slide/wall loop (`ui.py:571`) and `Player.onPlayBackStarted` for videos
-  (`ui.py:712`) — confirm, noting `remember_art` fires before image rejection and is not
-  a boundary. (d) Identifier: the brief says "sets" — `set_id NOT NULL` with nullable
-  `software_id`? *Recommendation:* event log (duplicates allowed), order by `id`, the two
-  boundaries above, both ids stored.
-- **Q5 — Unexpected userdata files.** Confirm the rule: only `lastgames.txt` and
-  validated `filter_*.txt` are deleted; anything else found (e.g. `lastsaver.txt`, which
-  nothing in the repository has ever written) is preserved and listed for you.
-  *Recommendation:* preserve `lastsaver.txt`; list it at implementation time.
-- **Q6 — Recovery after a database-level failure (must not be guessed).** (a) How is the
-  explicit retry triggered (proposed: a frontend script command alongside
-  `del_db`/`del_status`)? (b) The limitation in 9.3: when even the `failed` marker cannot
-  be written, what is the approved fallback — silent re-attempt on next startup (forbidden
-  by the brief), leaving valid sources in place with no durable signal, or a non-database
-  fallback marker? **No fallback is adopted until you decide.**
-Resolved by the maintainer and no longer open: history bound = **100**, screensaver
+### 16.1 Resolutions (Q1–Q6)
+
+- **Q1 — GUI lastgames duplicates and failed displays → D12.** (a) Duplicates are
+  preserved as separate entries (a repeated display is a real event). (b) An entry exists
+  only after a successful display: the insert-and-advance moves into `select_software`'s
+  success funnel, and the failure return (`gui.py:2038-2043`) appends nothing — today's
+  pre-insert plus the `None`-on-both-paths return (`gui.py:2186`) is exactly the behaviour
+  that changes. (c) Order and pointer behaviour stay as they are (index 0 = oldest,
+  newest = resume point); storage keeps the newest **100** (D19 — the maintainer's
+  retention change; today's writer trims to 10 at `gui.py:2566`).
+- **Q2 — Validation strictness → D13 (tokens) + D14 (line count).** Tokens: strip, then
+  `^[0-9]+$` — anything else discards the whole file, recorded and deleted after commit,
+  which keeps the brief's all-or-nothing rule exactly where a value cannot be an id.
+  Line count is **not** validated: the maintainer's follow-up decision was "keep today's
+  tolerance", so the first line carries `lastgames.txt`, filter lines map positionally
+  with missing trailing lines padded as empty categories, and extra lines are ignored
+  unreported. No file that today's loaders would read becomes a discard; a non-integer
+  token or undecodable bytes still does.
+- **Q3 — Filter semantics beyond the files → D15.** Verbatim id strings, value order via
+  `position`, empty category / empty file / missing file ≡ no rows, `filter_name` =
+  filename part — all as decided. The **active filter name, `use_filter` and `order` are
+  not persisted** (verified absent today: `database.py:280-281`, `gui.py:345-346`), and the
+  Load/Save dialog keeps offering exactly the imported names. The public Core API keys
+  stay unchanged; the database stores the internal keys through an explicit by-name
+  mapping (the key *orders* differ between `persistence.py:13-19` and `:29-35`, so
+  position can never be used for the mapping).
+- **Q4 — Screensaver history semantics → D16.** Unique sets with recency move-up (not an
+  event log), ordering by the monotonic `id` (not `displayed_at`), identifier `set_id`
+  with `software_id` stored alongside for the context menu. The image boundary is the
+  post-render point (`ui.py:454-571`, before the wait loop; `remember_art` at
+  `ui.py:435` fires before image rejection and is explicitly **not** a boundary), the
+  video boundary is **`Player.onAVStarted()`** (`ui.py:712` is `onPlayBackStarted`, which
+  is not used for recording). `set_id` travels with a video through the `umsa_set_id`
+  unique ID, capability-guarded for Kodi < 20. Orphaned `set_id` rows are kept and
+  reported, never substituted.
+- **Q5 — Unexpected userdata files → D17.** Only `lastgames.txt` and validated
+  `filter_*.txt` are deleted; `lastsaver.txt` (never written by any revision — only
+  `load_lastsaver`, `persistence.py:64-76`, and its single consumer
+  `gamelist_strategies.py:153`) and anything else unknown is preserved and reported.
+- **Q6 — Recovery after a database-level failure → D18.** (a) A recorded `failed` state
+  retries only through the new explicit `retry_import` script command beside
+  `del_db`/`del_status` (`addon.py:18-37`). (b) When even the marker cannot be written,
+  the approved behaviour is exactly the brief's: **report the failure and retry at the
+  next GUI startup, with no fallback status file** — "no marker" is the retry signal, and
+  valid sources are never discarded without a committed outcome. Deletion failures stay
+  cleanup-only (D4).
+
+Resolved by the maintainer earlier and unchanged: history bound = **100**, screensaver
 starts empty with no import source, **one** migration instead of the earlier v1/v2/v3
 split, deletion of the legacy files instead of keeping them as backups, immediate
-lastgames persistence after a successful display, and the **4.7 → 4.6.1 → 4.6.2
-ordering (D11, former Q7)**. Everything still open is Q1–Q6 above.
+lastgames persistence after a successful display, and the **4.7 → 4.6.1 → 4.6.2 ordering
+(D11, former Q7)** — plus, from this update, `gui_lastgames` retention of **100** (D19).
+
+### 16.2 Kodi-runtime verification items (cannot be settled by code inspection)
+
+Not design decisions — checked while implementing, on a real Kodi (this machine runs
+**Kodi 21.3 (Omega)**, add-ons declare `xbmc.python 3.0.0` = Kodi 19 floor):
+
+1. **`onAVStarted` per playlist item** — fires once per video, including when
+   `playnext()` advances the playlist, so exactly one record is written per displayed
+   video (the callback exists since Kodi 18; `ui.py` currently uses only
+   `onPlayBackStarted`/`onPlayBackEnded`, `ui.py:712`, `:773`).
+2. **Unique-ID round-trip** — `setUniqueID('umsa_set_id', …)` on the playlist ListItem
+   must read back as `getUniqueID('umsa_set_id')` from `Player.getVideoInfoTag()` during
+   playback; both are `@python_v20`, so the capability guard must degrade cleanly on
+   Kodi 19 (video displays then not recorded; the `Votes`-based software-id handoff at
+   `ui.py:143` unaffected).
+3. **Image boundary reality** — Kodi exposes no image-load success callback, so
+   "control populated" is the strongest available "actually displayed" signal; confirm
+   that known-bad files are still rejected earlier by `check_snapshot` (`ui.py:252-293`)
+   and never reach the record.
+4. **Orphan row behaviour** — with a `set_id` absent from `umsa.db`, the context-menu
+   handoff must produce the documented report instead of the `TypeError` that
+   `get_info_by_set_and_swl` raises on no match (`game_repository.py:482-484`).
+5. **Startup notification ordering** — the migration/import notification appears once,
+   after `DBMod` is open, including on a brand-new profile (fresh `status.db`,
+   no legacy files).
 
 ---
 
 ## 17. Document status
 
-Code basis `b84341e` (the code commit this audit read — steps 4.5/4.6 are **committed**
-as `fcdefe5` and `b84341e`); documentation reconciled in the tracked
-`docs/database_refactor/` directory (`ec400f4` initial, `5514efd` refresh). Since the
-audit, Phase 4.7 landed (`479e202` + `10f9fbd` + `da65a62` + `bc631eb`) — satisfying the
-4.7 dependency — and the full suite moved to **654 passed, 5 skipped, 18 subtests
-passed**; a follow-up 4.7 fix (the bounded retry-without-filters loop, **uncommitted in
-the working tree**, with 7 count-based regression tests) took it to **661 passed, 5
-skipped, 18 subtests passed**. **Nothing implemented:** no
-production code, no schema, no migration, no tests, no user file was deleted, renamed or
-rewritten — the real profile listed in section 12 was opened **read-only**. Companion
-updates in this directory: the step 4.6.1a entry and execution-order note in
-`roadmap.md`, the checklist / documents / next-step entries in `README.md`. Decisions
-D11 and open questions Q1–Q6 from section 16 govern when implementation may start: Q1–Q6
-must be answered and recorded here first, now that Phase 4.7 is done.
+Original audit code basis `b84341e` (steps 4.5/4.6 committed as `fcdefe5` and `b84341e`);
+documentation reconciled in the tracked `docs/database_refactor/` directory (`ec400f4`
+initial, `5514efd` refresh). Since the audit, Phase 4.7 landed (`479e202` + `10f9fbd` +
+`da65a62` + `bc631eb`) — satisfying the 4.7 dependency — and the bounded
+retry-without-filters fix landed as **`bd83a4d`**, so the suite is **661 passed, 5
+skipped, 18 subtests passed** at HEAD `bd83a4d` with a clean tracked tree (pre-existing
+ruff findings unchanged).
+
+**This update (2026-10-18, documentation only)** records the maintainer's phase brief and
+the five follow-up answers: Q1–Q6 are resolved as **D12–D19** (section 1.1, section 16),
+including the `gui_lastgames` retention change to **100** entries (D19); sections 2–11
+were restated from proposals into decided rules, line references were re-checked against
+`bd83a4d`, and the remaining open work is limited to the Kodi-runtime verifications in
+**16.2** (tested while implementing, this machine runs Kodi 21.3 with Kodistubs 21.0.0).
+
+**Nothing implemented:** no production code, no schema, no migration, no tests, no user
+file was deleted, renamed or rewritten — the real profile listed in section 12 was opened
+**read-only**. Companion updates in this directory: the step 4.6.1a entry and
+execution-order note in `roadmap.md`, the checklist / documents / next-step / validation
+entries in `README.md`. The D11 ordering **4.7 → 4.6.1 → 4.6.2** holds with 4.7 complete;
+4.6.1 may start, with the 16.2 checks folded into its implementation task.

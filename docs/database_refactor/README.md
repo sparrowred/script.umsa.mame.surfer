@@ -23,18 +23,23 @@ Recorded here because they constrain this refactor directly (source:
    connections or reaches into `DBMod`'s `gdb`/`gdbc`/`sdb`/`sdbc`/`ggdb` internals.
 4. **Reuse Core services** in frontend/screensaver instead of re-implementing them.
 
-## Current status (steps 4.0, 4.2, 4.2a, 4.2b, 4.3, 4.4, 4.5, 4.6 and 4.7 implemented; decisions Q1–Q9 settled)
+## Current status (steps 4.0, 4.2, 4.2a, 4.2b, 4.3, 4.4, 4.5, 4.6 and 4.7 implemented; refactor decisions Q1–Q9 settled; phase 4.6.1a questions Q1–Q6 resolved as D12–D19)
 
-Code state: git **HEAD `bc631eb`** ("fix(database): bind gamelist filter/query values as
-SQL parameters"); the last docs commit is `5514efd` ("update docs"), and the four step-4.7
-code commits sit on top of `b84341e` ("refactor(database): move emulator configuration to
+Code state: git **HEAD `bd83a4d`** ("fix: retry-loop for filters" — the bounded
+retry-without-filters follow-up fix to step 4.7, with 7 count-based regression tests);
+before it `bc631eb` ("fix(database): bind gamelist filter/query values as
+SQL parameters") closed the step-4.7 batch. The last docs commit is `5514efd` ("update
+docs"), and the step-4.7 code commits sit on top of
+`b84341e` ("refactor(database): move emulator configuration to
 emulator_repository" — step 4.6). **Steps 4.5, 4.6 and 4.7 are committed**: `fcdefe5`
 ("refactor(database): centralize play history and media access in status_repository" —
 `status_repository.py` new + `database.py` status delegation + schema-helper call),
 `b84341e` (`emulator_repository.py` new + `database.py` emulator delegation +
 schema-helper call + `tests/test_emulator_repository.py`, gitignored), and step 4.7 as
 `479e202` (bind the `order` fallback), `10f9fbd` (filter-state accessors),
-`da65a62` (gamelist_filter extraction) and `bc631eb` (parameterisation). The tracked tree
+`da65a62` (gamelist_filter extraction) and `bc631eb` (parameterisation), with the retry-loop
+fix as `bd83a4d`; the full suite is **661 passed, 5 skipped, 18 subtests passed** at that
+HEAD. The tracked tree
 is **clean** (`git status` empty) — nothing is pending. Documentation history: this
 directory first tracked as `ec400f4` ("add docs/database_refactor"), refreshed as
 `5514efd` (both docs-only, after `b84341e`). Code history: steps 4.2a+4.2b were
@@ -202,7 +207,7 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 | [`dbmod_audit.md`](dbmod_audit.md) | Complete inventory of every remaining SQL-bearing method/helper in `database.py`, grouped by responsibility: connection lifecycle, cross-database sync, scan facades, repository delegations, mixed application queries, game/set reads, filter composition, status.db play history, emulator config. Records tables, read/write behaviour, connection/transaction ownership, callers, result shapes, and the recommended future owner of each method. Referenced by method name (no line numbers). |
 | [`row_factory_audit.md`](row_factory_audit.md) | Result-shape and row-access audit: which connections are `sqlite3.Row` vs default tuples, which methods/callers use positional vs named row access (including mixed-style consumers), the implicit public contracts, and the staged strategy — now including the implemented `sqlite3.Row` input requirement for repositories (step 4.2b, done) and the fixed row-leak closure step (4.8). Read-only; nothing was converted by the audit itself. |
 | [`roadmap.md`](roadmap.md) | Prioritised, incremental implementation plan: boundary checks (4.0), decided removals (4.2a), the `sqlite3.Row` contract (4.2b), repository extensions (4.3-4.6), the history/legacy-file migration (4.6.1a, planned), the filter service (4.7), row-leak closure (4.8) and the database.py reorganisation proposal (4.9) — what each step extracts, contract, required tests, dependencies, risk, acceptance criteria, and what deliberately stays in `DBMod`. |
-| [`history_persistence_audit.md`](history_persistence_audit.md) | **Planned — nothing implemented.** Phase 4.6.1a: the GUI `lastgames.txt` contract (path, format, ordering, pointer, five insert sites, exit-only save defect, failure handling) and the `filter_*.txt` contract (five-line format, id-string values, Load/Save dialogs, crash/silent-failure modes) with every call site; the precise `load_lastsaver()` status (live but always-empty consumer, no writer ever existed — not an import source); the screensaver lifecycle and candidate display boundaries; four purpose-specific `status.db` tables covered by **one** `PRAGMA user_version` migration; the **one-time import + cleanup sequence** (per-file all-or-nothing validation, commit-before-delete, terminal marker states `completed`/`completed_discards`/`completed_no_source`/`failed`, no-reimport, cleanup-only recovery, unknown-file preservation); the verified Core userdata inventory; the Core/Kodi boundary, facade API and notification; the dependency on Phase 4.7, the confirmed 4.7 → 4.6.1 → 4.6.2 ordering (D11); and the six open questions Q1–Q6 with recommendations. |
+| [`history_persistence_audit.md`](history_persistence_audit.md) | **Planned — nothing implemented.** Phase 4.6.1a: the GUI `lastgames.txt` contract (path, format, ordering, pointer, five insert sites, exit-only save defect, failure handling) and the `filter_*.txt` contract (five-line format, id-string values, Load/Save dialogs, crash/silent-failure modes) with every call site; the precise `load_lastsaver()` status (live but always-empty consumer, no writer ever existed — not an import source); the screensaver lifecycle and the decided display boundaries (D16: images post-render, videos `onAVStarted`); four purpose-specific `status.db` tables covered by **one** `PRAGMA user_version` migration; the **one-time import + cleanup sequence** (per-file all-or-nothing validation, commit-before-delete, terminal marker states `completed`/`completed_discards`/`completed_no_source`/`failed`, no-reimport, cleanup-only recovery, unknown-file preservation); the verified Core userdata inventory; the Core/Kodi boundary, facade API and notification; the dependency on Phase 4.7, the confirmed 4.7 → 4.6.1 → 4.6.2 ordering (D11); and the six questions Q1–Q6 — **resolved 2026-10-18 as decisions D12–D19** (recorded in §1.1 and §16 of that document, including `gui_lastgames` retention of **100**), with only the §16.2 Kodi-runtime verification items left to check during implementation. |
 
 ## Phase checklist
 
@@ -314,14 +319,17 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
   all-or-nothing validation, malformed files discarded whole and recorded, data + marker
   + pending-delete list committed together, *then* `lastgames.txt`/`filter_*.txt` deleted
   — including invalid ones — with a Kodi-side notification naming discarded files);
-  startup checks marker → import once / cleanup only / report stored failure, never
-  re-import after a terminal state, explicit retry only after `failed`; unknown files
-  never deleted. **Blocked on open questions Q1–Q6; ordering confirmed as 4.7 → 4.6.1 →
-  4.6.2 (D11) — Q1–Q6 must be answered before implementation starts.**
+  never re-import after a terminal state, explicit retry only after `failed` (new
+  `retry_import` script command, `addon.py:18-37`); unknown files never deleted (D17).
+  **Q1–Q6 resolved as D12–D19** (`history_persistence_audit.md` §1.1/§16); ordering
+  confirmed as 4.7 → 4.6.1 → 4.6.2 (D11) with 4.7 complete — implementation may start,
+  the §16.2 Kodi-runtime checks folded into the implementation task.
 - [ ] Step 4.6.2 — screensaver display history writes into the same migration's
   `screensaver_history` table (feature starts empty; hooks at the render /
-  `onPlayBackStarted` boundaries). **Blocked on open question Q4** (duplicates,
-  ordering, display boundary, identifier).
+  `onAVStarted` boundaries). **Resolved by D16:** unique sets with recency move-up (one
+  row per `set_id`, `software_id` alongside), ordered by monotonic `id`, images recorded
+  post-render, videos on `Player.onAVStarted()` via the `umsa_set_id` unique ID
+  (Kodi 20+ guard), orphans kept and reported.
 - Note: `load_lastsaver()` stays untouched legacy read-side code with one live but
   always-empty consumer (`M_LSSAVER`); no writer of `lastsaver.txt` exists in any
   revision — it is **not** an import source, and a stray `lastsaver.txt` would be an
@@ -341,22 +349,24 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 
 **Steps 4.5 (`StatusRepository`, committed as `fcdefe5`), 4.6 (`EmulatorRepository`,
 committed as `b84341e`) and 4.7 (the explicit-state gamelist filter/query composition,
-committed as `479e202` + `10f9fbd` + `da65a62` + `bc631eb`) are done** (Q4 prerequisite
-committed separately first as `8bb8a8d`; tree clean at HEAD `bc631eb`, with
-`tests/test_status_repository.py` (24 tests), `tests/test_emulator_repository.py` (43
-tests) and `tests/test_gamelist_filter.py` (28 tests), full suite **654 passed**, 5
-skipped, 18 subtests passed). A follow-up Phase 4.7 fix — the **bounded
-retry-without-filters loop**, 7 count-based regression tests — sits **uncommitted in the
-working tree**, taking `tests/test_gamelist_filter.py` to **35 tests** and the full suite
-to **661 passed**, 5 skipped, 18 subtests passed). **Step 4.6.1a** (one `status.db` migration for
+committed as `479e202` + `10f9fbd` + `da65a62` + `bc631eb`, plus the **bounded
+retry-without-filters loop** fix with its 7 count-based regression tests, committed as
+`bd83a4d`) are done** (Q4 prerequisite committed separately first as `8bb8a8d`; tree clean
+at HEAD `bd83a4d`, with `tests/test_status_repository.py` (24 tests),
+`tests/test_emulator_repository.py` (43 tests) and `tests/test_gamelist_filter.py` (35
+tests), full suite **661 passed**, 5 skipped, 18 subtests passed). **Step 4.6.1a** (one
+`status.db` migration for
 GUI lastgames + filter selections + screensaver history, plus the one-time legacy import
 and cleanup) is **planning only** — `history_persistence_audit.md`; no code, schema,
 migration, tests or user files were changed (the real profile on this machine was
-inspected read-only), and open questions **Q1–Q6** block implementation. Its ordering is
+inspected read-only), and its questions **Q1–Q6 are resolved as D12–D19** (2026-10-18, in
+that document's §1.1/§16, including `gui_lastgames` retention of **100**) — implementation
+is unblocked, with only the §16.2 Kodi-runtime verification items left to check while
+building it. Its ordering is
 **confirmed: 4.7 → 4.6.1 → 4.6.2** — the migration depends on **Phase 4.7**, which is now
 satisfied (persisted selections are consumed by `define_filter`, whose explicit-state
 composition 4.7 delivered, and 4.7's text-file persistence stayed in place).
-**Step 4.6.1a** is therefore the next implementation step (after Q1–Q6 are answered);
+**Step 4.6.1a** is therefore the next implementation step;
 it proceeds independently of the completed 4.2–4.7 chain. Steps 4.0, 4.2, 4.2a, 4.2b,
 4.3, 4.4, 4.5-pre, 4.5, 4.6 and 4.7 are done.
 See [`roadmap.md`](roadmap.md) for the full contracts.
@@ -441,7 +451,7 @@ The same rules apply to both `status.db` schema helpers (4.5 `sets`, 4.6
 `emu`/`emu_conn`); any future schema change must land together with its
 versioned migration mechanism in the same change.
 
-## Validation (executed at HEAD `8bb8a8d` + step-4.5/4.6 working tree — those steps are now committed as `fcdefe5` + `b84341e`; steps 4.7 re-verified at HEAD `bc631eb`; steps 4.0, 4.2a, 4.2b, 4.3, 4.4, the Q4 fix, 4.5, 4.6 and 4.7)
+## Validation (executed at HEAD `8bb8a8d` + step-4.5/4.6 working tree — those steps are now committed as `fcdefe5` + `b84341e`; steps 4.7 re-verified at HEAD `bc631eb`, then the full suite re-run at HEAD `bd83a4d` after the retry-loop fix; steps 4.0, 4.2a, 4.2b, 4.3, 4.4, the Q4 fix, 4.5, 4.6 and 4.7)
 
 Python from `.venv-debian-vm` (single consistent venv across all docs):
 
@@ -542,9 +552,9 @@ Python from `.venv-debian-vm` (single consistent venv across all docs):
 #   number of executed gamelist SELECTs via a spy connection, not timing)
 
 # Full suite baseline (after step 4.7 — commits 479e202 + 10f9fbd + da65a62 + bc631eb,
-# plus the bounded retry-loop fix in the working tree)
+# plus the bounded retry-loop fix committed as bd83a4d)
 .venv-debian-vm/bin/python -m pytest tests/ -q
-# → 661 passed, 5 skipped, 18 subtests passed
+# → 661 passed, 5 skipped, 18 subtests passed  (at HEAD bd83a4d, tracked tree clean)
 #   (622 before 4.7 + 35 gamelist_filter tests + 4 pre-work tests; 654 passed with the
 #    28-test suite at HEAD bc631eb; skipped: VGM real-MAME tests, gated by
 #    VGM_MAME_TESTS=1)
@@ -621,7 +631,8 @@ re-executed after the extraction; the step 4.7 runs (the `4 passed` pre-work fil
 the delegating facade, full suite **`654 passed`**, per-file lint comparison) were
 re-executed across the extraction and parameterisation commits; the step 4.7 bounded
 retry-loop fix was then executed as `tests/test_gamelist_filter.py` `35 passed` plus a
-full suite **`661 passed`**, 5 skipped, 18 subtests run (working tree, uncommitted).
+full suite **`661 passed`**, 5 skipped, 18 subtests run (now at HEAD `bd83a4d`, tracked
+tree clean).
 Only the guard test file is new from 4.0; `tests/test_cmd_line_options.py`,
 `tests/test_emulator_launcher.py`, `tests/test_save_further_media.py`,
 `tests/test_status_repository.py`, `tests/test_emulator_repository.py`,
