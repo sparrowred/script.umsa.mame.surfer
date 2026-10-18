@@ -883,20 +883,21 @@ class Emulation:
         else:
             zip_name = os.path.join(self.emurun['swl_name'], self.emurun['set_name']+'.zip')
         # create chd filenames
-        if ('disks' in self.emurun and self.emurun['disks'] and
-                'disk' in self.emurun['disks'][0].keys() and
-                self.emurun['disks'][0]['disk']
-           ):
-            for i in self.emurun['disks']:
-                if 'disk' in i.keys():
-                    all_chds.append(os.path.join(
-                        self.emurun['swl_name'], self.emurun['set_name'],
-                        '{}.chd'.format(i['disk'])))
-                    # also check parent in case we have merged sets
-                    if self.emurun['set_clone']:
-                        all_chds.append(os.path.join(
-                            self.emurun['swl_name'], self.emurun['set_clone'],
-                            '{}.chd'.format(i['disk'])))
+        for i in self.emurun.get('disks', []) or []:
+            try:
+                disk_name = i['disk']
+            except (KeyError, IndexError, TypeError):
+                continue
+            if not disk_name:
+                continue
+            all_chds.append(os.path.join(
+                self.emurun['swl_name'], self.emurun['set_name'],
+                f'{disk_name}.chd'))
+            # also check parent in case we have merged sets
+            if self.emurun['set_clone']:
+                all_chds.append(os.path.join(
+                    self.emurun['swl_name'], self.emurun['set_clone'],
+                    f'{disk_name}.chd'))
         # search filename
         log(f"UMSA Emu: search {zip_name}", level='debug')
         for path in self.rom_paths:

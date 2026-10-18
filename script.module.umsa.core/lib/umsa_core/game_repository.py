@@ -2,7 +2,9 @@
 
 This module centralises the single-purpose, read-only queries over the general
 game tables of ``umsa.db`` (``sets``, ``software``, ``swl``, ``year``,
-``maker``, ``category``, ``nplayers``, ``swl_status``) that neither depend on
+``maker``, ``category``, ``nplayers``, ``swl_status``, plus the media/device
+tables ``part``, ``part_set``, ``device``, ``device_set``, ``sharedfeature``,
+``sharedfeature_set``) that neither depend on
 :class:`~umsa_core.database.DBMod` filter state nor join into other databases.
 It follows the conventions of :mod:`umsa_core.artwork_repository` and
 :mod:`umsa_core.dat_repository`.
@@ -558,5 +560,137 @@ class GameRepository:
         try:
             cursor.execute("SELECT id FROM software WHERE name = ?", (name,))
             return [row[0] for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+
+    # --- step 4.4: media/parts/device reads feeding the command line --------
+
+    def get_parts_for_set_id(self, set_id) -> list:
+        """Return the parts (media) attached to a set, ordered by part name.
+
+        Row-transparent: each row is ``p.name, pv.name, pv.disk`` (media name,
+        interface, optional disk value). A set can have more than one media
+        (two floppies, floppy + cd-rom, ...). Returns an empty list when no
+        parts match — including unknown set ids. Consumers index positionally
+        (``part[0]``/``part[1]`` in ``DBMod.create_cmdline``).
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT   p.name, pv.name, pv.disk \
+                 FROM     part_set pv, part p \
+                 WHERE    p.id = pv.part_id AND pv.variant_id = ? \
+                 ORDER BY p.name", (set_id,))
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+
+    def get_disks(self, swl_name, set_name):
+        """Return the disk values of a set inside a software list, or ``None``.
+
+        Two queries by design (set id first, then its ``part_set`` rows): the
+        software-list name and set name must match; a missing set, a missing
+        software list, or a set without ``part_set`` rows all return ``None``.
+
+        Row-transparent: each row carries the single ``disk`` column —
+        positional ``row[0]``, named ``row['disk']`` and ``row.keys()`` all
+        work, which is what ``emulation.py`` and ``emulator_launcher.py``
+        rely on. Nothing is filtered and there is no ``ORDER BY``: every
+        ``part_set`` row of the set comes back in rowid order, including rows
+        whose disk value is ``NULL``.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT sets.id FROM sets \
+                    JOIN swl ON swl.id = sets.swllink_id \
+                 WHERE sets.name = ? AND swl.name = ?",
+                (set_name, swl_name))
+            set_id = cursor.fetchone()
+            if set_id:
+                cursor.execute(
+                    "SELECT disk FROM part_set WHERE variant_id = ?", (set_id[0],))
+                disks = cursor.fetchall()
+                if disks:
+                    return disks
+            return None
+        finally:
+            cursor.close()
+
+    def get_swl_options(self, swl_name):
+        """Return the raw options row of a software list, or ``None``.
+
+        Row-transparent: the row carries the single ``options`` column. A
+        ``NULL`` options value stays ``None`` inside the row (the facade
+        branches on ``row[0]`` truthiness); an unknown software list returns
+        ``None`` — the facade then raises ``TypeError`` on ``row[0]``, the
+        historical valid-input assumption.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT options FROM swl WHERE name = ?", (swl_name,))
+            return cursor.fetchone()
+        finally:
+            cursor.close()
+
+    def get_machine_id(self, machine_name):
+        """Return the machine's set row under the ``mame`` software list.
+
+        Row-transparent: the row carries the single ``id`` column (the sets id
+        used as the device variant id). Machine rows resolve only under the
+        software list ``mame`` — that name is hardcoded in the query, as it
+        always was inside ``DBMod.get_cmd_line_options``. An unknown machine
+        returns ``None``; the facade then raises ``TypeError`` on ``row[0]``
+        (the historical valid-input assumption).
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT v.id \
+                 FROM sets v, swl \
+                 WHERE v.swllink_id = swl.id AND swl.name = ? AND v.name = ?",
+                ('mame', machine_name)
+            )
+            return cursor.fetchone()
+        finally:
+            cursor.close()
+
+    def get_devices_for_machine(self, machine_id) -> list:
+        """Return the devices of a machine, ordered by device name.
+
+        Row-transparent: each row is ``d.name, dv.name`` (device, interface
+        list). The interface may hold a comma-separated list (e.g.
+        ``cart64,c128_cart``) which ``DBMod.create_cmdline`` splits. Returns
+        an empty list for a machine without devices. Consumers index
+        positionally (``device[0]``/``device[1]``).
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT d.name, dv.name \
+                 FROM device_set dv, device d \
+                 WHERE d.id = dv.device_id AND dv.variant_id = ? \
+                 ORDER BY d.name", (machine_id,))
+            return cursor.fetchall()
+        finally:
+            cursor.close()
+
+    def get_sharedfeat_requirement(self, set_id):
+        """Return the raw ``requirement`` shared-feature row of a set, or ``None``.
+
+        Row-transparent: the row carries the single ``sfv.name`` column —
+        normally an ``swl:set`` string that ``DBMod.get_cmd_line_options``
+        expands into a chained command line. Sets without a requirement (or
+        unknown ids) return ``None``.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT sfv.name FROM sharedfeature sf, sharedfeature_set sfv \
+                 WHERE sf.name = 'requirement' AND sf.id = sfv.sharedfeat_id AND sfv.variant_id = ? \
+                 ORDER BY sf.name", (set_id,)
+            )
+            return cursor.fetchone()
         finally:
             cursor.close()

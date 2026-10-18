@@ -77,10 +77,12 @@ def launch_emulator(ctx: LaunchCtx) -> None:
     emurun_disks = ctx.emulation.emurun.get('disks') or []
     if emurun_disks and len(emurun_disks) > 1:
         select = []
-        for i in emurun_disks:
+        select_index = []
+        for idx, i in enumerate(emurun_disks):
             try:
-                if i.get('disk'):
+                if i['disk']:
                     select.append(i['disk'])
+                    select_index.append(idx)
             except Exception:
                 pass
         if select:
@@ -90,8 +92,9 @@ def launch_emulator(ctx: LaunchCtx) -> None:
                 which_disk = -1
             if which_disk > -1:
                 try:
-                    this_disk = emurun_disks[which_disk]
-                    emurun_disks[which_disk] = emurun_disks[0]
+                    picked = select_index[which_disk]
+                    this_disk = emurun_disks[picked]
+                    emurun_disks[picked] = emurun_disks[0]
                     emurun_disks[0] = this_disk
                 except Exception:
                     pass

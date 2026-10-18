@@ -1670,28 +1670,12 @@ class DBMod:
         like 2 floppies or 1 floppy and 1 hdd or cd-rom
         """
 
-        self.gdbc.execute(
-            "SELECT   p.name, pv.name, pv.disk \
-             FROM     part_set pv, part p \
-             WHERE    p.id = pv.part_id AND pv.variant_id = ? \
-             ORDER BY p.name", (set_id,))
-        return self.gdbc.fetchall()
+        return self._get_game_repository().get_parts_for_set_id(set_id)
 
     def get_disks(self, swl_name, set_name):
         """Return disks from a given set and softwarelist"""
 
-        self.gdbc.execute(
-            "SELECT sets.id FROM sets \
-                JOIN swl ON swl.id = sets.swllink_id \
-             WHERE sets.name = ? AND swl.name = ?",
-            (set_name, swl_name))
-        set_id = self.gdbc.fetchone()
-        if set_id:
-            self.gdbc.execute("SELECT disk FROM part_set WHERE variant_id = ?", (set_id[0],))
-            disks = self.gdbc.fetchall()
-            if disks:
-                return disks
-        return None
+        return self._get_game_repository().get_disks(swl_name, set_name)
 
     def create_cmdline(self, parts, devices, setname):
         """create command line to start a software list item in mame"""
@@ -1735,10 +1719,8 @@ class DBMod:
         # get options for softwarelist
         ## this is manually set coz some swls need special options
         ## like a device in a slot so the machine supports hdds
-        self.gdbc.execute(
-            "SELECT options FROM swl WHERE name = ?", (swl_name,)
-        )
-        swlopt = self.gdbc.fetchone()
+        repo = self._get_game_repository()
+        swlopt = repo.get_swl_options(swl_name)
         # make swl_options a list
         if swlopt[0]:
             swl_options = swlopt[0].strip().split(' ')
@@ -1746,32 +1728,16 @@ class DBMod:
             swl_options = None
 
         # get id for machine
-        self.gdbc.execute(
-            "SELECT v.id \
-             FROM sets v, swl \
-             WHERE v.swllink_id = swl.id AND swl.name = ? AND v.name = ?",
-            ('mame', machine_name)
-        )
-        machine_id = self.gdbc.fetchone()
+        machine_id = repo.get_machine_id(machine_name)
 
         # get devices supported by the machine
-        self.gdbc.execute(
-            "SELECT d.name, dv.name \
-             FROM device_set dv, device d \
-             WHERE d.id = dv.device_id AND dv.variant_id = ? \
-             ORDER BY d.name", (machine_id[0],))
-        _devices = self.gdbc.fetchall()
+        _devices = repo.get_devices_for_machine(machine_id[0])
 
         # get all parts for the choosen set
-        _part = self.get_parts_for_set_id(set_id)
+        _part = repo.get_parts_for_set_id(set_id)
 
         # check if we have a requirement in sharedfeat
-        self.gdbc.execute(
-            "SELECT sfv.name FROM sharedfeature sf, sharedfeature_set sfv \
-             WHERE sf.name = 'requirement' AND sf.id = sfv.sharedfeat_id AND sfv.variant_id = ? \
-             ORDER BY sf.name", (set_id,)
-        )
-        _sharedfeat = self.gdbc.fetchone()
+        _sharedfeat = repo.get_sharedfeat_requirement(set_id)
 
         # create cmd line
         _cmd_options, first_device = self.create_cmdline(
@@ -1799,7 +1765,7 @@ class DBMod:
                     log(f"UMSA database: get_cmd_line_options: set {_set}, swl {_swl}", level='debug')
                     _setinfo = self.get_info_by_set_and_swl(_set, _swl)
                     log(f"UMSA database: get_cmd_line_options: setid {_setinfo}", level='debug')
-                    _parts2 = self.get_parts_for_set_id(_setinfo['set_id'])
+                    _parts2 = repo.get_parts_for_set_id(_setinfo['set_id'])
                     log(f"UMSA database: get_cmd_line_options: parts {_parts2}", level='debug')
                     _cmdopt = self.create_cmdline(list(_parts2), _devices, _set)[0]
                     more_options += _cmdopt
