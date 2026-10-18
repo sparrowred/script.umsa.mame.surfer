@@ -43,6 +43,16 @@ from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .emulator_repository import EmulatorRepository, create_emulator_tables
 from .game_repository import GameRepository
+from .gamelist_filter import GamelistFilter
+from .gamelist_filter import category_query as _category_query
+from .gamelist_filter import define_filter as _define_filter
+from .gamelist_filter import execute_statement as _execute_statement
+from .gamelist_filter import maker_query as _maker_query
+from .gamelist_filter import players_query as _players_query
+from .gamelist_filter import software_query as _software_query
+from .gamelist_filter import source_query as _source_query
+from .gamelist_filter import swl_query as _swl_query
+from .gamelist_filter import year_query as _year_query
 from .gb64_scanner import GB64Scanner
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
@@ -1205,64 +1215,10 @@ class DBMod:
           simply call this more often (:
         """
 
-        self.filter_join = []
-        self.filter_where = []
-        # swl
-        if filter_lists.get('Softwarelists'):
-            self.gdbc.execute("SELECT COUNT(id) FROM swl")
-            swl_count = self.gdbc.fetchone()[0]
-            if swl_count > len(filter_lists['Softwarelists']):
-                self.filter_join.append("JOIN swl ON swl.id = sets.swllink_id")
-                self.filter_where.append(
-                    "swl.id IN ({})".format(','.join(filter_lists['Softwarelists'])))
-            else:
-                log("UMSA datbase define_filter: all swls, no filter used", level='debug')
-        # game categories, machines
-        if ((filter_lists.get('Game Categories')) or
-                (filter_lists.get('Machine Categories'))):
-            self.gdbc.execute("SELECT COUNT(id) FROM category")
-            cat_count = self.gdbc.fetchone()[0]
-            len_filterlists = len(filter_lists['Game Categories']+filter_lists['Machine Categories'])
-            log(f"UMSA database: filter categories {cat_count}, {len_filterlists}", level='debug')
-            if cat_count > len_filterlists:
-                self.filter_join.append("JOIN category ON category.id = sets.classification_id")
-                self.filter_where.append("category.id IN ({})".format(
-                    ','.join(filter_lists['Game Categories']+filter_lists['Machine Categories'])))
-            else:
-                log("UMSA database: define_filter: all categories, no filter used", level='debug')
-        # players
-        if filter_lists.get('Players'):
-            self.gdbc.execute("SELECT COUNT(id) FROM nplayers")
-            players_count = self.gdbc.fetchone()[0]
-            log(f"UMSA database: filter players {players_count}, {len(filter_lists['Players'])}", level='debug')
-            if players_count > len(filter_lists['Players']):
-                self.filter_join.append("JOIN nplayers ON nplayers.id = sets.nplayers_id")
-                self.filter_where.append("nplayers.id IN ({})".format(
-                    ','.join(filter_lists['Players'])))
-            else:
-                log("UMSA database: define_filter: all players, no filter used", level='debug')
-        # years
-        if filter_lists.get('Years'):
-            self.gdbc.execute("SELECT COUNT(id) FROM year")
-            year_count = self.gdbc.fetchone()[0]
-            if year_count > len(filter_lists['Years']):
-                self.filter_join.append("JOIN year ON year.id = sets.year_id")
-                self.filter_where.append("year.id IN ({})".format(','.join(filter_lists['Years'])))
-            else:
-                log("UMSA database: define_filter: all years, no filter used", level='debug')
-        # count
-        filter_where = ''
-        if self.filter_join and self.filter_where:
-            filter_where = "WHERE sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
-                " ".join(self.filter_join), " AND ".join(self.filter_where))
-        select_statement = f"SELECT COUNT (DISTINCT software.id) \
-            FROM sets JOIN software ON software.id = sets.softwarelink_id {filter_where}"
-        self.gdbc.execute(select_statement)
-        count = self.gdbc.fetchone()[0]
-        self.gdbc.execute("SELECT COUNT (software.id) FROM software")
-        all_count = self.gdbc.fetchone()[0]
-        percent = int(round(count/float(all_count)*100))
-        return f"{count} ({percent}%)"
+        state, display = _define_filter(self.gdb, filter_lists)
+        self.filter_join = list(state.filter_join)
+        self.filter_where = list(state.filter_where)
+        return display
 
     def execute_statement(self, set_id=None, software_id=None, prevnext=None):
         """Execute prepared statement with filter settings
@@ -1275,221 +1231,59 @@ class DBMod:
         - more logic: when swl.name = "gameboy" then no need for swl filter! = faster
         """
 
-        time_start = time.time()
-        result_count = 0
-        where = ""
-        filter_join = ""
-        filter_where = ""
-        if self.filter_join and self.filter_where:
-            filter_join = " ".join(self.filter_join)
-            filter_where = " AND ".join(self.filter_where)
-        # prepare joins and wheres from filters
-        s_join, s_where = '', ''
-        if self.use_filter and self.where:
-            if self.join and self.join not in self.filter_join:
-                s_join = f"{self.join} {filter_join}"
-            elif filter_join:
-                s_join = filter_join
-            if self.where and filter_where:
-                s_where = f"{self.where} AND {filter_where}"
-            elif self.where:
-                s_where = self.where
-            elif filter_where:
-                s_where = filter_where
-            if s_join and s_where:
-                where = f"sets.id IN (SELECT sets.id FROM sets {s_join} WHERE {s_where})"
-            # only for source
-            elif self.where:
-                where = self.where
-        elif self.use_filter:
-            if filter_join and filter_where:
-                where = f"sets.id IN (SELECT sets.id FROM sets {filter_join} WHERE {filter_where})"
-        elif self.join and self.where:
-            where = f"sets.id IN (SELECT sets.id FROM sets {self.join} WHERE {self.where})"
-        else:
-            log("UMSA database: execute_statement: no join and where clause", level='debug')
-        # get software name
-        if set_id:
-            name_statement = "SELECT software.name FROM software \
-                    JOIN sets ON software.id = sets.softwarelink_id \
-                    WHERE sets.id = ?"
-            self.gdbc.execute(name_statement, (set_id,))
-            sname = self.gdbc.fetchone()[0]
-        elif software_id:
-            self.gdbc.execute(
-                "SELECT software.name FROM software WHERE software.id = ?", (software_id,)
-            )
-            sname = self.gdbc.fetchone()[0]
-        else:
-            log("UMSA database: execute_statement: no set or software id error", level='debug')
-        # add ordering
-        if self.order == 'name':
-            order = 'software.name'
-        elif self.order == 'year':
-            order = 'year.name, software.name'
-        elif self.order == 'publisher':
-            order = 'maker.name, software.name'
-        else:
-            self.order = 'software.name'
-            order = 'software.name'
-        time_rampup = time.time()
-
-        # fetch
-        slist = []
-        while not slist:
-            # normal, previous or next
-            if not prevnext:
-                if where:
-                    i_where = "WHERE "+where
-                else:
-                    i_where = ""
-                limit = ""
-            elif prevnext == 'prev':
-                if where:
-                    i_where = f'WHERE software.name <= "{sname}" AND {where}'
-                else:
-                    i_where = f'WHERE software.name <= "{sname}"'
-                limit = "DESC LIMIT 100"
-            elif prevnext == 'next':
-                if where:
-                    i_where = f'WHERE software.name >= "{sname}" AND {where}'
-                else:
-                    i_where = f'WHERE software.name >= "{sname}"'
-                limit = "ASC LIMIT 100"
-            else:
-                log("UMSA database execute_statement: prevnext error {prevnext}", level='debug')
-            # fetch software list
-            select_statement = f"SELECT DISTINCT \
-                    software.id, software.name, year.name as year, maker.name as maker \
-                FROM sets \
-                    JOIN software ON software.id = sets.softwarelink_id \
-                    JOIN year ON year.id = software.year_id \
-                    JOIN maker ON maker.id = software.developer_id \
-                {i_where} ORDER BY {order} {limit}"
-            self.gdbc.execute(select_statement)
-            slist = self.gdbc.fetchall()
-            # no results: try without filter
-            if len(slist) == 0:
-                log("UMSA database: fetch list: no result, retry without filters", level='debug')
-                if self.where:
-                    where = f"sets.id IN (SELECT sets.id FROM sets {self.join} WHERE {self.where})"
-                else:
-                    where = ""
-        time_fetch = time.time()
-
-        # get position and set prevnext
-        if not prevnext:
-            result_count = len(slist)
-            # search for name
-            # TODO rework
-            count, pos = 0, 0
-            for i in slist:
-                count += 1
-                if sname == i['name']:
-                    pos = count
-                    break
-            # TODO do we need new_slist?
-            if count < 50: # begin of list
-                pos -= 1
-                # TODO get rid of flag, try without new_slist
-                flag = None
-                if len(slist) > 100:
-                    flag = True
-                new_slist = slist[:count+50+(50-count)]
-                if flag:
-                    new_slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-            elif count > len(slist)-100: # end of list
-                pos = pos-(len(slist)-100)
-                new_slist = slist[count-(count-(len(slist)-100)):]
-                new_slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-            else: # middle of list
-                pos = 50
-                new_slist = slist[count-50:count+50]
-                new_slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-                new_slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-            slist = new_slist
-        elif prevnext == 'next':
-            pos = 1
-            slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-            if len(slist) == 100:
-                slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-        else: # prev
-            pos = len(slist)
-            slist.reverse()
-            slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-            if len(slist) == 100:
-                slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-        time_rest = time.time()
-        log(f'UMSA database: execute_statement: begin {(time_rampup - time_start) * 1000:.0f}ms', level='debug')
-        log(f'UMSA database:                   fetch {(time_fetch - time_rampup) * 1000:.0f}ms', level='debug')
-        log(f'UMSA database:                   pos   {(time_rest - time_fetch) * 1000:.0f}ms', level='debug')
-        log(f'UMSA database:                   all   {(time_rest - time_start) * 1000:.0f}ms', level='debug')
+        state = GamelistFilter(
+            join=self.join,
+            where=self.where,
+            order=self.order,
+            use_filter=self.use_filter,
+            filter_join=tuple(self.filter_join),
+            filter_where=tuple(self.filter_where),
+        )
+        slist, pos, result_count = _execute_statement(
+            self.gdb, state, set_id, software_id, prevnext)
+        self.order = state.order
         return slist, pos, result_count
 
     def get_by_software(self, set_id):
         """Return list of software"""
 
-        self.join = ''
-        self.where = ''
+        self.join, self.where = _software_query()
         return self.execute_statement(set_id)
 
     def get_software_for_source(self, set_id, source):
         """Return list of software based on MAME source file"""
 
-        self.join = ''
-        self.where = f'sets.source = "{source}"'
+        self.join, self.where = _source_query(source)
         return self.execute_statement(set_id)
 
     def get_by_cat(self, cat, set_id):
         """Return list of software based on category"""
 
-        self.join = "JOIN category ON category.id = sets.classification_id"
-        self.where = f'category.name = "{cat}"'
+        self.join, self.where = _category_query(cat)
         return self.execute_statement(set_id)
 
     def get_by_year(self, year, set_id):
         """Return list of software based on year"""
 
-        self.join = 'JOIN year ON year.id = sets.year_id'
-        self.where = f'year.name = "{year}"'
+        self.join, self.where = _year_query(year)
         return self.execute_statement(set_id)
 
     def get_by_players(self, players, set_id):
         """Return list of software based on number of players"""
 
-        self.join = 'JOIN nplayers ON nplayers.id = sets.nplayers_id'
-        self.where = f'nplayers.name = "{players}"'
+        self.join, self.where = _players_query(players)
         return self.execute_statement(set_id)
 
     def get_by_maker(self, maker, set_id):
         """Return list of software based on maker"""
 
-        # get parent if maker is clone
-        self.gdbc.execute("SELECT cloneof_id FROM maker WHERE maker.name = ?", (maker,))
-        cloneof_id = self.gdbc.fetchone()[0]
-        if not cloneof_id:
-            self.gdbc.execute("SELECT id FROM maker WHERE maker.name = ?", (maker,))
-            cloneof_id = self.gdbc.fetchone()[0]
-        # get all maker ids
-        all_maker_ids = []
-        if cloneof_id:
-            self.gdbc.execute("SELECT id FROM maker \
-                WHERE cloneof_id = ? OR id = ?", (cloneof_id, cloneof_id))
-            for i in self.gdbc.fetchall():
-                all_maker_ids.append(str(i['id']))
-        # set join and where
-        self.join = 'JOIN maker ON maker.id = sets.publisher_id'
-        if all_maker_ids:
-            self.where = 'maker.id IN ({})'.format(','.join(all_maker_ids))
-        else:
-            self.where = f'maker.name = "{maker}"'
+        self.join, self.where = _maker_query(self.gdb, maker)
         return self.execute_statement(set_id)
 
     def get_by_swl(self, swl_name, set_id):
         """Return list of software based on softwarelist"""
 
-        self.join = 'JOIN swl ON swl.id = sets.swllink_id'
-        self.where = f'swl.name = "{swl_name}"'
+        self.join, self.where = _swl_query(swl_name)
         return self.execute_statement(set_id)
 
     def get_maker(self):
