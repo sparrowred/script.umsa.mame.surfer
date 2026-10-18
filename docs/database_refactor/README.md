@@ -23,15 +23,21 @@ Recorded here because they constrain this refactor directly (source:
    connections or reaches into `DBMod`'s `gdb`/`gdbc`/`sdb`/`sdbc`/`ggdb` internals.
 4. **Reuse Core services** in frontend/screensaver instead of re-implementing them.
 
-## Current status (steps 4.0, 4.2, 4.2a, 4.2b, 4.3, 4.4, 4.5 and 4.6 implemented; decisions Q1–Q9 settled)
+## Current status (steps 4.0, 4.2, 4.2a, 4.2b, 4.3, 4.4, 4.5, 4.6 and 4.7 implemented; decisions Q1–Q9 settled)
 
-Code state: git HEAD `8bb8a8d` ("fix(database): save_further_media single-INSERT with
-both values; ensure rollback on failure" — the Q4 bugfix, **committed** since the
-earlier draft of this document called it uncommitted); the tracked tree carries
-**uncommitted** step-4.5 and step-4.6 changes — `database.py` (status + emulator
-delegation + two schema-helper calls) plus the new untracked `status_repository.py`
-and `emulator_repository.py`, and the new (gitignored) `tests/test_emulator_repository.py`
-— deliberately not committed because the maintainer has not asked for a commit. History: steps 4.2a+4.2b were
+Code state: git **HEAD `bc631eb`** ("fix(database): bind gamelist filter/query values as
+SQL parameters"); the last docs commit is `5514efd` ("update docs"), and the four step-4.7
+code commits sit on top of `b84341e` ("refactor(database): move emulator configuration to
+emulator_repository" — step 4.6). **Steps 4.5, 4.6 and 4.7 are committed**: `fcdefe5`
+("refactor(database): centralize play history and media access in status_repository" —
+`status_repository.py` new + `database.py` status delegation + schema-helper call),
+`b84341e` (`emulator_repository.py` new + `database.py` emulator delegation +
+schema-helper call + `tests/test_emulator_repository.py`, gitignored), and step 4.7 as
+`479e202` (bind the `order` fallback), `10f9fbd` (filter-state accessors),
+`da65a62` (gamelist_filter extraction) and `bc631eb` (parameterisation). The tracked tree
+is **clean** (`git status` empty) — nothing is pending. Documentation history: this
+directory first tracked as `ec400f4` ("add docs/database_refactor"), refreshed as
+`5514efd` (both docs-only, after `b84341e`). Code history: steps 4.2a+4.2b were
 committed together as `9f2fd40`
 ("database: enforce row, clean up" — the five Q1 method removals, 91 lines, plus the
 `sqlite3.Row` repository input contract: `require_row_connection` in `sqlite.py`, the
@@ -43,8 +49,10 @@ database queries and improve disk handling in emulator launch"). Earlier commits
 the `ea7d0f7` state the
 audits were last updated at: `7e47290` ("vgmplay: batch retrieval of random VGM entries",
 renamed `get_random_vgm()` to `get_random_vgm_batch()` — now `connect_sqlite_readonly`,
-returns a list of dicts) and `2a2b1af`. Phase 4.0 itself only adds a test file and these
-documentation updates; `tests/` and `docs/` are gitignored, so HEAD is unchanged by them.
+returns a list of dicts), `2a2b1af` and the Q4 fix `8bb8a8d`. Phase 4.0 itself only adds
+a test file; `tests/` is gitignored and `docs/*` is ignored **except
+`docs/database_refactor/`**, which is tracked (see the retention note below), so
+documentation updates *do* move HEAD.
 
 `DBMod` (`script.module.umsa.core/lib/umsa_core/database.py`) still owns:
 
@@ -53,13 +61,15 @@ documentation updates; `tests/` and `docs/` are gitignored, so HEAD is unchanged
   `create_status_tables` since 4.5, `create_emulator_tables` since 4.6);
 - cross-database synchronisation via `ATTACH DATABASE` (`open_db`,
   `add_dat_to_db`, `add_art_to_db`);
-- all remaining direct SQL for filter composition, plus the cross-connection
-  `get_last_played`;
+- the mutable gamelist query state (`join`/`where`/`order`/`use_filter`/`filter_join`/
+  `filter_where` and the private `_where_params`/`_filter_where_params`) plus its
+  facades over the extracted `gamelist_filter` service (step 4.7), and the
+  cross-connection `get_last_played`;
 - command-line *assembly* (`create_cmdline`, `get_cmd_line_options`'s argument
   building — their reads come from the repository since step 4.4);
 - thin facades over the already-extracted repositories and scanners.
 
-Already extracted (Phases 2/3/4.2–4.6):
+Already extracted (Phases 2/3/4.2–4.7):
 
 - `dat_repository.py` — authoritative DAT schema + `DatRepository` (caller-owned
   connection, savepoint-based atomic publish/replace);
@@ -90,6 +100,16 @@ Already extracted (Phases 2/3/4.2–4.6):
   delegate to it (transaction ownership and the historical commit order of
   `save_emulator`/`delete_emulator` are preserved, including the documented
   `lastrowid` decision for the unreachable update + `reconfigure=False` path);
+- `gamelist_filter.py` — explicit-state gamelist filter/query composition since step 4.7:
+  the `GamelistFilter` dataclass (`join`/`where`/`order`/`use_filter`/`filter_join`/
+  `filter_where` + `where_params`/`filter_where_params`), `define_filter`,
+  `execute_statement` and the seven selector helpers (`software_query`, `source_query`,
+  `category_query`, `year_query`, `players_query`, `swl_query`, `maker_query`). It is
+  Kodi-free, takes the caller connection and an explicit state, owns only short-lived
+  cursors, never commits or closes the connection, and binds every external value;
+  `DBMod.define_filter`, `execute_statement` and every `get_by_*` are facades that build
+  the state, copy the clauses back into the public attributes and mirror the in-place
+  `order` reset;
 - `dat_scanner.py`, `artwork_scanner.py`, `gb64_scanner.py`, `exodos_scanner.py` —
   self-contained scan workflows with worker-owned connections and shared scan-lock
   coordination;
@@ -182,7 +202,7 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 | [`dbmod_audit.md`](dbmod_audit.md) | Complete inventory of every remaining SQL-bearing method/helper in `database.py`, grouped by responsibility: connection lifecycle, cross-database sync, scan facades, repository delegations, mixed application queries, game/set reads, filter composition, status.db play history, emulator config. Records tables, read/write behaviour, connection/transaction ownership, callers, result shapes, and the recommended future owner of each method. Referenced by method name (no line numbers). |
 | [`row_factory_audit.md`](row_factory_audit.md) | Result-shape and row-access audit: which connections are `sqlite3.Row` vs default tuples, which methods/callers use positional vs named row access (including mixed-style consumers), the implicit public contracts, and the staged strategy — now including the implemented `sqlite3.Row` input requirement for repositories (step 4.2b, done) and the fixed row-leak closure step (4.8). Read-only; nothing was converted by the audit itself. |
 | [`roadmap.md`](roadmap.md) | Prioritised, incremental implementation plan: boundary checks (4.0), decided removals (4.2a), the `sqlite3.Row` contract (4.2b), repository extensions (4.3-4.6), the history/legacy-file migration (4.6.1a, planned), the filter service (4.7), row-leak closure (4.8) and the database.py reorganisation proposal (4.9) — what each step extracts, contract, required tests, dependencies, risk, acceptance criteria, and what deliberately stays in `DBMod`. |
-| [`history_persistence_audit.md`](history_persistence_audit.md) | **Planned — nothing implemented.** Phase 4.6.1a: the GUI `lastgames.txt` contract (path, format, ordering, pointer, five insert sites, exit-only save defect, failure handling) and the `filter_*.txt` contract (five-line format, id-string values, Load/Save dialogs, crash/silent-failure modes) with every call site; the precise `load_lastsaver()` status (live but always-empty consumer, no writer ever existed — not an import source); the screensaver lifecycle and candidate display boundaries; four purpose-specific `status.db` tables covered by **one** `PRAGMA user_version` migration; the **one-time import + cleanup sequence** (per-file all-or-nothing validation, commit-before-delete, terminal marker states `completed`/`completed_discards`/`completed_no_source`/`failed`, no-reimport, cleanup-only recovery, unknown-file preservation); the verified Core userdata inventory; the Core/Kodi boundary, facade API and notification; the dependency on Phase 4.7; and open questions Q1–Q7 with recommendations. |
+| [`history_persistence_audit.md`](history_persistence_audit.md) | **Planned — nothing implemented.** Phase 4.6.1a: the GUI `lastgames.txt` contract (path, format, ordering, pointer, five insert sites, exit-only save defect, failure handling) and the `filter_*.txt` contract (five-line format, id-string values, Load/Save dialogs, crash/silent-failure modes) with every call site; the precise `load_lastsaver()` status (live but always-empty consumer, no writer ever existed — not an import source); the screensaver lifecycle and candidate display boundaries; four purpose-specific `status.db` tables covered by **one** `PRAGMA user_version` migration; the **one-time import + cleanup sequence** (per-file all-or-nothing validation, commit-before-delete, terminal marker states `completed`/`completed_discards`/`completed_no_source`/`failed`, no-reimport, cleanup-only recovery, unknown-file preservation); the verified Core userdata inventory; the Core/Kodi boundary, facade API and notification; the dependency on Phase 4.7, the confirmed 4.7 → 4.6.1 → 4.6.2 ordering (D11); and the six open questions Q1–Q6 with recommendations. |
 
 ## Phase checklist
 
@@ -266,6 +286,18 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
   pre-extraction `DBMod` first (characterisation baseline **43 passed**), full suite
   **622 passed**; ruff/mypy clean on the new file, `database.py` findings unchanged
   at 33.
+- [x] Step 4.7 — `gamelist_filter.py` explicit-state filter/query composition +
+  parameterisation (Q2/Q9), as four commits: `479e202` (bind the `order` fallback;
+  `tests/test_execute_statement_order.py`), `10f9fbd` (filter-state accessors
+  `set_filter_enabled`/`set_order`, GUI+screensaver call sites converted;
+  `tests/test_filter_state_accessors.py`), `da65a62` (extraction: `GamelistFilter`
+  dataclass + `define_filter`/`execute_statement`/selector helpers, `DBMod` facades,
+  interpolation unchanged) and `bc631eb` (bind all external values; private
+  `_where_params`/`_filter_where_params` feeding `get_random_id`/`get_random_art`).
+  Characterisation + parameterisation suite `tests/test_gamelist_filter.py` (28 tests);
+  full suite **622 → 654 passed**; new module Kodi-free and ruff-clean apart from the
+  pre-existing `int(round())` style. Known limitation documented: selector-only retry
+  can loop when the selector matches nothing.
 
 ### Planned, not implemented (see `history_persistence_audit.md`)
 
@@ -281,7 +313,8 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
   — including invalid ones — with a Kodi-side notification naming discarded files);
   startup checks marker → import once / cleanup only / report stored failure, never
   re-import after a terminal state, explicit retry only after `failed`; unknown files
-  never deleted. **Blocked on open questions Q1–Q7.**
+  never deleted. **Blocked on open questions Q1–Q6; ordering confirmed as 4.7 → 4.6.1 →
+  4.6.2 (D11) — Q1–Q6 must be answered before implementation starts.**
 - [ ] Step 4.6.2 — screensaver display history writes into the same migration's
   `screensaver_history` table (feature starts empty; hooks at the render /
   `onPlayBackStarted` boundaries). **Blocked on open question Q4** (duplicates,
@@ -293,7 +326,7 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 
 ### Decided, not yet implemented (see roadmap)
 
-- [ ] Step 4.7 — `gamelist_filter.py`: explicit-state filter/query composition, parameterisation (Q2), filter-state accessors, `get_by_maker` clone-resolution read.
+- [x] Step 4.7 — `gamelist_filter.py`: explicit-state filter/query composition, parameterisation (Q2), filter-state accessors, `get_by_maker` clone-resolution read. **Done** (see above).
 - [ ] Step 4.8 — row-leak closure: facade returns only unambiguous shapes; named access only across add-on boundaries.
 - [ ] Step 4.9 (proposal) — move non-DB code out of `database.py` (download, scan progress, labels/selection helpers, cmdline helpers).
 - [ ] Removal of duplicate artwork copying — agreed scope: make `artwork.db` the single
@@ -303,23 +336,23 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 
 ### Planned next step
 
-**Steps 4.5 (`StatusRepository`) and 4.6 (`EmulatorRepository`) are done** (Q4
-prerequisite committed separately first as `8bb8a8d`; both extractions are
-uncommitted working-tree code, with `tests/test_status_repository.py` (24 tests),
-`tests/test_emulator_repository.py` (43 tests) and the full suite green at
-**622 passed**). **Step 4.6.1a** (one `status.db` migration for GUI lastgames + filter
-selections + screensaver history, plus the one-time legacy import and cleanup) is
-**planning only** — `history_persistence_audit.md`; no code, schema, migration, tests or
-user files were changed (the real profile on this machine was inspected read-only), and
-open questions Q1–Q7 block implementation. Its ordering recommendation was **revised**
-when filter selections joined the scope: it now depends on **Phase 4.7** (persisted
-selections are consumed by `define_filter`, whose explicit-state composition is 4.7's
-job) and is recommended **after** 4.7 — the schema/import pieces are code-disjoint and
-could land earlier, which is open question Q7; **4.7's scope and acceptance criteria are
-unchanged** either way. Subject to that decision,
-**Step 4.7** — `gamelist_filter.py` (filter/query composition,
-Q2 parameterisation) — remains the next implementation step; it proceeds independently of the completed
-4.2–4.6 chain. Steps 4.0, 4.2, 4.2a, 4.2b, 4.3, 4.4, 4.5-pre, 4.5 and 4.6 are done.
+**Steps 4.5 (`StatusRepository`, committed as `fcdefe5`), 4.6 (`EmulatorRepository`,
+committed as `b84341e`) and 4.7 (the explicit-state gamelist filter/query composition,
+committed as `479e202` + `10f9fbd` + `da65a62` + `bc631eb`) are done** (Q4 prerequisite
+committed separately first as `8bb8a8d`; tree clean at HEAD `bc631eb`, with
+`tests/test_status_repository.py` (24 tests), `tests/test_emulator_repository.py` (43
+tests), `tests/test_gamelist_filter.py` (28 tests) and the full suite green at **654
+passed**, 5 skipped, 18 subtests passed). **Step 4.6.1a** (one `status.db` migration for
+GUI lastgames + filter selections + screensaver history, plus the one-time legacy import
+and cleanup) is **planning only** — `history_persistence_audit.md`; no code, schema,
+migration, tests or user files were changed (the real profile on this machine was
+inspected read-only), and open questions **Q1–Q6** block implementation. Its ordering is
+**confirmed: 4.7 → 4.6.1 → 4.6.2** — the migration depends on **Phase 4.7**, which is now
+satisfied (persisted selections are consumed by `define_filter`, whose explicit-state
+composition 4.7 delivered, and 4.7's text-file persistence stayed in place).
+**Step 4.6.1a** is therefore the next implementation step (after Q1–Q6 are answered);
+it proceeds independently of the completed 4.2–4.7 chain. Steps 4.0, 4.2, 4.2a, 4.2b,
+4.3, 4.4, 4.5-pre, 4.5, 4.6 and 4.7 are done.
 See [`roadmap.md`](roadmap.md) for the full contracts.
 
 ## Boundary guards (step 4.0 implemented)
@@ -357,7 +390,8 @@ Test file: `tests/test_architecture_boundaries.py` (7 tests, standard library on
    entry points) and ≥ 30 production files, and synthetic in-memory sources prove both
    detectors flag violations in files that do not exist yet.
 
-**Result at HEAD `2a2b1af`: no violations — the current production tree passes both
+**Result at HEAD `2a2b1af`, re-verified at HEAD `5514efd` (the full suite below includes
+the guard tests): no violations — the current production tree passes both
 guards.**
 
 ## `status.db` schema and migration policy (confirmed — Q6)
@@ -401,7 +435,7 @@ The same rules apply to both `status.db` schema helpers (4.5 `sets`, 4.6
 `emu`/`emu_conn`); any future schema change must land together with its
 versioned migration mechanism in the same change.
 
-## Validation (executed at HEAD `8bb8a8d` + uncommitted step-4.5/4.6 working tree; steps 4.0, 4.2a, 4.2b, 4.3, 4.4, the Q4 fix, 4.5 and 4.6)
+## Validation (executed at HEAD `8bb8a8d` + step-4.5/4.6 working tree — those steps are now committed as `fcdefe5` + `b84341e`; steps 4.7 re-verified at HEAD `bc631eb`; steps 4.0, 4.2a, 4.2b, 4.3, 4.4, the Q4 fix, 4.5, 4.6 and 4.7)
 
 Python from `.venv-debian-vm` (single consistent venv across all docs):
 
@@ -480,11 +514,27 @@ Python from `.venv-debian-vm` (single consistent venv across all docs):
   tests/test_save_further_media.py -q
 # → 101 passed
 
-# Full suite baseline (after step 4.6)
+# Step 4.7 pre-work tests (new files)
+.venv-debian-vm/bin/python -m pytest tests/test_execute_statement_order.py \
+  tests/test_filter_state_accessors.py -q
+# → 4 passed  (order-fallback fix: pre-fix run fails with UnboundLocalError;
+#   accessor tests cover set_order/set_filter_enabled)
+
+# Step 4.7 characterisation + parameterisation suite (new file; written against the
+# pre-extraction DBMod first, re-run unchanged against the delegating facade)
+.venv-debian-vm/bin/python -m pytest tests/test_gamelist_filter.py -q
+# → 28 passed  (define_filter all/partial/per-category; execute_statement
+#   normal/prev/next, filter on/off, empty-result retry, sentinel entries,
+#   start/middle/end windowing; every get_by_* incl. one-level clone chain and
+#   missing-maker TypeError; parameterisation: quote-bearing category round-trip,
+#   hostile value bound by category_query, bound id list, quote-bearing software name
+#   through prev/next, get_random_id via filter params)
+
+# Full suite baseline (after step 4.7 — commits 479e202 + 10f9fbd + da65a62 + bc631eb)
 .venv-debian-vm/bin/python -m pytest tests/ -q
-# → 622 passed, 5 skipped, 18 subtests passed
-#   (579 before 4.6 + 43 emulator_repository tests; skipped: VGM real-MAME tests,
-#    gated by VGM_MAME_TESTS=1)
+# → 654 passed, 5 skipped, 18 subtests passed
+#   (622 before 4.7 + 28 gamelist_filter tests + 4 pre-work tests; skipped: VGM
+#    real-MAME tests, gated by VGM_MAME_TESTS=1)
 
 # Lint on the changed files — no new findings (HEAD vs working tree, per file)
 .venv-debian-vm/bin/python -m ruff check <file>
@@ -493,9 +543,11 @@ Python from `.venv-debian-vm` (single consistent venv across all docs):
 #   artwork_scanner.py 11=11  exodos_scanner.py 4=4
 #   gb64_scanner.py 14=14
 #   database.py 36→33 (step 4.3 moved its three style findings out with the code;
-#   still 33 after step 4.4, after the Q4 fix, after step 4.5 and after step 4.6 —
-#   remaining are pre-existing — AGENTS.md "Lint (many pre-existing issues)"
-#   deliberately not churned)
+#   still 33 after step 4.4, after the Q4 fix, after step 4.5 and after step 4.6;
+#   33→32 after step 4.7 — remaining are pre-existing — AGENTS.md "Lint (many
+#   pre-existing issues)" deliberately not churned)
+#   gamelist_filter.py 2 (both carried verbatim from the moved code: the pre-existing
+#   `int(round(...))` RUF046 and one `.format`→f-string suggestion; not churned)
 #   game_repository.py 0=0 (the three moved style findings fixed in the new
 #   location in 4.3; still 0 after step 4.4)
 #   status_repository.py 0=0 (auto-fixed once during writing — import sort — then
@@ -551,20 +603,29 @@ after the extraction; the step 4.6 runs (`tests/test_emulator_repository.py`
 `43 passed` both against the pre-extraction `DBMod` — inline DDL and inline SQL
 still present — and after the delegation, the 101-test group, full suite
 **`622 passed`**, per-file lint comparison, `emulator_repository.py` mypy) were
-re-executed after the extraction.
+re-executed after the extraction; the step 4.7 runs (the `4 passed` pre-work files,
+`tests/test_gamelist_filter.py` `28 passed` against both the pre-extraction `DBMod` and
+the delegating facade, full suite **`654 passed`**, per-file lint comparison) were
+re-executed across the extraction and parameterisation commits.
 Only the guard test file is new from 4.0; `tests/test_cmd_line_options.py`,
 `tests/test_emulator_launcher.py`, `tests/test_save_further_media.py`,
-`tests/test_status_repository.py` and `tests/test_emulator_repository.py` are new
+`tests/test_status_repository.py`, `tests/test_emulator_repository.py`,
+`tests/test_gamelist_filter.py`, `tests/test_execute_statement_order.py` and
+`tests/test_filter_state_accessors.py` are new
 (4 further tests were appended to the existing `tests/test_emulation_chd.py`) —
-steps 4.2a/4.2b/4.3/4.5/4.6 modified production code and existing tests as described above.
+steps 4.2a/4.2b/4.3/4.5/4.6/4.7 modified production code and existing tests as described
+above.
 
-**Retention note (tests/docs are gitignored):** `.gitignore` ignores `tests` (bare
-pattern, any depth) and `docs/`; the rule is deliberate and documented in `AGENTS.md`
-(local-only suite/docs; `AGENTS.md` also forbids modifying `.gitignore`). No test file
-is tracked by git (`git ls-files | grep test` → 0) — this includes the pre-existing
-suite. Regression tests are therefore retained the same way as every other test: in the
-local `tests/` tree, alongside the venv. Force-adding ignored files or changing the
-ignore rules is a maintainer decision, not part of any refactor step.
+**Retention note (tests ignored; this docs directory tracked):** `.gitignore` ignores
+`tests` (bare pattern, any depth) and `docs/*`, **with `!docs/database_refactor/`
+re-including this directory** — so this documentation is committed (first as `ec400f4`,
+refreshed as `5514efd`), while everything else under `docs/` and all of `tests/` stay
+local-only; the rules are deliberate and documented in `AGENTS.md` (`AGENTS.md` also
+forbids modifying `.gitignore`). No test file is tracked by git
+(`git ls-files | grep test` → 0) — this includes the pre-existing suite. Regression
+tests are therefore retained the same way as every other test: in the local `tests/`
+tree, alongside the venv. Force-adding ignored files or changing the ignore rules is a
+maintainer decision, not part of any refactor step.
 
 ## Related documents
 

@@ -15,10 +15,16 @@ with its two direct reads moved to `GameRepository` (coverage gap closed); **upd
 `get_disks` are one-line **Delegates (4.4)**, and `get_cmd_line_options`' four inline
 SELECTs moved to four focused `GameRepository` reads (the method itself stays as
 orchestration).
-**updated again for implemented step 4.5** (uncommitted working-tree changes on top of
-HEAD `8bb8a8d`, the Q4 `save_further_media` fix) — the status.db play-history rows in
-section 9 are now **Delegates (4.5)** over the new `StatusRepository`, and the `sets`
-DDL moved to `status_repository.create_status_tables` (schema unchanged, no migration).
+**updated again for implemented step 4.5** (**committed as `fcdefe5`**) — the status.db
+play-history rows in section 9 are now **Delegates (4.5)** over the new
+`StatusRepository`, and the `sets` DDL moved to
+`status_repository.create_status_tables` (schema unchanged, no migration); **and for
+implemented step 4.6** (**committed as `b84341e`**) — the `emu`/`emu_conn` rows in
+section 10 are **Delegates (4.6)** over `EmulatorRepository`; **and for implemented step
+4.7** (**committed as `479e202` + `10f9fbd` + `da65a62` + `bc631eb`**) — the section 8
+query state machine is now driven by the explicit `GamelistFilter` state and the SQL lives
+in the Kodi-free `gamelist_filter` service, with every external value bound as a
+parameter. Commit-status wording reconciled at HEAD `bc631eb` (tracked tree clean).
 **Module under audit:** `script.module.umsa.core/lib/umsa_core/database.py`.
 **Scope:** read-only inventory of every SQL-bearing method/helper in `database.py`, grouped by
 responsibility, with connection/transaction ownership, callers, result shapes and a
@@ -259,19 +265,32 @@ Do not turn any of the three into a repository method.
 This group is the query *engine* of the frontend. It combines SQL with instance state:
 `use_filter`, `order`, `join`, `where` (set by the `get_by_*` family), and
 `filter_join`/`filter_where` (set by `define_filter`). The GUI mutates `use_filter` and
-`order` directly on the instance, and the screensaver sets `use_filter = False`.
+`order` through the accessors `set_filter_enabled`/`set_order` (since step 4.7),
+and the screensaver sets `use_filter = False` through the same accessor.
+
+**Implemented in step 4.7:** the composition now lives in the Kodi-free
+`umsa_core/gamelist_filter.py`, driven by an explicit `GamelistFilter` state
+(`join`/`where`/`order`/`use_filter`/`filter_join`/`filter_where` plus
+`where_params`/`filter_where_params`). `DBMod` keeps the mutable attributes as the public
+holder and every row below is now a facade: it builds the state, delegates, copies the
+clauses back and mirrors the in-place `order` reset. All external values are bound as SQL
+parameters — the id lists, the category/year/player/swl/source/maker names, the
+`software.name` comparison in the prev/next queries and the random-artwork type list in
+`get_random_art`; `DBMod` stores the matched values in the private
+`_where_params`/`_filter_where_params` for `get_random_id`/`get_random_art`. Only the
+validated `order` whitelist is still interpolated (never a bound value).
 
 | Method | Tables | Behaviour | Delegation |
 |---|---|---|---|
-| `define_filter(filter_lists)` | `swl`, `category`, `nplayers`, `year`, `sets`, `software` | Builds `filter_join`/`filter_where`; skips a join when the filter covers the whole table; returns a display string `"count (percent%)"`. Commits nothing (reads only). **Interpolates the id lists into SQL as comma-joined strings** — ids are pre-validated strings from persisted filter lists (parameterisation of these lists is decision Q2, step 4.7) | Extract (step 4.7) as a *filter builder* with explicit input/output; the decision logic ("all selected → no join") is application logic that should stay visible |
-| `execute_statement(set_id, software_id, prevnext)` | `software`+`sets`+`year`+`maker` + filter subselect | Builds `where` from `use_filter`/`join`/`where`/`filter_*`, resolves the current software name, fetches up to 100 rows with `ORDER BY {order}`, retries without filters when empty, then windows the list around the current position with `prev`/`next` sentinel entries. Returns `(slist, pos, result_count)` — the returned list mixes `sqlite3.Row` entries with plain-dict sentinel entries. **Interpolates `sname` and `order` into SQL.** The pos loop now uses named access (`i['name']`); **latent bug:** for an unexpected `self.order` the local `order` is left unbound (decision Q2: fixed first, in its own commit) | Keep (mixed) for the windowing/orchestration; the SQL fetch itself is the Extract candidate but only after the filter state is passed explicitly (step 4.7). High risk |
-| `get_by_software(set_id)` | via `execute_statement` | Sets `join`/`where` to `''`, delegates | Keep (facade) |
-| `get_software_for_source(set_id, source)` | via `execute_statement` | `where = 'sets.source = "{source}"'` — interpolated | Keep (facade); value parameterisation in 4.7 (Q2) |
-| `get_by_cat(cat, set_id)` | via `execute_statement` | `where = 'category.name = "{cat}"'` — interpolated | Keep (facade); parameterisation in 4.7 (Q2) |
-| `get_by_year(year, set_id)` | via `execute_statement` | interpolated | Keep (facade); parameterisation in 4.7 |
-| `get_by_players(players, set_id)` | via `execute_statement` | interpolated | Keep (facade); parameterisation in 4.7 |
-| `get_by_maker(maker, set_id)` | `maker` (clone resolution — three parameterised reads, then an interpolated `maker.id IN (...)` list) then via `execute_statement` | Resolves cloneof chain first; `where` still interpolated | Keep (facade); the clone-resolution read extracts with step 4.7 |
-| `get_by_swl(swl_name, set_id)` | via `execute_statement` | interpolated | Keep (facade); parameterisation in 4.7 |
+| `define_filter(filter_lists)` | `swl`, `category`, `nplayers`, `year`, `sets`, `software` | Builds `filter_join`/`filter_where` (+ `filter_where_params`); skips a join when the filter covers the whole table; returns a display string `"count (percent%)"`. Commits nothing (reads only). **Id lists are bound (`IN (?,…)`)** since step 4.7 | Extracted (4.7) — facade over `gamelist_filter.define_filter`; the decision logic ("all selected → no join") stays visible in the service |
+| `execute_statement(set_id, software_id, prevnext)` | `software`+`sets`+`year`+`maker` + filter subselect | Builds `where` from `use_filter`/`join`/`where`/`filter_*`, resolves the current software name, fetches up to 100 rows with `ORDER BY {order}`, retries without filters when empty, then windows the list around the current position with `prev`/`next` sentinel entries. Returns `(slist, pos, result_count)` — the returned list mixes `sqlite3.Row` entries with plain-dict sentinel entries. **`sname` and the filter/selector values are bound; only `order` is interpolated from the validated whitelist.** The pos loop uses named access (`i['name']`); the unexpected-`order` bug is **fixed** (fallback bound in its own commit, `479e202`) | Extracted (4.7) — facade over `gamelist_filter.execute_statement`; the windowing/orchestration moved with the SQL. Known limitation: the selector-only retry loop can run forever when the selector matches nothing |
+| `get_by_software(set_id)` | via `execute_statement` | Sets `join`/`where` to `''` and empty params, delegates | Facade over `gamelist_filter.software_query` (4.7) |
+| `get_software_for_source(set_id, source)` | via `execute_statement` | `where = 'sets.source = ?'` with `[source]` | Facade over `gamelist_filter.source_query` (4.7) |
+| `get_by_cat(cat, set_id)` | via `execute_statement` | `where = 'category.name = ?'` with `[cat]` | Facade over `gamelist_filter.category_query` (4.7) |
+| `get_by_year(year, set_id)` | via `execute_statement` | `where = 'year.name = ?'` with `[year]` | Facade over `gamelist_filter.year_query` (4.7) |
+| `get_by_players(players, set_id)` | via `execute_statement` | `where = 'nplayers.name = ?'` with `[players]` | Facade over `gamelist_filter.players_query` (4.7) |
+| `get_by_maker(maker, set_id)` | `maker` (clone resolution — three parameterised reads, then a bound `maker.id IN (?,…)` list) then via `execute_statement` | Resolves the cloneof chain first; where/params bound | Facade over `gamelist_filter.maker_query` (4.7) |
+| `get_by_swl(swl_name, set_id)` | via `execute_statement` | `where = 'swl.name = ?'` with `[swl_name]` | Facade over `gamelist_filter.swl_query` (4.7) |
 | `get_last_played(order)` | **status.db** `sets` + **umsa.db** per-set software info (N+1) | Cross-connection query + aggregation in Python; formats results as GUI list dicts; `order` interpolated into the status SQL and used as a dict key. Returns `(results, 0)` | Keep (mixed) — deliberately combines both databases and does presentation formatting; would become pure orchestration once status reads live in `StatusRepository` (step 4.5 — done; this method stayed, its status-side read is a multi-row aggregation rather than one of the four extracted single-set reads) |
 | `get_best_machine_for_set(swl_name, detail, swl_machine_id)` | — (uses `get_machines`) | Pure selection logic over machine rows + `COUNTRIES` | Keep (orchestration) — no SQL of its own; candidate for step 4.9 |
 | `get_all_for_software(software_id)` | `sets`+5 joins (per software with same name), then per-set status via `get_status_for_set`, best machine, latest via `get_latest_by_software`, dat via `get_dat_for_sets`, art via `get_artwork_for_sets` | The frontend's main orchestration: builds nested set lists, resolves machines, injects `last_played`, returns `(return_list, pos_machine, pos_set, all_dat, all_art)`. **Pure composition as of step 4.3:** all four umsa.db reads go through `GameRepository` (`get_sets_for_software`, `get_software_name`, `get_software_ids_for_name`, `get_machine_name`); no `self.gdbc` remains (structurally pinned by a test) | Keep (orchestration). Direct reads moved to `GameRepository` in step 4.3 ✅ — coverage gap closed |
@@ -375,7 +394,7 @@ Evidence for removal:
 - No test constructs or calls them.
 
 **Decision (Q1): remove uniformly in roadmap step 4.2a — executed** (91 lines deleted
-from `database.py`, uncommitted on `2a2b1af`; a repo-wide grep for the five names
+from `database.py`, committed in `9f2fd40`; a repo-wide grep for the five names
 afterwards returns zero matches anywhere). No replacement repository
 methods were created to preserve unused functionality; a future use case must introduce an
 explicitly designed API with a documented return type and tests. The `status.db`
@@ -388,19 +407,23 @@ explicitly designed API with a documented return type and tests. The `status.db`
 
 **Stays as facade (thin delegation, no SQL of its own):**
 `create_dat_tables`, `create_art_tables`, all `scan_*` wrappers, `get_art_types`,
-`get_artwork_for_set(s)`, `get_dat_for_set(s)`, `close_db`, the `get_by_*` wrappers,
-`get_by_software`, `get_software_for_source`, the twelve step-4.2 `GameRepository`
+`get_artwork_for_set(s)`, `get_dat_for_set(s)`, `close_db`, the `get_by_*` wrappers
+(now facades over `gamelist_filter` selector helpers since step 4.7),
+`get_by_software`, `get_software_for_source`, `define_filter` (facade over
+`gamelist_filter.define_filter` since 4.7), the twelve step-4.2 `GameRepository`
 lookups, the seven step-4.3 reads (sections 7.2–7.4), and the two step-4.4
 command-line input facades (`get_parts_for_set_id`, `get_disks`).
 
 **Stays as lifecycle/orchestration:** `__init__`, `_open_persistent_databases`, `open_db`,
-`close*`, `_run_scan_with_shared_state`, `execute_statement` (windowing), `get_last_played`,
+`close*`, `_run_scan_with_shared_state`, `execute_statement` (windowing/orchestration
+facade over `gamelist_filter` since 4.7), `get_last_played`,
 `get_all_for_software` (pure composition since step 4.3), `get_best_machine_for_set`,
 `get_cmd_line_options` (reads via `GameRepository` since step 4.4; assembly in `DBMod`),
 `create_cmdline` (pure), `make_time_nice`, `_art_source_roots`,
 `_get_*_repository`, `get_latest_by_software` (cross-connection orchestration).
 
-**Stays as documented mixed queries:** `get_random_id`, `get_random_art`,
+**Stays as documented mixed queries:** `get_random_id`, `get_random_art` (both now feed
+the bound `_filter_where_params` into the filter subselect since step 4.7),
 `get_artwork_by_software_id`, cross-database `open_db`/`add_dat_to_db`/`add_art_to_db`.
 
 **Removed (step 4.2a, Q1):** `get_status_for_software`, `write_options`, `get_swl_id`,
@@ -409,10 +432,12 @@ command-line input facades (`get_parts_for_set_id`, `get_disks`).
 **Extract candidates, in recommended order:** status.db play history (section 9 → step
 4.5 — **done**, `StatusRepository`) → emulator config (section 10 → step 4.6 —
 **done**, `EmulatorRepository`) → filter/query
-composition (section 8 → step 4.7, last, highest risk). Row-leak closure (step 4.8) and
+composition (section 8 → step 4.7 — **done**, `gamelist_filter`). Row-leak closure (step
+4.8) and
 the non-DB reorganisation (step 4.9) follow. See `roadmap.md`. (Steps 4.3 — sections
 7.2–7.4 plus the `get_all_for_software` direct reads — and 4.4 — the section 7.4
 command-line input reads and `get_cmd_line_options`' four inline SELECTs — are
 implemented; section 7 carries no direct SQL in `DBMod` any more; section 9 carries
-none either since 4.5 and section 10 none since 4.6 — only the
+none either since 4.5, section 10 none since 4.6, and section 8's filter/query SQL now
+lives in `gamelist_filter` since 4.7 — only the
 presentation/orchestration facades remain.)

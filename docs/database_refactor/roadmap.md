@@ -23,24 +23,32 @@ save_further_media single-INSERT with both values; ensure rollback on failure");
 again for **implemented step 4.5 — `StatusRepository`** (`status_repository.py` new +
 `database.py` status delegation and schema-helper call) and for **implemented step
 4.6 — `EmulatorRepository`** (`emulator_repository.py` new + `database.py` emulator
-delegation and schema-helper call + `tests/test_emulator_repository.py`) — **uncommitted
-working-tree changes on top of `8bb8a8d`**, deliberately not committed because the
-maintainer has not asked for a commit.
+delegation and schema-helper call + `tests/test_emulator_repository.py`) — **committed
+as `fcdefe5`** ("refactor(database): centralize play history and media access in
+status_repository", step 4.5) and **`b84341e`** ("refactor(database): move emulator
+configuration to emulator_repository", step 4.6) and for **implemented step 4.7 —
+the explicit-state filter/query composition** (`gamelist_filter.py` new + `database.py`
+facade + parameterisation) — **committed as `479e202` (order fix), `10f9fbd`
+(filter-state accessors), `da65a62` (extraction) and `bc631eb` (parameterisation)**.
+Documentation history: this directory was first tracked in `ec400f4` ("add
+docs/database_refactor") and refreshed in `5514efd` ("update docs", docs-only since
+`b84341e`); the four 4.7 code commits sit on top. Current **HEAD is `bc631eb`**
+(tracked tree clean, no pending working-tree changes).
  **Status:** steps 4.0, 4.2, 4.2a,
-4.2b, 4.3, 4.4, 4.5-pre, 4.5 and 4.6 are implemented; step **4.6.1a (`status.db`
+4.2b, 4.3, 4.4, 4.5-pre, 4.5, 4.6 and 4.7 are implemented; step **4.6.1a (`status.db`
 history & legacy-file migration — GUI lastgames + filter selections + screensaver
 history) is planned only** — see
 [`history_persistence_audit.md`](history_persistence_audit.md), nothing implemented
 (no schema, no migration, no import, no cleanup executed);
-steps 4.7–4.9 are planned — each step is
+steps 4.8–4.9 are planned — each step is
 designed to be independently reviewable and testable; no step changes public method
 signatures, return values, `row_factory` defaults, or database schemas (4.2b changed
 only which *connections repositories accept*, with an explicit `ValueError`; 4.5 and
 4.6 moved the `sets` and `emu`/`emu_conn` DDL without changing them; 4.6.1a *would*
 add four tables and the `PRAGMA user_version` migration mechanism in **one version
 increment**, plus a one-time import that deletes the legacy `lastgames.txt` /
-`filter_*.txt` inputs after commit — all gated on the open questions Q1–Q7 in the
-audit document).
+`filter_*.txt` inputs after commit — all gated on the open questions **Q1–Q6** in the
+audit document (the former Q7 ordering question is resolved: 4.7 → 4.6.1 → 4.6.2).
 
 ## Global contracts every step must honour
 
@@ -176,7 +184,7 @@ string-based dispatch, no test, no add-on reference.
 **Required tests:** existing DBMod/status tests stay green; no new characterization tests
 for removed methods. **Risk:** none (zero callers). **Order:** before or alongside 4.2b.
 
-**Implemented (uncommitted on `2a2b1af`):** 91 lines removed from
+**Implemented (committed in `9f2fd40`):** 91 lines removed from
 `script.module.umsa.core/lib/umsa_core/database.py`, definitions only (the internal
 debug log line went with `get_status_for_software`); repo-wide grep for the five names
 now returns zero matches anywhere (production trees, add-ons, `tests/`, xml/lua);
@@ -383,7 +391,7 @@ rewritten block), new test file clean (`test_emulation_chd.py` keeps 3 pre-exist
 
 ---
 
-## Step 4.5 — `StatusRepository` (new): status.db play history and media ✅ implemented
+## Step 4.5 — `StatusRepository` (new): status.db play history and media ✅ implemented (committed as `fcdefe5`)
 
 **Prerequisite bugfix (decision Q4 — committed as `8bb8a8d`, kept separate from the
 extraction):**
@@ -445,7 +453,8 @@ branch (the both-values insert branch is covered by the prerequisite bugfix);
 `get_all_for_software` (orchestration), `make_time_nice` (pure helper; candidate for the
 step 4.9 reorganisation).
 
-**Implemented (uncommitted on top of `8bb8a8d`):** `umsa_core/status_repository.py`
+**Implemented (committed as `fcdefe5` — "refactor(database): centralize play history
+and media access in status_repository"):** `umsa_core/status_repository.py`
 holds `create_status_tables(cursor)` (byte-equivalent `sets` DDL moved out of
 `_open_persistent_databases`, which now calls it; `emu`/`emu_conn` DDL untouched, no
 migration, `PRAGMA user_version` stays 0) and `StatusRepository` with five methods —
@@ -472,7 +481,7 @@ the pre-extraction `DBMod` first (**characterisation baseline `24 passed`** with
 
 ---
 
-## Step 4.6 — `EmulatorRepository` (new): `emu`/`emu_conn` emulator config ✅ implemented
+## Step 4.6 — `EmulatorRepository` (new): `emu`/`emu_conn` emulator config ✅ implemented (committed as `b84341e`)
 
 **Responsibility:** the `emu`/`emu_conn` tables of `status.db`.
 
@@ -593,20 +602,23 @@ update + `reconfigure=False` unreachable → `emu_info['id']` used;
 themselves. `status.db` now has no inline SQL in `database.py` except the
 schema-helper calls in `_open_persistent_databases`.
 
-**Remaining work for 4.7 and beyond:** unchanged — `gamelist_filter.py`
-(explicit-state filter/query composition, Q2/Q9) is next, then row-leak closure
-(4.8, which now sees `get_emulators`/`get_emulator` returning plain dicts —
-already unambiguous shapes) and the `database.py` reorganisation proposal (4.9).
-The 4.6.1a audit below documents a **dependency on 4.7** (the persisted filter
-selections are consumed by `define_filter`, whose explicit-state composition is 4.7's
-job) and now recommends 4.7 first — but it does not change 4.7's scope or
-acceptance criteria.
+**Remaining work for 4.7 and beyond:** step 4.7 is now **done** (see its section
+above), so the next planned work is **4.6.1a** (the one-time `status.db` migration,
+gated on Q1–Q6), then row-leak closure (4.8, which now sees
+`get_emulators`/`get_emulator` returning plain dicts — already unambiguous shapes) and
+the `database.py` reorganisation proposal (4.9). The 4.6.1a audit below documents the
+**confirmed dependency on 4.7** (now satisfied): the persisted filter selections are
+consumed by `define_filter`, whose explicit-state composition 4.7 delivered; 4.7's scope
+and acceptance criteria were not changed by it. Text-file persistence
+(`lastgames.txt`, `filter_*.txt`) stayed in place during 4.7 and moves only in 4.6.1a.
 
 ---
 
 ## Step 4.6.1a — `status.db` history & legacy-file migration (audit only) 📋 planned
 
-**Status: PLANNED — not implemented.** Read-only audit at HEAD `b84341e`;
+**Status: PLANNED — not implemented.** Read-only audit of the code as of `b84341e`
+(last code commit; steps 4.5/4.6 committed as `fcdefe5`/`b84341e`), documentation
+reconciled at **HEAD `5514efd`**;
 full contract findings, schemas, import/cleanup design and open questions
 live in [`history_persistence_audit.md`](history_persistence_audit.md) — no production
 code, schema, migration, test or user file was changed. Scope: **three related
@@ -668,22 +680,23 @@ Core userdata (verified against the real profile and `umsa_db.zip`, which contai
 cleanup (order/duplicate handling), Q2 validation strictness (data-loss decision), Q3
 filter semantics / whether runtime filter state starts persisting, Q4 screensaver
 duplicates + ordering + display boundary + identifier, Q5 unexpected userdata files
-(`lastsaver.txt`), Q6 DB-failure recovery incl. the marker-impossible fallback, Q7
-ordering vs 4.7 — section 16 of the audit document.
+(`lastsaver.txt`), Q6 DB-failure recovery incl. the marker-impossible fallback —
+section 16 of the audit document. **All six must be resolved before implementation
+starts (D11).** The former Q7 (ordering) is **resolved**: 4.7 → 4.6.1 → 4.6.2.
 
 **Dependencies:** conventions from 4.2–4.6 (Row contract, repository style, savepoint
 ownership); **Phase 4.7 for the filter-selection consumption path** — persisted
 selections are handed to `define_filter`, i.e. into the filter state 4.7 makes explicit.
-**Revised recommended order (supersedes this document's earlier "4.6.1 before 4.7"
-advice, which was written for a lastgames-only scope): 4.7 first (at minimum its
-pre-work: filter-state accessors + unbound-`order` fix), then 4.6.1, then 4.6.2.**
-4.7's scope and acceptance criteria remain unchanged; the sequence itself is open
-question Q7. Implementation must also update the three tests pinning
-`user_version == 0`.
+**Ordering confirmed (D11): 4.7 first, then 4.6.1, then 4.6.2.** The earlier
+"4.6.1 before 4.7" advice was written for a lastgames-only scope and is superseded.
+**4.7's scope and acceptance criteria are unchanged**, and its **text-file persistence
+(`lastgames.txt`, `filter_*.txt`) stays in place during 4.7** — the files move only
+inside the later one-time `status.db` migration. Implementation must also update the
+three tests pinning `user_version == 0`.
 
 ---
 
-## Step 4.7 — `gamelist_filter.py`: explicit-state filter/query composition (decisions Q2/Q9)
+## Step 4.7 — `gamelist_filter.py`: explicit-state filter/query composition (decisions Q2/Q9) ✅ implemented
 
 **Responsibility:** make `define_filter`, `execute_statement` and the `get_by_*` wrappers
 pass their state *explicitly* instead of reading `self.join`, `self.where`, `self.order`,
@@ -738,6 +751,40 @@ with plain-dict sentinel entries —, positions at list start/middle/end), and e
 `get_by_*` including the clone chain; then the parameterisation tests above.
 
 **Remains in DBMod:** the mutable state attributes and the facade method family.
+
+**Implemented across four commits (on top of `5514efd`):**
+1. `479e202` — "fix(database): bind order fallback in execute_statement" (Q2 pre-work,
+   own commit + `tests/test_execute_statement_order.py`, 2 tests).
+2. `10f9fbd` — "refactor(database): add filter-state accessors to DBMod"
+   (`set_filter_enabled(flag)`, `set_order(order)`; the three GUI mutation sites and the
+   screensaver runtime now call them; `tests/test_filter_state_accessors.py`, 2 tests).
+3. `da65a62` — "refactor(database): extract explicit-state gamelist filter service":
+   the new Kodi-free `umsa_core/gamelist_filter.py` takes a `GamelistFilter` dataclass
+   (`join`, `where`, `order`, `use_filter`, `filter_join`, `filter_where`, plus
+   `where_params`/`filter_where_params`) and the caller connection; it holds
+   `define_filter`, `execute_statement` and the seven selector helpers
+   (`software_query`, `source_query`, `category_query`, `year_query`, `players_query`,
+   `swl_query`, `maker_query`). `DBMod.define_filter`/`execute_statement`/`get_by_*` are
+   now facades that build the state, copy clauses back into the public attributes and
+   mirror the in-place `order` reset. SQL interpolation was byte-identical in this step.
+4. `bc631eb` — "fix(database): bind gamelist filter/query values as SQL parameters":
+   the Q2 parameterisation. Every external value (category/year/player/swl/source/maker
+   names, filter id lists, the prev/next software-name comparison, random-artwork type
+   lists) is bound; each clause carries its own `(sql, params)` pair so parameter order
+   survives clause concatenation. `DBMod` keeps `.where`/`.filter_where` and gains
+   private `_where_params`/`_filter_where_params`, consumed by `get_random_id` and
+   `get_random_art`. `order` stays a validated whitelist, never a bound value.
+
+Characterisation suite `tests/test_gamelist_filter.py` (28 tests) pins `define_filter`,
+`execute_statement` (normal/prev/next, filter on/off, empty-result retry, sentinel
+entries, position at start/middle/end) and every `get_by_*` including the one-level
+clone chain and the missing-maker `TypeError`; the parameterisation tests cover a
+`'`-bearing category name round-trip, a hostile `"`-bearing value bound by
+`category_query`, a bound id list, a `"`-bearing software name through prev/next, and
+`get_random_id` via filter params. Full suite: **622 → 654 passed**, 5 skipped,
+18 subtests passed. Known limitation (unchanged, documented not fixed): the
+retry-without-filters loop still retries with selector-only `where`, so a selector whose
+own clause matches nothing loops forever; tests avoid triggering it.
 
 ---
 
@@ -831,37 +878,34 @@ guard); no behaviour change. Not urgent — schedule after 4.6.
 ```
 4.0 ✅                     (test-only boundary guards; landed at 2a2b1af)
 4.2 ✅ ──► 4.2a ✅ ──► 4.2b ✅ ──► 4.3 ✅ ──► 4.4 ✅   (same repository, cumulative; 4.2a+4.2b committed as 9f2fd40, 4.3 as 9041812, 4.4 = delegation + 2 CHD fixes, committed as 4d5e70c)
-4.5-pre ✅ (Q4 bugfix, committed as 8bb8a8d) ──► 4.5 ✅ (StatusRepository, uncommitted) ──► 4.6 ✅ (EmulatorRepository, uncommitted)   (status.db; parallel to 4.2-4.4)
+4.5-pre ✅ (Q4 bugfix, committed as 8bb8a8d) ──► 4.5 ✅ (StatusRepository, committed as fcdefe5) ──► 4.6 ✅ (EmulatorRepository, committed as b84341e)   (status.db; parallel to 4.2-4.4)
 4.6.1a 📋   (`status.db` history & legacy-file migration — one migration, one-time
              import + cleanup: PLANNED ONLY, history_persistence_audit.md;
-             gated on open questions Q1-Q7; recommended AFTER 4.7 — see note below;
+             gated on open questions Q1-Q6; order CONFIRMED: after 4.7 (D11);
              4.6.2 = screensaver history writes, gated on Q4)
-4.7                         (accessors + order fix first; parameterisation last;
-                             after 4.2-4.4)
+4.7 ✅ ──► (accessors `10f9fbd` + order fix `479e202` first; extraction `da65a62`;
+             parameterisation `bc631eb`)
 4.8                         (after 4.3-4.6; touches GUI)
 4.9                         (proposal; after 4.6)
 ```
 
 Steps 4.2a/4.2b (`9f2fd40`), 4.3 (`9041812`), 4.4 (delegation + the two CHD
-compatibility fixes, `4d5e70c`), 4.5-pre (the Q4 `save_further_media` bugfix, `8bb8a8d`)
-and 4.5 (`StatusRepository` — working-tree changes: `database.py` modified,
-`status_repository.py` new, uncommitted because the maintainer has not asked for a
-commit) and 4.6 (`EmulatorRepository` — working-tree changes: `emulator_repository.py`
-new, `database.py` + `status_repository.py` docstrings modified, `tests/test_emulator_repository.py`
-new, uncommitted for the same reason) are implemented. **Step 4.6.1a (one
-`status.db` migration for GUI lastgames + filter selections + screensaver history,
-one-time legacy import and cleanup) is planning only** — the audit's ordering
-recommendation, revised when filter selections joined the scope, is to implement it
-**after 4.7**, because the persisted filter selections must be fed into `define_filter`,
-i.e. into the filter state 4.7 turns explicit; building that load path first would mean
-re-touching it during 4.7. (The schema/import pieces are code-disjoint from 4.7 and
-*could* land earlier — that choice is open question Q7; the earlier "before 4.7"
-recommendation was written for a lastgames-only scope and is superseded.)
-**4.7's scope and acceptance criteria are unchanged** by either ordering.
-Subject to the maintainer's ordering decision,
-**step 4.7 — the filter/query-composition refactor — remains the next implementation
-step**.
-Steps 4.5-4.6 (status.db) proceed independently of the completed 4.2-4.4 chain; 4.7 is
+compatibility fixes, `4d5e70c`), 4.5-pre (the Q4 `save_further_media` bugfix, `8bb8a8d`),
+4.5 (`StatusRepository`, **committed as `fcdefe5`**), 4.6 (`EmulatorRepository`,
+**committed as `b84341e`**) and 4.7 (the explicit-state filter/query composition,
+**committed as `479e202` + `10f9fbd` + `da65a62` + `bc631eb`**) are implemented and
+committed; the tracked tree is clean at the current **HEAD `bc631eb`** (docs commits
+`ec400f4` + `5514efd` for this directory sit below the 4.7 code commits). **Step 4.6.1a
+(one `status.db` migration for GUI lastgames + filter selections + screensaver history,
+one-time legacy import and cleanup) is now the next implementation step, planning
+only** — ordering **confirmed by the maintainer as 4.7 → 4.6.1 → 4.6.2 (D11)**: the
+persisted filter selections are fed into the now-explicit `define_filter` state, and
+**4.7's text-file persistence (`lastgames.txt`, `filter_*.txt`) stays in place** — it
+moves only in the later migration. The six open questions Q1–Q6 (lastgames duplicates,
+validation strictness, filter semantics, screensaver semantics, unknown files, DB-failure
+recovery) must be resolved **before** any 4.6.1 implementation.
+Steps 4.5-4.6 (status.db) proceeded independently of the 4.2-4.4 chain; 4.7 is
 deliberately late and 4.8 deliberately last. Every step lands with: characterisation
 tests, facade delegation, unchanged public API, and a green full suite
-(`.venv-debian-vm/bin/python -m pytest tests/ -q`).
+(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **654 passed**, 5 skipped, 18 subtests
+at HEAD `bc631eb`).

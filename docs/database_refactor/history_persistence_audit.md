@@ -15,10 +15,16 @@ their cleanup:
 3. Screensaver display history (new, last 100 successfully displayed sets →
    `screensaver_history`; starts empty, **no import**).
 
-Basis: read-only inspection of the working tree at git HEAD `b84341e`, `git log -S`
-history searches, plus verification against the **real Kodi profile on this machine**
-(`/home/opencode/.kodi/userdata/addon_data/script.module.umsa.core/`) and the contents of
-the distributed `umsa_db.zip` (section 12). Line references are to that tree.
+Basis: read-only inspection of the code as of `b84341e` — the **last code commit**;
+steps 4.5 (`fcdefe5`) and 4.6 (`b84341e`) are committed and the tracked tree was clean —
+plus `git log -S` history searches, verification against the **real Kodi profile on this
+machine** (`/home/opencode/.kodi/userdata/addon_data/script.module.umsa.core/`) and the
+contents of the distributed `umsa_db.zip` (section 12). Line references are to that
+code. This document itself lives in the tracked `docs/database_refactor/` directory
+(first committed in `ec400f4`, refreshed in `5514efd`); the audit snapshot is of code
+`b84341e` — since then Phase 4.7 landed (`479e202` + `10f9fbd` + `da65a62` + `bc631eb`),
+which satisfies this document's 4.7 dependency without changing its scope (front-end
+text-file persistence is untouched).
 
 Scope restrictions that bound this document: documentation/audit updates only; no
 production-code changes; no migrations or schema changes; no tests added or modified; no
@@ -45,6 +51,7 @@ kept the legacy files as permanent backups).
 | **D8** | **Three concepts stay separate** — different tables, different writers, different lifecycles: navigation history, filter selections, screensaver history. |
 | **D9** | **No Kodi imports in `umsa_core`.** The import/migration logic is Kodi-free Core code; the user notification is issued through the existing Kodi-side layer (section 13). |
 | **D10** | **Existing data is preserved:** all current play history (`sets`), emulator configuration (`emu`, `emu_conn`) and further-media rows survive untouched — the migration only adds tables. |
+| **D11** | **Ordering (former Q7, confirmed by the maintainer):** Phase **4.7 → 4.6.1 → 4.6.2**. 4.7's existing scope and acceptance criteria are unchanged; **text-file persistence (`lastgames.txt`, `filter_*.txt`) stays in place during 4.7** and moves only in the later one-time `status.db` migration. Rationale accepted: database-backed filter loading built before the explicit-state filter/query refactor would bind persistence to the old implicit-state API. **Q1–Q6 must be resolved before any 4.6.1 implementation.** |
 
 ---
 
@@ -593,7 +600,7 @@ unexpected files applies to *this* machine; on other installations section 11's
 
 ---
 
-## 14. Relationship to Phase 4.7 and ordering (revised)
+## 14. Relationship to Phase 4.7 and ordering (confirmed — D11)
 
 The five responsibilities stay separate:
 
@@ -614,20 +621,32 @@ state that 4.7 turns into explicit input. Building the new filter-selection load
 *before* 4.7 means writing it against the implicit-state API and re-touching it during
 4.7.
 
-**Consequence: this revision reverses the previous recommendation.** The earlier "land
-4.6.1 before 4.7" advice (front-load the `user_version == 0` test churn) was written
-when the scope was lastgames-only. With filter selections now in the same migration, the
-recommended order is **4.7 first (at minimum its pre-work: filter-state accessors + the
-unbound-`order` fix), then 4.6.1 implementation**, then 4.6.2. The earlier argument still
-holds for the schema-only pieces, which *could* land before 4.7 without conflict — hence
-the sequence itself is a confirmation item (Q7). Either way, **4.7's scope and
-acceptance criteria are not changed by this plan.**
+**Ordering: confirmed as 4.7 → 4.6.1 → 4.6.2 (D11).** The earlier "land 4.6.1 before
+4.7" advice (front-load the `user_version == 0` test churn) was written when the scope
+was lastgames-only; with filter selections in the same migration the maintainer
+confirmed the dependency argument: database-backed filter loading before the
+explicit-state refactor would bind persistence to the old implicit-state API and create
+avoidable follow-up changes. Two accompanying rules:
+
+- **Phase 4.7's existing scope and acceptance criteria are unchanged**, and its
+  text-file persistence (`load_filter`/`save_filter`, `lastgames.txt` via
+  `save_software_list`) **stays in place during 4.7** — nothing is migrated early; the
+  files move only inside the later one-time `status.db` migration (sections 8–11).
+- **Q1–Q6 (section 16) must be resolved before any 4.6.1 implementation**, since they
+  decide validation strictness, deletion scope, filter semantics, screensaver semantics
+  and DB-failure recovery.
+
+The schema/import pieces remain code-disjoint from 4.7 and *could* technically land
+earlier, but that option is no longer part of the plan.
 
 ---
 
 ## 15. Implementation and regression-test plan (later task — not executed)
 
-Ordered, characterisation-first, none of it done now:
+**Preconditions (D11):** Phase 4.7 lands first with its existing scope and acceptance
+criteria (text-file persistence untouched), and Q1–Q6 are resolved and recorded in
+section 16 before any 4.6.1 work. Then, ordered and characterisation-first, none of it
+done now:
 
 1. **Migration module** — `status_migrations.py`, single `MIGRATIONS = {1: ...}`
    calling the three `create_*` helpers; swap the call site; tests: fresh DB (all seven
@@ -662,7 +681,9 @@ No test is added or modified by this document.
 
 Unanswered items are exactly the ones the brief requires asking about (data-loss,
 deletion, order/duplicates, filter semantics, screensaver semantics, display boundary,
-DB-failure recovery). None of them has been guessed in the sections above.
+DB-failure recovery). None of them has been guessed in the sections above. **These six
+questions gate any 4.6.1 implementation (D11);** the former Q7 (ordering vs Phase 4.7)
+is resolved — see D11 and section 14.
 
 - **Q1 — GUI lastgames duplicates and failed displays (order/duplicate handling).**
   (a) Preserve today's duplicate-insert behaviour, or dedup? (b) On a *failed* display
@@ -704,23 +725,25 @@ DB-failure recovery). None of them has been guessed in the sections above.
   be written, what is the approved fallback — silent re-attempt on next startup (forbidden
   by the brief), leaving valid sources in place with no durable signal, or a non-database
   fallback marker? **No fallback is adopted until you decide.**
-- **Q7 — Ordering vs Phase 4.7.** This revision recommends **4.7 first, then 4.6.1**,
-  superseding the earlier lastgames-only recommendation (section 14); the alternative
-  (schema/import first, filter consumption after 4.7) remains technically valid.
-  *Recommendation:* confirm 4.7 first.
-
-Resolved by the brief and no longer open: history bound = **100** (old Q1a), screensaver
-starts empty with no import (old Q6 partly), one migration instead of v1/v2/v3 (old Q7),
-deletion of legacy files instead of keeping them as backups (old "keep the text file"
-rule), and immediate lastgames persistence (old "proposed point" wording).
+Resolved by the maintainer and no longer open: history bound = **100**, screensaver
+starts empty with no import source, **one** migration instead of the earlier v1/v2/v3
+split, deletion of the legacy files instead of keeping them as backups, immediate
+lastgames persistence after a successful display, and the **4.7 → 4.6.1 → 4.6.2
+ordering (D11, former Q7)**. Everything still open is Q1–Q6 above.
 
 ---
 
 ## 17. Document status
 
-Audited and updated at HEAD `b84341e`. **Nothing implemented:** no production code, no
-schema, no migration, no tests, no user file was deleted, renamed or rewritten — the
-real profile listed in section 12 was opened **read-only**. Companion updates in this
-directory: the step 4.6.1a entry and execution-order note in `roadmap.md`, the checklist
-/ documents / next-step entries in `README.md`. Decisions from section 16 must be
-recorded here before any implementation task is written.
+Code basis `b84341e` (the code commit this audit read — steps 4.5/4.6 are **committed**
+as `fcdefe5` and `b84341e`); documentation reconciled in the tracked
+`docs/database_refactor/` directory (`ec400f4` initial, `5514efd` refresh). Since the
+audit, Phase 4.7 landed (`479e202` + `10f9fbd` + `da65a62` + `bc631eb`) — satisfying the
+4.7 dependency — and the full suite moved to **654 passed, 5 skipped, 18 subtests
+passed**. **Nothing implemented:** no
+production code, no schema, no migration, no tests, no user file was deleted, renamed or
+rewritten — the real profile listed in section 12 was opened **read-only**. Companion
+updates in this directory: the step 4.6.1a entry and execution-order note in
+`roadmap.md`, the checklist / documents / next-step entries in `README.md`. Decisions
+D11 and open questions Q1–Q6 from section 16 govern when implementation may start: Q1–Q6
+must be answered and recorded here first, now that Phase 4.7 is done.
