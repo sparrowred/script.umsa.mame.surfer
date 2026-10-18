@@ -1123,21 +1123,31 @@ class DBMod:
     def save_further_media(self, set_id, marp=None, youtube=None):
         """Save MARP or Youtube entries for a set"""
 
-        # check set_id
-        self.sdbc.execute("SELECT sets.id FROM sets WHERE id = ?", (set_id,))
-        if self.sdbc.fetchone():
-            # update
-            if marp:
-                self.sdbc.execute("UPDATE sets SET marp = ? WHERE id = ?", (marp, set_id))
-            if youtube:
-                self.sdbc.execute("UPDATE sets SET youtube = ? WHERE id = ?", (youtube, set_id))
-        else:
-            # insert
-            if marp:
-                self.sdbc.execute("INSERT INTO sets (id, marp) VALUES(?,?)", (set_id, marp))
-            if youtube:
-                self.sdbc.execute("INSERT INTO sets (id, youtube) VALUES(?,?)", (set_id, youtube))
-        self.sdb.commit()
+        # check set_id; one transaction per call: commit on success,
+        # rollback on failure so no transaction is left open
+        try:
+            self.sdbc.execute("SELECT sets.id FROM sets WHERE id = ?", (set_id,))
+            if self.sdbc.fetchone():
+                # update
+                if marp:
+                    self.sdbc.execute(
+                        "UPDATE sets SET marp = ? WHERE id = ?", (marp, set_id)
+                    )
+                if youtube:
+                    self.sdbc.execute(
+                        "UPDATE sets SET youtube = ? WHERE id = ?", (youtube, set_id)
+                    )
+            elif marp or youtube:
+                # insert: both values belong to this one row, so a single
+                # INSERT writes them (a second INSERT would reuse the same PK)
+                self.sdbc.execute(
+                    "INSERT INTO sets (id, marp, youtube) VALUES(?,?,?)",
+                    (set_id, marp or None, youtube or None),
+                )
+            self.sdb.commit()
+        except Exception:
+            self.sdb.rollback()
+            raise
 
     def get_emulators(self, source=None, swl_name=None):
         """Returns emulators based on source or swl_name"""
