@@ -189,6 +189,7 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
         filter_where = " AND ".join(filter_where_list)
     # prepare joins and wheres from filters
     s_join, s_where = '', ''
+    filters_applied = False
     if state.use_filter and state.where:
         if state.join and state.join not in filter_join_list:
             s_join = f"{state.join} {filter_join}"
@@ -208,6 +209,7 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
         if s_join and s_where:
             where = f"sets.id IN (SELECT sets.id FROM sets {s_join} WHERE {s_where})"
             where_params = s_where_params
+            filters_applied = bool(filter_where)
         # only for source
         elif state.where:
             where = state.where
@@ -216,11 +218,21 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
         if filter_join and filter_where:
             where = f"sets.id IN (SELECT sets.id FROM sets {filter_join} WHERE {filter_where})"
             where_params = filter_where_params
+            filters_applied = True
     elif state.join and state.where:
         where = f"sets.id IN (SELECT sets.id FROM sets {state.join} WHERE {state.where})"
         where_params = state_where_params
     else:
         log("UMSA database: execute_statement: no join and where clause", level='debug')
+
+    # Selector-only retry target. Identical to the historical fallback query:
+    # keeps the selector conditions and the Prev/Next boundary, drops filters.
+    if state.where:
+        retry_where = f"sets.id IN (SELECT sets.id FROM sets {state.join} WHERE {state.where})"
+        retry_params = list(state.where_params)
+    else:
+        retry_where = ""
+        retry_params = []
 
     cursor = connection.cursor()
     try:
@@ -247,9 +259,13 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
             order = _ORDER_FALLBACK
         time_rampup = time.time()
 
-        # fetch
+        # fetch: at most two attempts. The second attempt is the selector-only
+        # fallback and only runs when active filters were applied to the first.
+        # An empty result after that terminates instead of looping forever.
         slist = []
-        while not slist:
+        attempt = 0
+        while attempt < 2:
+            attempt += 1
             # normal, previous or next
             if not prevnext:
                 if where:
@@ -287,17 +303,24 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                 {i_where} ORDER BY {order} {limit}"
             cursor.execute(select_statement, i_params)
             slist = cursor.fetchall()
-            # no results: try without filter
-            if len(slist) == 0:
+            if slist:
+                break
+            if attempt == 1 and filters_applied:
+                # empty because active filters were applied: retry once
+                # without them, preserving selector and Prev/Next boundary
                 log("UMSA database: fetch list: no result, retry without filters",
                     level='debug')
-                if state.where:
-                    where = f"sets.id IN (SELECT sets.id FROM sets {state.join} WHERE {state.where})"
-                    where_params = list(state.where_params)
-                else:
-                    where = ""
-                    where_params = []
+                where = retry_where
+                where_params = retry_params
+                filters_applied = False
+            else:
+                break
         time_fetch = time.time()
+
+        if not slist:
+            # no rows after the bounded attempts: return an empty result
+            # instead of fabricating Prev/Next sentinels or retrying forever
+            return [], 0, 0
 
         # get position and set prevnext
         if not prevnext:

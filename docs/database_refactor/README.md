@@ -294,10 +294,13 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
   dataclass + `define_filter`/`execute_statement`/selector helpers, `DBMod` facades,
   interpolation unchanged) and `bc631eb` (bind all external values; private
   `_where_params`/`_filter_where_params` feeding `get_random_id`/`get_random_art`).
-  Characterisation + parameterisation suite `tests/test_gamelist_filter.py` (28 tests);
-  full suite **622 → 654 passed**; new module Kodi-free and ruff-clean apart from the
-  pre-existing `int(round())` style. Known limitation documented: selector-only retry
-  can loop when the selector matches nothing.
+  Characterisation + parameterisation suite `tests/test_gamelist_filter.py` (35 tests);
+  full suite **622 → 661 passed**; new module Kodi-free and ruff-clean apart from the
+  pre-existing `int(round())` style. The retry-without-filters loop is now **bounded**:
+  at most one selector-only retry — issued only when the first query actually carried
+  active filters — then a prompt `([], 0, 0)` return with no fabricated `prev`/`next`
+  sentinels (7 count-based regression tests; the old unbounded loop is no longer an
+  accepted limitation).
 
 ### Planned, not implemented (see `history_persistence_audit.md`)
 
@@ -341,8 +344,11 @@ committed as `b84341e`) and 4.7 (the explicit-state gamelist filter/query compos
 committed as `479e202` + `10f9fbd` + `da65a62` + `bc631eb`) are done** (Q4 prerequisite
 committed separately first as `8bb8a8d`; tree clean at HEAD `bc631eb`, with
 `tests/test_status_repository.py` (24 tests), `tests/test_emulator_repository.py` (43
-tests), `tests/test_gamelist_filter.py` (28 tests) and the full suite green at **654
-passed**, 5 skipped, 18 subtests passed). **Step 4.6.1a** (one `status.db` migration for
+tests) and `tests/test_gamelist_filter.py` (28 tests), full suite **654 passed**, 5
+skipped, 18 subtests passed). A follow-up Phase 4.7 fix — the **bounded
+retry-without-filters loop**, 7 count-based regression tests — sits **uncommitted in the
+working tree**, taking `tests/test_gamelist_filter.py` to **35 tests** and the full suite
+to **661 passed**, 5 skipped, 18 subtests passed). **Step 4.6.1a** (one `status.db` migration for
 GUI lastgames + filter selections + screensaver history, plus the one-time legacy import
 and cleanup) is **planning only** — `history_persistence_audit.md`; no code, schema,
 migration, tests or user files were changed (the real profile on this machine was
@@ -520,21 +526,28 @@ Python from `.venv-debian-vm` (single consistent venv across all docs):
 # → 4 passed  (order-fallback fix: pre-fix run fails with UnboundLocalError;
 #   accessor tests cover set_order/set_filter_enabled)
 
-# Step 4.7 characterisation + parameterisation suite (new file; written against the
-# pre-extraction DBMod first, re-run unchanged against the delegating facade)
+# Step 4.7 characterisation + parameterisation + bounded-fallback suite (new file;
+# written against the pre-extraction DBMod first, re-run unchanged against the
+# delegating facade)
 .venv-debian-vm/bin/python -m pytest tests/test_gamelist_filter.py -q
-# → 28 passed  (define_filter all/partial/per-category; execute_statement
+# → 35 passed  (define_filter all/partial/per-category; execute_statement
 #   normal/prev/next, filter on/off, empty-result retry, sentinel entries,
 #   start/middle/end windowing; every get_by_* incl. one-level clone chain and
 #   missing-maker TypeError; parameterisation: quote-bearing category round-trip,
 #   hostile value bound by category_query, bound id list, quote-bearing software name
-#   through prev/next, get_random_id via filter params)
+#   through prev/next, get_random_id via filter params;
+#   bounded fallback: filtered-empty → selector-only fallback, selector-only empty,
+#   filters + fallback both empty, empty underlying result set, empty Prev/Next in
+#   both directions, successful filtered navigation — each asserting the exact
+#   number of executed gamelist SELECTs via a spy connection, not timing)
 
-# Full suite baseline (after step 4.7 — commits 479e202 + 10f9fbd + da65a62 + bc631eb)
+# Full suite baseline (after step 4.7 — commits 479e202 + 10f9fbd + da65a62 + bc631eb,
+# plus the bounded retry-loop fix in the working tree)
 .venv-debian-vm/bin/python -m pytest tests/ -q
-# → 654 passed, 5 skipped, 18 subtests passed
-#   (622 before 4.7 + 28 gamelist_filter tests + 4 pre-work tests; skipped: VGM
-#    real-MAME tests, gated by VGM_MAME_TESTS=1)
+# → 661 passed, 5 skipped, 18 subtests passed
+#   (622 before 4.7 + 35 gamelist_filter tests + 4 pre-work tests; 654 passed with the
+#    28-test suite at HEAD bc631eb; skipped: VGM real-MAME tests, gated by
+#    VGM_MAME_TESTS=1)
 
 # Lint on the changed files — no new findings (HEAD vs working tree, per file)
 .venv-debian-vm/bin/python -m ruff check <file>
@@ -606,7 +619,9 @@ still present — and after the delegation, the 101-test group, full suite
 re-executed after the extraction; the step 4.7 runs (the `4 passed` pre-work files,
 `tests/test_gamelist_filter.py` `28 passed` against both the pre-extraction `DBMod` and
 the delegating facade, full suite **`654 passed`**, per-file lint comparison) were
-re-executed across the extraction and parameterisation commits.
+re-executed across the extraction and parameterisation commits; the step 4.7 bounded
+retry-loop fix was then executed as `tests/test_gamelist_filter.py` `35 passed` plus a
+full suite **`661 passed`**, 5 skipped, 18 subtests run (working tree, uncommitted).
 Only the guard test file is new from 4.0; `tests/test_cmd_line_options.py`,
 `tests/test_emulator_launcher.py`, `tests/test_save_further_media.py`,
 `tests/test_status_repository.py`, `tests/test_emulator_repository.py`,

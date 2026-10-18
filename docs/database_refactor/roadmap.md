@@ -775,16 +775,41 @@ with plain-dict sentinel entries —, positions at list start/middle/end), and e
    private `_where_params`/`_filter_where_params`, consumed by `get_random_id` and
    `get_random_art`. `order` stays a validated whitelist, never a bound value.
 
-Characterisation suite `tests/test_gamelist_filter.py` (28 tests) pins `define_filter`,
+Characterisation suite `tests/test_gamelist_filter.py` (35 tests) pins `define_filter`,
 `execute_statement` (normal/prev/next, filter on/off, empty-result retry, sentinel
 entries, position at start/middle/end) and every `get_by_*` including the one-level
 clone chain and the missing-maker `TypeError`; the parameterisation tests cover a
 `'`-bearing category name round-trip, a hostile `"`-bearing value bound by
 `category_query`, a bound id list, a `"`-bearing software name through prev/next, and
-`get_random_id` via filter params. Full suite: **622 → 654 passed**, 5 skipped,
-18 subtests passed. Known limitation (unchanged, documented not fixed): the
-retry-without-filters loop still retries with selector-only `where`, so a selector whose
-own clause matches nothing loops forever; tests avoid triggering it.
+`get_random_id` via filter params. Full suite: **622 → 661 passed**, 5 skipped,
+18 subtests passed.
+
+**Bounded fallback (the retry-without-filters loop — fixed, no longer a known
+limitation).** `execute_statement` now uses an explicit two-attempt policy instead of
+`while not slist`: the query runs once with the active filter state, and a single
+selector-only retry is issued **only when the first query actually carried active
+filters** (tracked by a `filters_applied` flag set during clause composition). If that
+second result is also empty the method stops and returns `([], 0, 0)` — it never
+re-issues an identical query, so a selector whose own clause matches nothing, or an
+empty underlying result set, terminates normally instead of hanging the GUI. The retry
+target is precomputed from the selector state (`state.join`/`state.where` +
+`state.where_params`), so parameter ordering and bound values are unchanged.
+
+An ultimately empty result returns the consistent empty tuple `([], 0, 0)` with **no
+fabricated `prev`/`next` sentinels**: `pos=0` matches the empty-result convention
+already used by `get_searchresults`/`get_machines`/`get_last_played`, and for normal
+list loads the GUI returns on `len(results) == 0` before ever reading `pos`
+(`gui.py` → "found nothing"), so no successful-path behaviour moves. Successful
+filtered loads, list ordering, position calculations, sentinel structure and the public
+`(slist, pos, result_count)` shape are untouched.
+
+Regression tests (7, in `tests/test_gamelist_filter.py`) count executed statements
+deterministically through a spy connection/cursor pair rather than by timing: filtered
+empty → selector-only fallback still finds rows (2 queries); selector-only matches
+nothing → one query, empty result; filters + fallback both empty → exactly 2 queries
+then stop; empty underlying result set → 1 query; Prev/Next with no rows → terminates
+with `([], 0, 0)` for both directions; successful filtered navigation → 1 query with
+rows. No test skips the empty cases that expose the old infinite loop.
 
 ---
 
@@ -907,5 +932,6 @@ recovery) must be resolved **before** any 4.6.1 implementation.
 Steps 4.5-4.6 (status.db) proceeded independently of the 4.2-4.4 chain; 4.7 is
 deliberately late and 4.8 deliberately last. Every step lands with: characterisation
 tests, facade delegation, unchanged public API, and a green full suite
-(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **654 passed**, 5 skipped, 18 subtests
-at HEAD `bc631eb`).
+(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **661 passed**, 5 skipped, 18 subtests
+with the bounded retry-loop fix in the working tree — the step-4.7 baseline was
+**654 passed** at HEAD `bc631eb`).

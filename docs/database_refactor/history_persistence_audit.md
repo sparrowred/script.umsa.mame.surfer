@@ -740,7 +740,9 @@ as `fcdefe5` and `b84341e`); documentation reconciled in the tracked
 `docs/database_refactor/` directory (`ec400f4` initial, `5514efd` refresh). Since the
 audit, Phase 4.7 landed (`479e202` + `10f9fbd` + `da65a62` + `bc631eb`) — satisfying the
 4.7 dependency — and the full suite moved to **654 passed, 5 skipped, 18 subtests
-passed**. **Nothing implemented:** no
+passed**; a follow-up 4.7 fix (the bounded retry-without-filters loop, **uncommitted in
+the working tree**, with 7 count-based regression tests) took it to **661 passed, 5
+skipped, 18 subtests passed**. **Nothing implemented:** no
 production code, no schema, no migration, no tests, no user file was deleted, renamed or
 rewritten — the real profile listed in section 12 was opened **read-only**. Companion
 updates in this directory: the step 4.6.1a entry and execution-order note in
