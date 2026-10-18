@@ -3,7 +3,10 @@
 Artwork table access is centralised in :mod:`umsa_core.artwork_repository` and
 DAT table access in :mod:`umsa_core.dat_repository`; DAT parsing lives in
 :mod:`umsa_core.dat_parser` and the DAT scan workflow in
-:mod:`umsa_core.dat_scanner`. ``DBMod`` remains the public facade.
+:mod:`umsa_core.dat_scanner`. ``status.db`` play history and per-set media
+access is centralised in :mod:`umsa_core.status_repository` (the ``emu``/
+``emu_conn`` schema and queries stay here until step 4.6). ``DBMod`` remains
+the public facade.
 
 A few direct statements intentionally remain here:
 
@@ -43,6 +46,7 @@ from .gb64_scanner import GB64Scanner
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite, connect_sqlite_readonly
+from .status_repository import StatusRepository, create_status_tables
 
 def _core_data_paths(db_path):
     """Adapt legacy database-directory arguments to explicit Core paths."""
@@ -303,23 +307,9 @@ class DBMod:
         # defines filter with self.filter_tables, self.filter_where
         self.define_filter(filter_lists)
 
-        # create db layout (first run)
-        self.sdbc.execute(
-            # last_playes = YYYY-MM-DD HH:MM
-            # time_played = seconds
-            """
-            CREATE TABLE IF NOT EXISTS sets(
-                id             INT PRIMARY KEY NOT NULL,
-                last_played    DATETIME,
-                time_played    BIGINT DEFAULT 0,
-                play_count     INT DEFAULT 0,
-                options        TEXT,
-                emu_id         INT,
-                marp           TEXT,
-                youtube        TEXT
-            )
-            """
-        )
+        # create db layout (first run); the sets schema lives in the status
+        # repository (step 4.5), the emu/emu_conn schema stays here (4.6)
+        create_status_tables(self.sdbc)
         self.sdbc.execute(
             """
             CREATE TABLE IF NOT EXISTS emu(
@@ -773,6 +763,16 @@ class DBMod:
 
         return GameRepository(self.gdb)
 
+    def _get_status_repository(self):
+        """Return a status repository bound to the current status.db connection.
+
+        Created per call (never cached) so it can never hold a reference to a
+        connection that has since been replaced. It never owns or closes
+        ``self.sdb``.
+        """
+
+        return StatusRepository(self.sdb)
+
     def add_art_to_db(self, db_path):
         """add artwork to database
 
@@ -1093,10 +1093,7 @@ class DBMod:
     def get_status_for_set(self, set_id):
         """Return play status for a set id"""
 
-        self.sdbc.execute(
-            "SELECT * FROM sets WHERE ID = ?", (set_id,)
-        )
-        i = self.sdbc.fetchone()
+        i = self._get_status_repository().get_status_for_set(set_id)
         if not i:
             return None
 
@@ -1117,37 +1114,14 @@ class DBMod:
     def get_further_media(self, set_id):
         """Return MARP and Youtube entries for a set"""
 
-        self.sdbc.execute("SELECT marp, youtube FROM sets WHERE sets.id = ?", (set_id,))
-        return self.sdbc.fetchone()
+        return self._get_status_repository().get_further_media(set_id)
 
     def save_further_media(self, set_id, marp=None, youtube=None):
         """Save MARP or Youtube entries for a set"""
 
-        # check set_id; one transaction per call: commit on success,
-        # rollback on failure so no transaction is left open
-        try:
-            self.sdbc.execute("SELECT sets.id FROM sets WHERE id = ?", (set_id,))
-            if self.sdbc.fetchone():
-                # update
-                if marp:
-                    self.sdbc.execute(
-                        "UPDATE sets SET marp = ? WHERE id = ?", (marp, set_id)
-                    )
-                if youtube:
-                    self.sdbc.execute(
-                        "UPDATE sets SET youtube = ? WHERE id = ?", (youtube, set_id)
-                    )
-            elif marp or youtube:
-                # insert: both values belong to this one row, so a single
-                # INSERT writes them (a second INSERT would reuse the same PK)
-                self.sdbc.execute(
-                    "INSERT INTO sets (id, marp, youtube) VALUES(?,?,?)",
-                    (set_id, marp or None, youtube or None),
-                )
-            self.sdb.commit()
-        except Exception:
-            self.sdb.rollback()
-            raise
+        self._get_status_repository().save_further_media(
+            set_id, marp=marp, youtube=youtube
+        )
 
     def get_emulators(self, source=None, swl_name=None):
         """Returns emulators based on source or swl_name"""
@@ -1248,38 +1222,15 @@ class DBMod:
         Writes played seconds and play count
         """
 
-        # get time string
-        date = time.strftime("%Y-%m-%d %H:%M")
-        # get data
-        self.sdbc.execute("SELECT time_played, play_count FROM sets WHERE id = ?", (set_id,))
-        set_fetch = self.sdbc.fetchone()
-        # update data
-        if set_fetch:
-            set_data = (date, played_seconds+set_fetch[0], set_fetch[1]+1, set_id)
-            self.sdbc.execute(
-                "UPDATE sets \
-                 SET last_played = ?, time_played = ?, play_count = ? \
-                 WHERE id = ?", (set_data))
-        # new data
-        else:
-            set_data = (set_id, date, played_seconds, 1)
-            self.sdbc.execute(
-                "INSERT INTO sets (id, last_played, time_played, play_count) \
-                 VALUES (?,?,?,?)", (set_data))
-        self.sdb.commit()
+        self._get_status_repository().write_status_after_play(
+            set_id, played_seconds
+        )
 
     def get_latest_by_software(self, software_id):
         """Return id of latest played set for a software id"""
 
         sets = self.get_set_ids_for_software(software_id)
-
-        select_statement = "SELECT id FROM sets WHERE id IN ({}) \
-                            ORDER BY last_played DESC LIMIT 1".format(','.join(['?'] * len(sets)))
-        self.sdbc.execute(select_statement, sets)
-        set_id = self.sdbc.fetchone()
-        if set_id:
-            set_id = set_id[0]
-        return set_id
+        return self._get_status_repository().get_latest_by_set_ids(sets)
 
     def define_filter(self, filter_lists):
         """define filter
