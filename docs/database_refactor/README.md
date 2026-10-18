@@ -181,8 +181,8 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 |---|---|
 | [`dbmod_audit.md`](dbmod_audit.md) | Complete inventory of every remaining SQL-bearing method/helper in `database.py`, grouped by responsibility: connection lifecycle, cross-database sync, scan facades, repository delegations, mixed application queries, game/set reads, filter composition, status.db play history, emulator config. Records tables, read/write behaviour, connection/transaction ownership, callers, result shapes, and the recommended future owner of each method. Referenced by method name (no line numbers). |
 | [`row_factory_audit.md`](row_factory_audit.md) | Result-shape and row-access audit: which connections are `sqlite3.Row` vs default tuples, which methods/callers use positional vs named row access (including mixed-style consumers), the implicit public contracts, and the staged strategy — now including the implemented `sqlite3.Row` input requirement for repositories (step 4.2b, done) and the fixed row-leak closure step (4.8). Read-only; nothing was converted by the audit itself. |
-| [`roadmap.md`](roadmap.md) | Prioritised, incremental implementation plan: boundary checks (4.0), decided removals (4.2a), the `sqlite3.Row` contract (4.2b), repository extensions (4.3-4.6), the filter service (4.7), row-leak closure (4.8) and the database.py reorganisation proposal (4.9) — what each step extracts, contract, required tests, dependencies, risk, acceptance criteria, and what deliberately stays in `DBMod`. |
-| [`history_persistence_audit.md`](history_persistence_audit.md) | **Audited / planned — nothing implemented.** Phase 4.6.1a: the GUI `lastgames.txt` contract (path, format, ordering, pointer, five insert sites, exit-only save defect, failure handling, size limits) with every call site; the precise `load_lastsaver()` status (live consumer `M_LSSAVER`, no writer ever existed in git history, historical `setname,swlname` format); the screensaver display lifecycle and candidate event boundaries; two separate purpose-specific `status.db` table proposals; the `PRAGMA user_version` migration mechanism plus one-time `lastgames.txt` import plan; the Core/Kodi boundary and minimal DBMod facade API; ordering recommendation vs Phase 4.7; and nine open questions (Q1a-Q8 + boundaries) with recommendations. |
+| [`roadmap.md`](roadmap.md) | Prioritised, incremental implementation plan: boundary checks (4.0), decided removals (4.2a), the `sqlite3.Row` contract (4.2b), repository extensions (4.3-4.6), the history/legacy-file migration (4.6.1a, planned), the filter service (4.7), row-leak closure (4.8) and the database.py reorganisation proposal (4.9) — what each step extracts, contract, required tests, dependencies, risk, acceptance criteria, and what deliberately stays in `DBMod`. |
+| [`history_persistence_audit.md`](history_persistence_audit.md) | **Planned — nothing implemented.** Phase 4.6.1a: the GUI `lastgames.txt` contract (path, format, ordering, pointer, five insert sites, exit-only save defect, failure handling) and the `filter_*.txt` contract (five-line format, id-string values, Load/Save dialogs, crash/silent-failure modes) with every call site; the precise `load_lastsaver()` status (live but always-empty consumer, no writer ever existed — not an import source); the screensaver lifecycle and candidate display boundaries; four purpose-specific `status.db` tables covered by **one** `PRAGMA user_version` migration; the **one-time import + cleanup sequence** (per-file all-or-nothing validation, commit-before-delete, terminal marker states `completed`/`completed_discards`/`completed_no_source`/`failed`, no-reimport, cleanup-only recovery, unknown-file preservation); the verified Core userdata inventory; the Core/Kodi boundary, facade API and notification; the dependency on Phase 4.7; and open questions Q1–Q7 with recommendations. |
 
 ## Phase checklist
 
@@ -267,21 +267,29 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
   **622 passed**; ruff/mypy clean on the new file, `database.py` findings unchanged
   at 33.
 
-### Audited / planned, not implemented (see `history_persistence_audit.md`)
+### Planned, not implemented (see `history_persistence_audit.md`)
 
-- [ ] Step 4.6.1a — GUI lastgames persistence in `status.db`: `PRAGMA user_version`
-  migration mechanism (`status_migrations.py`), `gui_lastgames` + `status_meta` tables,
-  `history_repository.py`, `DBMod.load_lastgames`/`save_lastgames` facades, one-time
-  `lastgames.txt` import (marker-guarded, file kept as backup), persistence at the
-  successful end of `UMSA.select_software` instead of exit-only. **Blocked on open
-  questions Q4-Q8.**
-- [ ] Step 4.6.2 — screensaver display history in `status.db` (`screensaver_history`,
-  newest 100): separate feature, separate table, separate migration; hooks at the
-  confirmed render / `onPlayBackStarted` boundaries. **Blocked on open questions Q1a,
-  Q1b, Q2, Q3.**
-- Note: `load_lastsaver()` is legacy read-side code with one live but always-empty
-  consumer (`M_LSSAVER`); no writer of `lastsaver.txt` exists anywhere in git history —
-  no import, and it is deliberately not the model for the new history feature.
+- [ ] Step 4.6.1a — **one** `status.db` schema migration covering all three concepts:
+  `gui_lastgames` (immediate persistence after a successful display), `filter_selections`
+  (all `filter_*.txt`), plus `screensaver_history` (last 100, starts empty) and a
+  `status_meta` import marker — a single `PRAGMA user_version` 0 → 1 increment via
+  `umsa_core/status_migrations.py`, add-only (existing play history, emulator config and
+  further-media data preserved); `history_repository.py` + DBMod facades; then the
+  **one-time legacy import and cleanup** (discover configured paths, per-file
+  all-or-nothing validation, malformed files discarded whole and recorded, data + marker
+  + pending-delete list committed together, *then* `lastgames.txt`/`filter_*.txt` deleted
+  — including invalid ones — with a Kodi-side notification naming discarded files);
+  startup checks marker → import once / cleanup only / report stored failure, never
+  re-import after a terminal state, explicit retry only after `failed`; unknown files
+  never deleted. **Blocked on open questions Q1–Q7.**
+- [ ] Step 4.6.2 — screensaver display history writes into the same migration's
+  `screensaver_history` table (feature starts empty; hooks at the render /
+  `onPlayBackStarted` boundaries). **Blocked on open question Q4** (duplicates,
+  ordering, display boundary, identifier).
+- Note: `load_lastsaver()` stays untouched legacy read-side code with one live but
+  always-empty consumer (`M_LSSAVER`); no writer of `lastsaver.txt` exists in any
+  revision — it is **not** an import source, and a stray `lastsaver.txt` would be an
+  *unknown* file: preserved and listed, never auto-deleted.
 
 ### Decided, not yet implemented (see roadmap)
 
@@ -299,12 +307,16 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 prerequisite committed separately first as `8bb8a8d`; both extractions are
 uncommitted working-tree code, with `tests/test_status_repository.py` (24 tests),
 `tests/test_emulator_repository.py` (43 tests) and the full suite green at
-**622 passed**). **Step 4.6.1a** (GUI lastgames + screensaver history persistence) is
-**audit/planning only** — `history_persistence_audit.md`; no code, schema, migration,
-tests or user files were changed, and nine open questions (Q1a-Q8) block implementation.
-Its ordering recommendation is to land 4.6.1 (migration mechanism + GUI lastgames)
-*before* 4.7 — disjoint code, and it front-loads the `user_version == 0` test churn —
-but **4.7's scope and acceptance criteria are unchanged**. Subject to that decision,
+**622 passed**). **Step 4.6.1a** (one `status.db` migration for GUI lastgames + filter
+selections + screensaver history, plus the one-time legacy import and cleanup) is
+**planning only** — `history_persistence_audit.md`; no code, schema, migration, tests or
+user files were changed (the real profile on this machine was inspected read-only), and
+open questions Q1–Q7 block implementation. Its ordering recommendation was **revised**
+when filter selections joined the scope: it now depends on **Phase 4.7** (persisted
+selections are consumed by `define_filter`, whose explicit-state composition is 4.7's
+job) and is recommended **after** 4.7 — the schema/import pieces are code-disjoint and
+could land earlier, which is open question Q7; **4.7's scope and acceptance criteria are
+unchanged** either way. Subject to that decision,
 **Step 4.7** — `gamelist_filter.py` (filter/query composition,
 Q2 parameterisation) — remains the next implementation step; it proceeds independently of the completed
 4.2–4.6 chain. Steps 4.0, 4.2, 4.2a, 4.2b, 4.3, 4.4, 4.5-pre, 4.5 and 4.6 are done.
@@ -364,11 +376,13 @@ No versioned migration mechanism exists yet (`PRAGMA user_version` stays `0` on
 task** (both schema helpers — 4.5's
 `create_status_tables` and 4.6's `create_emulator_tables` — landed without adding
 one) and must follow this policy. A concrete **plan** for it — proposed module
-`umsa_core/status_migrations.py`, version map (v1 idempotent baseline of the existing
-three tables, v2 history tables, v3 screensaver history), call site in
-`_open_persistent_databases`, and the one-time `lastgames.txt` import — is specified,
-but **not implemented**, in [`history_persistence_audit.md`](history_persistence_audit.md)
-(sections 5-6):
+`umsa_core/status_migrations.py` with **one** migration entry (single version increment
+0 → 1 declaring the finalized schema: the existing three tables re-declared idempotently
+plus `gui_lastgames`, `filter_selections`, `screensaver_history` and the `status_meta`
+marker), call site in `_open_persistent_databases`, and the one-time legacy import with
+commit-before-delete cleanup — is specified, but **not implemented**, in
+[`history_persistence_audit.md`](history_persistence_audit.md)
+(sections 7-11):
 
 1. Future `status.db` schema changes must be ordered, explicit migration versions keyed
    on SQLite's `PRAGMA user_version` — never ad-hoc column-existence checks embedded in

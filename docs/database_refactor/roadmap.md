@@ -27,16 +27,20 @@ delegation and schema-helper call + `tests/test_emulator_repository.py`) — **u
 working-tree changes on top of `8bb8a8d`**, deliberately not committed because the
 maintainer has not asked for a commit.
  **Status:** steps 4.0, 4.2, 4.2a,
-4.2b, 4.3, 4.4, 4.5-pre, 4.5 and 4.6 are implemented; step **4.6.1a (GUI lastgames +
-screensaver history persistence) is audited/planned only** — see
-[`history_persistence_audit.md`](history_persistence_audit.md), nothing implemented;
+4.2b, 4.3, 4.4, 4.5-pre, 4.5 and 4.6 are implemented; step **4.6.1a (`status.db`
+history & legacy-file migration — GUI lastgames + filter selections + screensaver
+history) is planned only** — see
+[`history_persistence_audit.md`](history_persistence_audit.md), nothing implemented
+(no schema, no migration, no import, no cleanup executed);
 steps 4.7–4.9 are planned — each step is
 designed to be independently reviewable and testable; no step changes public method
 signatures, return values, `row_factory` defaults, or database schemas (4.2b changed
 only which *connections repositories accept*, with an explicit `ValueError`; 4.5 and
 4.6 moved the `sets` and `emu`/`emu_conn` DDL without changing them; 4.6.1a *would*
-introduce the first `status.db` schema addition and the `PRAGMA user_version`
-mechanism, gated on the open questions in the audit document).
+add four tables and the `PRAGMA user_version` migration mechanism in **one version
+increment**, plus a one-time import that deletes the legacy `lastgames.txt` /
+`filter_*.txt` inputs after commit — all gated on the open questions Q1–Q7 in the
+audit document).
 
 ## Global contracts every step must honour
 
@@ -593,77 +597,89 @@ schema-helper calls in `_open_persistent_databases`.
 (explicit-state filter/query composition, Q2/Q9) is next, then row-leak closure
 (4.8, which now sees `get_emulators`/`get_emulator` returning plain dicts —
 already unambiguous shapes) and the `database.py` reorganisation proposal (4.9).
-The 4.6.1a audit below adds an ordering *recommendation* relative to 4.7 but
-does not change 4.7's scope or acceptance criteria.
+The 4.6.1a audit below documents a **dependency on 4.7** (the persisted filter
+selections are consumed by `define_filter`, whose explicit-state composition is 4.7's
+job) and now recommends 4.7 first — but it does not change 4.7's scope or
+acceptance criteria.
 
 ---
 
-## Step 4.6.1a — GUI lastgames + screensaver history persistence (audit only) 📋 audited/planned
+## Step 4.6.1a — `status.db` history & legacy-file migration (audit only) 📋 planned
 
-**Status: AUDITED / PLANNED — not implemented.** Read-only audit at HEAD `b84341e`;
-full findings, schemas, migration plan and open questions live in
-[`history_persistence_audit.md`](history_persistence_audit.md) (written for this step;
-no production code, schema, migration, test or user file was changed).
+**Status: PLANNED — not implemented.** Read-only audit at HEAD `b84341e`;
+full contract findings, schemas, import/cleanup design and open questions
+live in [`history_persistence_audit.md`](history_persistence_audit.md) — no production
+code, schema, migration, test or user file was changed. Scope: **three related
+concepts in one migration** plus a one-time legacy import and cleanup:
+
+1. GUI backward-navigation history (`lastgames.txt` → `gui_lastgames`).
+2. Filter selections (all `filter_*.txt` → `filter_selections`).
+3. Screensaver history (last **100** successfully displayed sets →
+   `screensaver_history`; starts empty, no import source).
 
 **What was audited and confirmed:**
 
-- **GUI lastgames** (`<core profile>/lastgames.txt`): ordered list of **software ids**
-  used for backward navigation, loaded in `UMSA.onInit` (`gui.py:364-375`), mutated by
-  five insert-before-display call sites (gamelist click, search single-hit,
-  single-result strategies, screensaver handoff, script-arg launch) and by
-  `software_move` left/right (`gui.py:1868-1879`); trimmed to the newest 10 **only**
-  when written by `UMSA.exit()` (`gui.py:2560-2566`). The single write happens
-  exclusively on the clean-exit paths — the confirmed defect: unclean window teardown
-  loses the whole session's history. Proposed smallest reliable persistence point: the
-  successful end of `UMSA.select_software` (the single funnel of all display paths; its
-  early-return failure branch at `gui.py:2037-2043` would simply not persist).
-- **Play history is a separate concept** (`sets.last_played`/`time_played`/`play_count`,
-  written by `write_status_after_play`) and is not part of this feature.
-- **`load_lastsaver()` is legacy read-side code with a live but dead consumer**: one
-  caller exists (`gamelist_strategies.last_saver`, menu 84 / `M_LSSAVER`, reachable via
-  `gui.py:971` and `gui.py:769-771`), but **no writer of `lastsaver.txt` has ever
-  existed in the repository's history**, so the menu is permanently empty. Historical
-  format (clue only): lines of `setname,swlname`, read newest-first. No import, no
-  preservation requirement, and the planned screensaver history must not be shaped by it
-  (open question Q6 asks for confirmation).
-- **Screensaver display lifecycle** (not implemented as a feature): the cross/slide/wall
-  loop (`ui.py:432-595`) selects one random artwork per iteration (`get_random_art`
-  returns both set id `art['id']` and software id `art['s_id']`); `remember_art`
-  (`ui.py:192-195`) stores only the current software id and fires **before** the
-  bad-image rejection, so it is not a display boundary. Candidate boundaries: the
-  post-render point in the loop; `Player.onPlayBackStarted` (`ui.py:712`) for videos
-  mode. No history is tracked anywhere today (no memory list, no file, no DB write);
+- **GUI lastgames** (`<core profile>/lastgames.txt`): ordered software-id list, loaded in
+  `UMSA.onInit` (`gui.py:364-375`), mutated by five insert-before-display call sites and
+  by `software_move` (`gui.py:1868-1879`), trimmed to the newest 10 **only** at
+  `UMSA.exit()` (`gui.py:2560-2566`) — the confirmed defect: unclean window teardown
+  loses the session. **Decided:** persist immediately after a successful display (the
+  successful end of `UMSA.select_software`, `gui.py:2186`; its failure branch
+  `gui.py:2037-2043` simply does not persist), never derived from play history.
+- **Filter selections** (`filter_<name>.txt`, `data_paths.py:60-65`): fixed five-line
+  comma format (`persistence.py:10-61`, byte-pinned by `tests/test_persistence.py:64-104`),
+  values are opaque id strings fed to `define_filter` (`database.py:1176-1240`); loaded
+  at `onInit` (`gui.py:344`), loaded/saved by the Load/Save Filter dialog
+  (`gui.py:1304-1356`); truncated files raise `IndexError`, write failures are silently
+  swallowed. Real profile has **zero** filter files; `lastgames.txt` holds 10 valid ids.
+- **`load_lastsaver()`** is legacy read-side code with one live but always-empty consumer
+  (`M_LSSAVER`; no writer of `lastsaver.txt` exists in any revision) — **not an import
+  source, not used, untouched**; `lastsaver.txt` is not a recognized input, so it would
+  be preserved and listed (unknown file).
+- **Screensaver lifecycle** (feature not implemented): one `get_random_art` per loop
+  iteration (`ui.py:432-446`); `remember_art` fires *before* bad-image rejection so it is
+  not a display boundary; candidate boundaries are the post-render point (`ui.py:571`) and
+  `Player.onPlayBackStarted` (`ui.py:712`) for videos. No history exists anywhere;
   random selection is history-blind.
 
-**Proposed (pending the open questions in the audit document):** two separate
-purpose-specific `status.db` tables — `gui_lastgames(position, software_id)` (ordered,
-full-replace writes, duplicates allowed) and, in a later step, `screensaver_history`
-(monotonic event id, set/software id, timestamp; newest-100 retrieval and prune);
-plus a `status_meta` marker table for the one-time `lastgames.txt` import. Migration
-mechanism: new `umsa_core/status_migrations.py` keyed on `PRAGMA user_version`
-(v0 = legacy, v1 = idempotent baseline of the existing three tables, v2 = lastgames +
-meta, v3 = screensaver history), applied on the real `status.db` connection in
-`_open_persistent_databases`, one transaction per migration, version advanced only on
-success, repositories stay the authoritative DDL owners. New
-`umsa_core/history_repository.py` (4.5/4.6 conventions) with `DBMod` facades
-(`load_lastgames`/`save_lastgames`, later `record_screensaver_display`) because the
-connection-attribute guard forbids add-ons touching `.sdb`. Legacy import runs once,
-marker-guarded via `status_meta`, aborts without marker on malformed input, and never
-deletes or renames the text file. Implementation must update the three test files that
-currently pin `user_version == 0`.
+**Planned design (pending the open questions):** four new tables —
+`gui_lastgames(position, software_id)`, `filter_selections(filter_name, category,
+position, value)`, `screensaver_history(id, set_id, software_id, displayed_at)` and a
+`status_meta` import marker. **One schema migration, one `PRAGMA user_version`
+increment (0 → 1)** via a new `umsa_core/status_migrations.py`, declared in a single
+idempotent transaction that also re-declares the three existing tables through their
+repository helpers; call site in `_open_persistent_databases`; repositories stay the
+authoritative DDL owners. Existing play history, emulator config and further-media data
+are preserved untouched (add-only migration).
 
-**Open questions blocking implementation (Q1a history bound 100 vs 12, Q1b duplicate
-events vs unique sets, Q2 set-id vs software-id, Q3 display boundaries, Q4
-failed-display cleanup, Q5 GUI dedup, Q6 lastsaver import, Q7 migration numbering, Q8
-import retry):** see section 10 of the audit document.
+**One-time import + cleanup (decided direction):** discover configured paths →
+validate each file all-or-nothing (malformed = whole file discarded + recorded warning,
+while other files still import) → write data + terminal marker + pending-delete list in
+**one commit** → only then delete recognized inputs (valid *and* invalid) → notify via
+the existing Kodi-side layer (no Kodi imports in `umsa_core`). Marker values:
+`completed` / `completed_discards` / `completed_no_source` / `failed`; terminal states
+never re-import; interrupted deletion degrades to **cleanup only**; `failed` is reported
+but never auto-retried (explicit retry only); cleanup failures record and report the
+remaining path and retry deletion only. Unknown files are never deleted. Expected final
+Core userdata (verified against the real profile and `umsa_db.zip`, which contains only
+`umsa.db`): `settings.xml` + `umsa.db`/`status.db`/`dat.db`/`artwork.db`.
 
-**Dependencies:** none on 4.2–4.6 beyond the repository/schema-helper conventions.
-**Recommended order (audit recommendation only; 4.7's acceptance criteria unchanged):**
-land 4.6.1 (migration mechanism + GUI lastgames) **before 4.7** — zero code overlap
-with the filter/query extraction (disjoint `database.py` sections and disjoint `gui.py`
-regions), and it front-loads the `user_version == 0` test churn so 4.7's
-characterisation goldens are baselined against a finalised `status.db` layout.
-Screensaver history (4.6.2) is a separate step gated on Q1b/Q2.
+**Open questions blocking implementation:** Q1 lastgames duplicates + failed-display
+cleanup (order/duplicate handling), Q2 validation strictness (data-loss decision), Q3
+filter semantics / whether runtime filter state starts persisting, Q4 screensaver
+duplicates + ordering + display boundary + identifier, Q5 unexpected userdata files
+(`lastsaver.txt`), Q6 DB-failure recovery incl. the marker-impossible fallback, Q7
+ordering vs 4.7 — section 16 of the audit document.
+
+**Dependencies:** conventions from 4.2–4.6 (Row contract, repository style, savepoint
+ownership); **Phase 4.7 for the filter-selection consumption path** — persisted
+selections are handed to `define_filter`, i.e. into the filter state 4.7 makes explicit.
+**Revised recommended order (supersedes this document's earlier "4.6.1 before 4.7"
+advice, which was written for a lastgames-only scope): 4.7 first (at minimum its
+pre-work: filter-state accessors + unbound-`order` fix), then 4.6.1, then 4.6.2.**
+4.7's scope and acceptance criteria remain unchanged; the sequence itself is open
+question Q7. Implementation must also update the three tests pinning
+`user_version == 0`.
 
 ---
 
@@ -816,10 +832,10 @@ guard); no behaviour change. Not urgent — schedule after 4.6.
 4.0 ✅                     (test-only boundary guards; landed at 2a2b1af)
 4.2 ✅ ──► 4.2a ✅ ──► 4.2b ✅ ──► 4.3 ✅ ──► 4.4 ✅   (same repository, cumulative; 4.2a+4.2b committed as 9f2fd40, 4.3 as 9041812, 4.4 = delegation + 2 CHD fixes, committed as 4d5e70c)
 4.5-pre ✅ (Q4 bugfix, committed as 8bb8a8d) ──► 4.5 ✅ (StatusRepository, uncommitted) ──► 4.6 ✅ (EmulatorRepository, uncommitted)   (status.db; parallel to 4.2-4.4)
-4.6.1a 📋   (GUI lastgames + screensaver history persistence: AUDITED/PLANNED only,
-             history_persistence_audit.md; gated on open questions Q1a-Q8;
-             recommended before 4.7 — see note below; 4.6.2 = screensaver history,
-             gated on Q1b/Q2)
+4.6.1a 📋   (`status.db` history & legacy-file migration — one migration, one-time
+             import + cleanup: PLANNED ONLY, history_persistence_audit.md;
+             gated on open questions Q1-Q7; recommended AFTER 4.7 — see note below;
+             4.6.2 = screensaver history writes, gated on Q4)
 4.7                         (accessors + order fix first; parameterisation last;
                              after 4.2-4.4)
 4.8                         (after 4.3-4.6; touches GUI)
@@ -832,13 +848,17 @@ and 4.5 (`StatusRepository` — working-tree changes: `database.py` modified,
 `status_repository.py` new, uncommitted because the maintainer has not asked for a
 commit) and 4.6 (`EmulatorRepository` — working-tree changes: `emulator_repository.py`
 new, `database.py` + `status_repository.py` docstrings modified, `tests/test_emulator_repository.py`
-new, uncommitted for the same reason) are implemented. **Step 4.6.1a (history
-persistence) is audit/planning only** — the audit's ordering recommendation is to
-implement it (migration mechanism + GUI lastgames) **before 4.7** because the two share
-no code (`database.py` sections and `gui.py` regions are disjoint) and doing so
-front-loads the `user_version == 0` test churn so 4.7's characterisation goldens are
-baselined against a finalised `status.db` layout; **4.7's scope and acceptance criteria
-are unchanged** by that recommendation. Subject to the maintainer's ordering decision,
+new, uncommitted for the same reason) are implemented. **Step 4.6.1a (one
+`status.db` migration for GUI lastgames + filter selections + screensaver history,
+one-time legacy import and cleanup) is planning only** — the audit's ordering
+recommendation, revised when filter selections joined the scope, is to implement it
+**after 4.7**, because the persisted filter selections must be fed into `define_filter`,
+i.e. into the filter state 4.7 turns explicit; building that load path first would mean
+re-touching it during 4.7. (The schema/import pieces are code-disjoint from 4.7 and
+*could* land earlier — that choice is open question Q7; the earlier "before 4.7"
+recommendation was written for a lastgames-only scope and is superseded.)
+**4.7's scope and acceptance criteria are unchanged** by either ordering.
+Subject to the maintainer's ordering decision,
 **step 4.7 — the filter/query-composition refactor — remains the next implementation
 step**.
 Steps 4.5-4.6 (status.db) proceed independently of the completed 4.2-4.4 chain; 4.7 is
