@@ -211,6 +211,10 @@ class DatRepository:
                 )
                 """
             )
+            db_cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_dat_staging_set_stage_id "
+                "ON dat_staging_set(stage_id)"
+            )
         finally:
             if close:
                 db_cursor.close()

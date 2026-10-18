@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 
 from .dat_parser import parse_dat, parse_history
 from .dat_repository import (
@@ -135,13 +136,15 @@ class DatScanner:
 
     def _scan_locked(self, datdir, cancel_event, summary):
         """Run the DAT scan while the shared lock is held by the caller."""
+        _t0 = time.time()
+        _phase = {}
 
         db_paths = self._db_paths
 
         # A missing/unreadable UMSA database must abort before any DAT data is
         # touched, so a failed scan can never look like a valid empty result.
         try:
-            all_sets = self._load_set_mapping()
+            t = time.time(); all_sets = self._load_set_mapping(); _phase["load_mapping"] = time.time()-t
         except Exception as exc:
             log(f"UMSA dat scan: cannot load UMSA set mapping: {exc}",
                 level='error')
@@ -152,7 +155,7 @@ class DatScanner:
         # Discover the input files before opening the DAT database. A missing
         # or inaccessible directory must never be treated as an empty scan.
         try:
-            entries = list(self._listdir(datdir))
+            t = time.time(); entries = list(self._listdir(datdir)); _phase["discover"] = time.time()-t
         except OSError as exc:
             log(f"UMSA dat scan: cannot list '{datdir}': {exc}", level='error')
             summary['aborted'] = True
@@ -181,21 +184,21 @@ class DatScanner:
             staged_cur = db_conn.cursor()
             total = len(entries)
 
+            t_parse_start = time.time(); processed = 0
             for index, datfile in enumerate(entries):
                 if self._cancelled(cancel_event):
                     summary['cancelled'] = True
                     log("UMSA dat scan: cancelled before file")
                     break
 
-                # Match the historical progression: the first file reports
-                # ~0 and the last file reports 100.
-                self._report(
-                    int((index + 1) / total * 100) if total else 100, datfile
-                )
                 full_path = os.path.join(datdir, datfile)
 
                 # Ignore directory entries instead of trying to open them.
                 if os.path.isdir(full_path):
+                    processed += 1
+                    self._report(
+                        int(processed / total * 100) if total else 100, datfile
+                    )
                     continue
 
                 try:
@@ -218,6 +221,10 @@ class DatScanner:
                             )
                             summary['entries'] += 1
                     db_conn.commit()
+                    processed += 1
+                    self._report(
+                        int(processed / total * 100) if total else 100, datfile
+                    )
                 except Exception as exc:
                     # An unreadable or unparseable input must not be treated as
                     # successfully processed; discard this file's staged rows
@@ -240,13 +247,23 @@ class DatScanner:
             # abort happened.
             if not summary['cancelled'] and not summary['aborted']:
                 try:
+                    _phase["parse"] = time.time() - t_parse_start
+                    t_pub = time.time()
+                    self._report(what='publishing', percent=processed if 'processed' in locals() else total if total else 100)
                     repo.publish_staged(ORIGIN_MAME_SUPPORT)
                     summary['published'] = True
+                    _phase["publish"] = time.time() - t_pub
+                    self._report(what='publishing complete', percent=100)
                 except Exception as exc:
                     log(f"UMSA dat scan: publish failed: {exc}", level='error')
                     summary['aborted'] = True
                     summary['errors'] += 1
 
+            _phase["total_locked"] = time.time() - _t0
+            try:
+                log(f"UMSA dat scan timing: { {k: round(v,3) for k,v in _phase.items()} }", level="debug")
+            except Exception:
+                pass
             return summary
         finally:
             if db_conn is not None:

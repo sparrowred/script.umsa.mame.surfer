@@ -643,33 +643,46 @@ class DBMod:
     def add_dat_to_db(self, db_path):
         """add dat to database"""
 
+        import time
+        t0 = time.time()
         db_paths = _core_data_paths(db_path)
         # The attached dat.db must carry the current schema (including the
         # origin column) before it is read below.
+        t = time.time()
         self._upgrade_dat_db(db_paths)
+        log(f"UMSA add_dat_to_db: upgrade {time.time()-t:.3f}s", level="debug")
         gdb = connect_sqlite(db_paths.umsa_db)
         gdbc = gdb.cursor()
         attached = False
         try:
             # creat additonal tables
+            t = time.time()
             self.create_dat_tables(gdbc)
+            log(f"UMSA add_dat_to_db: create_tables {time.time()-t:.3f}s", level="debug")
             # attach dat db and copy
             gdbc.execute("ATTACH DATABASE ? AS dat", (os.fspath(db_paths.dat_db),))
             attached = True
             # Replace the DAT data atomically: the delete and the copy live in
             # one transaction, so a failed copy never leaves the target empty
             # or partially updated.
+            t = time.time()
             gdbc.execute("DELETE FROM main.dat_set")
             gdbc.execute("DELETE FROM main.dat")
+            log(f"UMSA add_dat_to_db: delete {time.time()-t:.3f}s", level="debug")
+            t = time.time()
             gdbc.execute(
                 "INSERT INTO main.dat (id, file, entry, origin) "
                 "SELECT id, file, entry, origin FROM dat.dat"
             )
+            log(f"UMSA add_dat_to_db: insert_dat {time.time()-t:.3f}s", level="debug")
+            t = time.time()
             gdbc.execute(
                 "INSERT INTO main.dat_set (id, dat_id) "
                 "SELECT id, dat_id FROM dat.dat_set"
             )
+            log(f"UMSA add_dat_to_db: insert_dat_set {time.time()-t:.3f}s", level="debug")
             gdb.commit()
+            log(f"UMSA add_dat_to_db: total {time.time()-t0:.3f}s", level="debug")
         except Exception:
             # Undo any pending write; the original exception is re-raised.
             try:
