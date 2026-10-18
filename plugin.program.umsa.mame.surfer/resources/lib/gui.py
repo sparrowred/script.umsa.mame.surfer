@@ -538,7 +538,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.setFocus(self.getControl(GAME_LIST))
 
             elif item in ('name', 'year', 'publisher'):
-                self.ggdb.order = item
+                self.ggdb.set_order(item)
                 content = int(self.getControl(GAME_LIST_LABEL_ID).getLabel())
                 self.update_gamelist(content)
 
@@ -753,10 +753,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 # switch filter
                 elif menu_item == M_FILTER:
                     if self.ggdb.use_filter:
-                        self.ggdb.use_filter = False
+                        self.ggdb.set_filter_enabled(False)
                         self.getControl(MAIN_MENU).getSelectedItem().setLabel("Filter (off)")
                     else:
-                        self.ggdb.use_filter = True
+                        self.ggdb.set_filter_enabled(True)
                         self.getControl(MAIN_MENU).getSelectedItem().setLabel(
                             f"Filter ({self.act_filter})")
                 # update umsa db
@@ -1076,9 +1076,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Switch filter in gamelist"""
 
         if self.ggdb.use_filter:
-            self.ggdb.use_filter = False
+            self.ggdb.set_filter_enabled(False)
         else:
-            self.ggdb.use_filter = True
+            self.ggdb.set_filter_enabled(True)
 
         content = int(self.getControl(GAME_LIST_LABEL_ID).getLabel())
         self.setFocus(self.getControl(GAME_LIST_OPTIONS))

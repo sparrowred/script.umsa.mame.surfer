@@ -1173,6 +1173,27 @@ class DBMod:
         sets = self.get_set_ids_for_software(software_id)
         return self._get_status_repository().get_latest_by_set_ids(sets)
 
+    def set_filter_enabled(self, flag):
+        """Enable or disable the active filter for subsequent queries
+
+        Named mutation API for the public ``use_filter`` state, so callers do
+        not have to touch the attribute directly. The state itself stays on
+        ``DBMod``.
+        """
+
+        self.use_filter = flag
+
+    def set_order(self, order):
+        """Set the list ordering for subsequent queries
+
+        Accepts the valid order names ``name``, ``year`` and ``publisher``;
+        ``execute_statement`` validates the value against its whitelist and
+        falls back to the safe name ordering otherwise. Named mutation API for
+        the public ``order`` state, which stays on ``DBMod``.
+        """
+
+        self.order = order
+
     def define_filter(self, filter_lists):
         """define filter
 

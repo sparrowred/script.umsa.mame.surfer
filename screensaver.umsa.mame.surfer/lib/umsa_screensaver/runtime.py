@@ -106,7 +106,7 @@ class ScreensaverRuntime:
                 return
 
             self.ggdb = DBMod(self.settings_folder, self._nonmame_roots())
-            self.ggdb.use_filter = False
+            self.ggdb.set_filter_enabled(False)
             if request is not None and request["art_types"] is not None:
                 available_art_types = set(self.ggdb.get_art_types())
                 unknown_art_types = set(request["art_types"]) - available_art_types
