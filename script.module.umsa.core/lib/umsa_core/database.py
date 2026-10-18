@@ -1045,52 +1045,12 @@ class DBMod:
         TODO software can belong to more than one series
         """
 
-        # check if software has a series attached
-        self.gdbc.execute(
-            "SELECT series_id \
-             FROM series_seq WHERE software_id = ?", (software_id,)
-        )
-        series_ids = self.gdbc.fetchall()
-        if not series_ids:
-            return None
-
-        # get all entries for the series
-        all_series = []
-        self.gdbc.execute(
-            "SELECT software_id \
-             FROM series_seq, software, year \
-             WHERE series_id = ? AND software_id = software.id \
-             AND software.year_id = year.id \
-             ORDER BY seqno, year.name", (series_ids[0]['series_id'],) # simply use first series
-        )
-        for i in self.gdbc.fetchall():
-            self.gdbc.execute(
-                "SELECT DISTINCT s.id, s.name, y.name as year, m.name as maker \
-                 FROM software s, sets v, \
-                      year y, maker m \
-                 WHERE s.id = v.softwarelink_id AND y.id = s.year_id \
-                       AND m.id = s.developer_id AND s.id = ?", (i[0],)
-            )
-            all_series.append(self.gdbc.fetchone())
-        return all_series
+        return self._get_game_repository().get_series(software_id)
 
     def check_series(self, software_id):
         """Return count of series entries based on software id"""
 
-        # first check if series exists
-        self.gdbc.execute(
-            "SELECT series_id \
-             FROM series_seq WHERE software_id = ?", (software_id, )
-        )
-        series_exists = self.gdbc.fetchone()
-        # now count
-        if series_exists:
-            self.gdbc.execute(
-                "SELECT COUNT(series_id) \
-                 FROM series_seq WHERE series_id = ?", (series_exists['series_id'],)
-            )
-            return self.gdbc.fetchone()[0]
-        return None
+        return self._get_game_repository().check_series(software_id)
 
     def check_compilation(self, software_id):
         """Return if software is connected to a compilation
@@ -1100,21 +1060,7 @@ class DBMod:
         0 = No connection found
         """
 
-        self.gdbc.execute(
-            "SELECT software.id FROM software \
-                JOIN compilations ON compilations.software_id = software.id \
-             WHERE software.id = ?", (software_id,))
-        if self.gdbc.fetchone():
-            return 1
-
-        self.gdbc.execute(
-            "SELECT software.id FROM software \
-                JOIN compilations ON compilations.compilation_id = software.id \
-             WHERE software.id = ?", (software_id,))
-        if self.gdbc.fetchone():
-            return 2
-
-        return 0
+        return self._get_game_repository().check_compilation(software_id)
 
     def make_time_nice(self, timestamp, now=None):
         """Return hours and minutes as 1 string.
@@ -1890,38 +1836,7 @@ class DBMod:
         Returns a list of database tables and rows.
         """
 
-        if cat == "Softwarelists":
-            select_placeholders = (
-                'description', 'swl', 'swllink', '', 'description'
-            )
-        elif cat == "Game Categories":
-            select_placeholders = (
-                'name', 'category', 'classification',
-                'AND t.flag = 0', 'name'
-            )
-        elif cat == "Machine Categories":
-            select_placeholders = (
-                'name', 'category', 'classification',
-                'AND t.flag = 1', 'name'
-            )
-        elif cat == "Years":
-            select_placeholders = (
-                'name', 'year', 'year', '', 'name'
-            )
-        elif cat == "Players":
-            select_placeholders = (
-                'name', 'nplayers', 'nplayers', '', 'name'
-            )
-        else:
-            return None
-
-        select_statement = "SELECT t.id, t.%s, count(distinct s.id) \
-                            FROM %s t, software s, sets v \
-                            WHERE t.id = v.%s_id and s.id = v.softwarelink_id %s \
-                            GROUP BY t.id ORDER BY t.%s" % select_placeholders
-        self.gdbc.execute(select_statement)
-
-        return self.gdbc.fetchall()
+        return self._get_game_repository().get_all_dbentries(cat)
 
     def search_single(self, my_search):
         """search single"""
@@ -1998,32 +1913,7 @@ class DBMod:
               - save last 10 search terms and make as a popup for search button incl new search
         """
 
-        # count
-        self.gdbc.execute(
-            "SELECT COUNT(DISTINCT software.id) \
-                FROM sets \
-                    JOIN software ON software.id = sets.softwarelink_id \
-             WHERE sets.gamename LIKE ?", ("%"+my_search+"%",))
-        results_count = self.gdbc.fetchone()[0]
-        # fetch
-        self.gdbc.execute(
-            "SELECT DISTINCT software.id, software.name, year.name as year, maker.name as maker \
-                FROM software \
-                    JOIN year ON year.id = software.year_id \
-                    JOIN maker ON maker.id = software.developer_id \
-                    JOIN sets ON sets.softwarelink_id = software.id \
-                WHERE sets.gamename LIKE ? \
-             ORDER BY software.name LIMIT 100", ("%"+my_search+"%",))
-        results = self.gdbc.fetchall()
-        count, pos = 0, 0
-        for i in results:
-            # check if search is in beginning of s.name and set pos
-            if my_search.lower() == i[1][:len(my_search)].lower():
-                pos = count
-                break
-            count += 1
-
-        return results, pos, results_count
+        return self._get_game_repository().get_searchresults(my_search)
 
     def get_machine_name(self, machine_id):
         """Get name of machine from id"""
@@ -2043,48 +1933,7 @@ class DBMod:
     def get_machines(self, swl_name, machine=None):
         "Get original and compatible machines for 1 software list"
 
-        # TODO join
-        self.gdbc.execute(
-            "SELECT DISTINCT \
-                s.id, s.name, s.gamename, s.detail, \
-                y.name as year, m.name as maker, ss.status, ss.filtr \
-             FROM \
-                sets s, swl sw, \
-                swl_status ss, year y, \
-                maker m \
-            WHERE \
-                sw.name = ? \
-                AND sw.id = ss.swl_id \
-                AND s.id = ss.system_id \
-                AND y.id = s.year_id \
-                AND m.id = s.publisher_id \
-            ORDER BY \
-                ss.status DESC, y.name, s.name",
-            (swl_name,)
-        )
-
-        machines = []
-        pos, count = 0, 0
-        for db_result in self.gdbc.fetchall():
-            machines.append(
-                {
-                    'id'       : db_result['id'],
-                    'name'     : "{}, {}".format(db_result['gamename'], db_result['maker']),
-                    'label2'   : db_result['gamename'],
-                    'setname'  : db_result['name'],
-                    'detail'   : db_result['detail'],
-                    'fullname' : db_result['gamename'],
-                    'status'   : db_result['status'],
-                    'filter'   : db_result['filtr'],
-                    'year'     : db_result['year'],
-                    'maker'    : "{},{}".format(db_result['status'], db_result['filtr'])
-                }
-            )
-            if machine == db_result['name']:
-                pos = count
-            count += 1
-
-        return machines, pos
+        return self._get_game_repository().get_machines(swl_name, machine)
 
     def get_set_name(self, set_id):
         """Returns set name from set id
@@ -2174,61 +2023,21 @@ class DBMod:
         pos_set = 0
         all_sets = []
 
+        # every umsa.db read below goes through the game repository; this
+        # method only composes their results with the status/dat/artwork data
+        repo = self._get_game_repository()
+
         # get all sets for software id
-        self.gdbc.execute(
-            "SELECT \
-                sets.id, sets.name, sets.gamename, sets.detail, sets.source, \
-                year.name as year, maker.name as maker, swl.name as swl, swl.system_id, \
-                sets.display_type, sets.display_rotation, \
-                category.name as category, category.flag as category_flag, \
-                nplayers.name as nplayers, sets.cloneof_id \
-             FROM sets \
-             JOIN year ON sets.year_id = year.id \
-             JOIN maker ON sets.publisher_id = maker.id \
-             JOIN swl ON sets.swllink_id = swl.id \
-             JOIN category ON sets.classification_id = category.id \
-             JOIN nplayers ON sets.nplayers_id = nplayers.id \
-             WHERE \
-                sets.softwarelink_id = ? \
-             ORDER BY \
-                year.name, sets.cloneof_id, sets.gamename",
-            (software_id,)
-        )
-        all_sets.append(self.gdbc.fetchall())
+        all_sets.append(repo.get_sets_for_software(software_id))
 
         # check if we have other software by this name
         # get software name
-        self.gdbc.execute(
-            "SELECT name FROM software WHERE id = ?", (software_id,)
-        )
-        software_name = self.gdbc.fetchone()[0]
+        software_name = repo.get_software_name(software_id)
         # get all software ids for software name
-        self.gdbc.execute(
-            "SELECT id FROM software WHERE name = ?", (software_name,)
-        )
-        for i in self.gdbc.fetchall():
-            if software_id == i['id']: # is the original
+        for other_id in repo.get_software_ids_for_name(software_name):
+            if software_id == other_id:  # is the original
                 continue
-            self.gdbc.execute(
-                "SELECT \
-                    sets.id, sets.name, sets.gamename, sets.detail, sets.source, \
-                    year.name as year, maker.name as maker, swl.name as swl, swl.system_id, \
-                    sets.display_type, sets.display_rotation, \
-                    category.name as category, category.flag as category_flag, \
-                    nplayers.name as nplayers, sets.cloneof_id \
-                FROM sets \
-                JOIN year ON sets.year_id = year.id \
-                JOIN maker ON sets.publisher_id = maker.id \
-                JOIN swl ON sets.swllink_id = swl.id \
-                JOIN category ON sets.classification_id = category.id \
-                JOIN nplayers ON sets.nplayers_id = nplayers.id \
-                WHERE \
-                    sets.softwarelink_id = ? \
-                ORDER BY \
-                    year.name, sets.cloneof_id, sets.gamename",
-                (i['id'],)
-            )
-            all_sets.append(self.gdbc.fetchall())
+            all_sets.append(repo.get_sets_for_software(other_id))
 
         diff_machines = {}
         set_ids = []
@@ -2267,10 +2076,8 @@ class DBMod:
                         machine_name = best_machine['setname']
                         machine_label = best_machine['label2']
                     else:
-                        self.gdbc.execute(
-                            "SELECT name, gamename FROM sets WHERE id = ?",
-                            (machine['system_id'],))
-                        machine_name, machine_label = self.gdbc.fetchone()
+                        machine_name, machine_label = repo.get_machine_name(
+                            machine['system_id'])
 
                 # create key in diff_machines
                 if resulting_machine not in diff_machines:
@@ -2338,23 +2145,4 @@ class DBMod:
     def get_info_by_set_and_swl(self, setname, swlname):
         """get info by set and swl"""
 
-        self.gdbc.execute(
-            "SELECT v.id, v.gamename, y.name, m.name, s.id \
-             FROM software s, sets v, \
-                  swl, year y, maker m \
-             WHERE s.id = v.softwarelink_id AND v.swllink_id = swl.id \
-                   AND y.id = v.year_id AND m.id = v.publisher_id \
-                   AND v.name = ? AND swl.name = ?",
-            (setname, swlname)
-        )
-        db_fetch = self.gdbc.fetchone()
-
-        result = {
-            'software_id'   : db_fetch[4],
-            'set_id'        : db_fetch[0],
-            'name'          : db_fetch[1],
-            'year'          : db_fetch[2],
-            'maker'         : db_fetch[3],
-            'label'         : f"{db_fetch[2]} - {db_fetch[1]}, {db_fetch[3]}",
-        }
-        return result
+        return self._get_game_repository().get_info_by_set_and_swl(setname, swlname)
