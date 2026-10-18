@@ -1310,6 +1310,7 @@ class DBMod:
             order = 'maker.name, software.name'
         else:
             self.order = 'software.name'
+            order = 'software.name'
         time_rampup = time.time()
 
         # fetch
