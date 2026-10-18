@@ -4,9 +4,9 @@ Artwork table access is centralised in :mod:`umsa_core.artwork_repository` and
 DAT table access in :mod:`umsa_core.dat_repository`; DAT parsing lives in
 :mod:`umsa_core.dat_parser` and the DAT scan workflow in
 :mod:`umsa_core.dat_scanner`. ``status.db`` play history and per-set media
-access is centralised in :mod:`umsa_core.status_repository` (the ``emu``/
-``emu_conn`` schema and queries stay here until step 4.6). ``DBMod`` remains
-the public facade.
+access is centralised in :mod:`umsa_core.status_repository`, emulator
+configuration (``emu``/``emu_conn``) in :mod:`umsa_core.emulator_repository`.
+``DBMod`` remains the public facade.
 
 A few direct statements intentionally remain here:
 
@@ -41,6 +41,7 @@ from .artwork_scanner import ArtworkScanner
 from .data_paths import CoreDataPaths
 from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
+from .emulator_repository import EmulatorRepository, create_emulator_tables
 from .game_repository import GameRepository
 from .gb64_scanner import GB64Scanner
 from .logging import log
@@ -307,31 +308,11 @@ class DBMod:
         # defines filter with self.filter_tables, self.filter_where
         self.define_filter(filter_lists)
 
-        # create db layout (first run); the sets schema lives in the status
-        # repository (step 4.5), the emu/emu_conn schema stays here (4.6)
+        # create db layout (first run); the schemas live with their
+        # repositories (sets → status_repository, emu/emu_conn →
+        # emulator_repository), both helpers called here (steps 4.5/4.6)
         create_status_tables(self.sdbc)
-        self.sdbc.execute(
-            """
-            CREATE TABLE IF NOT EXISTS emu(
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                name      VARCHAR(100) NOT NULL,
-                exe       VARCHAR(100) NOT NULL,
-                dir       VARCHAR(200) NOT NULL,
-                zip       INT NOT NULL,
-                mode      INT NOT NULL
-            )
-            """
-        )
-        self.sdbc.execute(
-            """
-            CREATE TABLE IF NOT EXISTS emu_conn(
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                emu_id    INT NOT NULL,
-                swl       VARCHAR(50),
-                source    VARCHAR(100)
-            )
-            """
-        )
+        create_emulator_tables(self.sdbc)
         self.sdb.commit()
 
     def open_db(self, db_path):
@@ -773,6 +754,16 @@ class DBMod:
 
         return StatusRepository(self.sdb)
 
+    def _get_emulator_repository(self):
+        """Return an emulator repository bound to the current status.db connection.
+
+        Created per call (never cached) so it can never hold a reference to a
+        connection that has since been replaced. It never owns or closes
+        ``self.sdb``.
+        """
+
+        return EmulatorRepository(self.sdb)
+
     def add_art_to_db(self, db_path):
         """add artwork to database
 
@@ -1126,69 +1117,30 @@ class DBMod:
     def get_emulators(self, source=None, swl_name=None):
         """Returns emulators based on source or swl_name"""
 
-        if source:
-            self.sdbc.execute(
-                "SELECT emu.id, emu.name, emu.exe, emu.dir, emu.zip, emu.mode, \
-                        emu_conn.id as emu_conn_id \
-                 FROM emu JOIN emu_conn ON emu.id = emu_conn.emu_id \
-                 WHERE emu_conn.source = ? ORDER BY emu.name", (source,))
-        elif swl_name:
-            self.sdbc.execute(
-                "SELECT emu.id, emu.name, emu.exe, emu.dir, emu.zip, emu.mode, \
-                        emu_conn.id as emu_conn_id \
-                 FROM emu JOIN emu_conn ON emu.id = emu_conn.emu_id \
-                 WHERE emu_conn.swl = ? ORDER BY emu.name", (swl_name,))
-        else:
-            self.sdbc.execute("SELECT id, name, exe, dir, zip, mode FROM emu ORDER BY name")
-        rows = self.sdbc.fetchall()
-        return [dict(row) for row in rows] if rows else []
+        return self._get_emulator_repository().get_emulators(
+            source=source, swl_name=swl_name
+        )
 
     def get_emulator(self, emu_id=None, emu_conn_id=None):
         """Return information about saved emulator"""
 
-        if emu_id:
-            self.sdbc.execute(
-                "SELECT id, name, exe, dir, zip, mode FROM emu WHERE id = ?", (emu_id,))
-        elif emu_conn_id:
-            self.sdbc.execute(
-                "SELECT id, name, exe, dir, zip, mode FROM emu WHERE id = \
-                 (SELECT emu_id FROM emu_conn WHERE id = ?)", (emu_conn_id,))
-        row = self.sdbc.fetchone()
-        return dict(row) if row is not None else None
+        return self._get_emulator_repository().get_emulator(
+            emu_id=emu_id, emu_conn_id=emu_conn_id
+        )
 
     def save_emulator(self, emu_info, reconfigure, source=None, swl_name=None):
         """Save emulator to database and connect if needed."""
 
-        if 'id' in emu_info:
-            self.sdbc.execute(
-                "UPDATE emu SET name = ?, exe = ?, dir = ?, zip = ?, mode = ? \
-                    WHERE id = ?",
-                (emu_info['name'], emu_info['exe'], emu_info['dir'],
-                 emu_info['zip'], emu_info['mode'], emu_info['id']))
-        else:
-            self.sdbc.execute(
-                "INSERT INTO emu (name, exe, dir, zip, mode) VALUES (?, ?, ?, ?, ?)",
-                (emu_info['name'], emu_info['exe'], emu_info['dir'],
-                 emu_info['zip'], emu_info['mode']))
-        self.sdb.commit()
-        if not reconfigure:
-            emu_id = self.sdbc.lastrowid
-            self.connect_emulator(emu_id, source=source, swl_name=swl_name)
+        return self._get_emulator_repository().save_emulator(
+            emu_info, reconfigure, source=source, swl_name=swl_name
+        )
 
     def connect_emulator(self, emu_id, source=None, swl_name=None):
         """Connect emulator to source or softwarelist"""
 
-        if source:
-            self.sdbc.execute(
-                "INSERT INTO emu_conn (emu_id, source) VALUES (?, ?)", (emu_id, source)
-            )
-        elif swl_name:
-            self.sdbc.execute(
-                "INSERT INTO emu_conn (emu_id, swl) VALUES (?, ?)", (emu_id, swl_name)
-            )
-        else:
-            log("UMSA database: connect_emulator error", level='debug')
-        self.sdb.commit()
+        return self._get_emulator_repository().connect_emulator(
+            emu_id, source=source, swl_name=swl_name
+        )
 
     def delete_emulator_connection(self, emu_conn_id):
         """Delete emulator connection to softwarelist or source
@@ -1196,25 +1148,14 @@ class DBMod:
         Return emulator id it not used anymore
         """
 
-        # get emu.ids for emu_conn.id before deleting
-        self.sdbc.execute("SELECT emu_id FROM emu_conn WHERE emu_id IN \
-                           (SELECT emu_id FROM emu_conn WHERE id = ?)", (emu_conn_id,))
-        connected_emus = self.sdbc.fetchall()
-        # delete emu_conn.id
-        self.sdbc.execute("DELETE FROM emu_conn WHERE id = ?", (emu_conn_id,))
-        self.sdb.commit()
-        # return it if only 1
-        if len(connected_emus) == 1:
-            return connected_emus[0][0]
-        return None
+        return self._get_emulator_repository().delete_emulator_connection(
+            emu_conn_id
+        )
 
     def delete_emulator(self, emu_id):
         """Delete emulator and all connections"""
 
-        self.sdbc.execute("DELETE FROM emu_conn WHERE emu_id = ?", (emu_id,))
-        self.sdb.commit()
-        self.sdbc.execute("DELETE FROM emu WHERE id = ?", (emu_id,))
-        self.sdb.commit()
+        return self._get_emulator_repository().delete_emulator(emu_id)
 
     def write_status_after_play(self, set_id, played_seconds):
         """Update play status for set id

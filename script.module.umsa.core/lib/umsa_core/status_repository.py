@@ -4,8 +4,8 @@ This module centralises SQL access to the ``status.db`` ``sets`` table (play
 status, play history and the per-set MARP/Youtube links) and is the
 authoritative definition of that table's schema, following the conventions of
 :mod:`umsa_core.dat_repository` and :mod:`umsa_core.game_repository`. The
-``emu``/``emu_conn`` tables of ``status.db`` are still defined in
-:mod:`umsa_core.database` until roadmap step 4.6.
+``emu``/``emu_conn`` tables of ``status.db`` live in
+:mod:`umsa_core.emulator_repository` (roadmap step 4.6).
 
 The repository operates on an existing SQLite connection supplied by the
 caller; it never opens or closes it, never caches a different connection and
