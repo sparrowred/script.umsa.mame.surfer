@@ -11,6 +11,12 @@ an explicit :class:`GamelistFilter` state value. ``DBMod`` stays the public
 compatibility facade and the public state holder; it builds the state per call
 and copies the resulting filter clauses back into its own attributes.
 
+All values that originate from outside the module (category/year/player/swl/
+source/maker names, filter id lists, software names, art types, id lists) are
+passed as SQL bind parameters. Only fixed column/join/order fragments are
+interpolated. Each clause therefore carries its own ``(sql, params)`` pair so
+the parameter order survives the way the historical code concatenated clauses.
+
 The module is Kodi-independent and imports no GUI/screensaver module. It never
 opens, closes or commits the connection it is given and owns only short-lived
 cursors that are closed deterministically.
@@ -32,6 +38,10 @@ _ORDER_SQL = {
 _ORDER_FALLBACK = "software.name"
 
 
+def _placeholders(values) -> str:
+    return ",".join("?" * len(values))
+
+
 @dataclass
 class GamelistFilter:
     """Explicit filter/query state for one gamelist statement.
@@ -39,11 +49,11 @@ class GamelistFilter:
     Mirrors the historical public ``DBMod`` attributes:
 
     - ``join``/``where``: the per-selector state set by the ``get_by_*``
-      family (empty for the complete list).
+      family (empty for the complete list); ``where_params`` binds its values.
     - ``order``: one of ``name``, ``year``, ``publisher``.
     - ``use_filter``: whether the active ``filter_*`` clauses are applied.
     - ``filter_join``/``filter_where``: the clauses built by
-      :func:`define_filter`.
+      :func:`define_filter`; ``filter_where_params`` binds ``filter_where``.
     """
 
     join: str = ""
@@ -52,6 +62,8 @@ class GamelistFilter:
     use_filter: bool = True
     filter_join: tuple = field(default_factory=tuple)
     filter_where: tuple = field(default_factory=tuple)
+    where_params: tuple = field(default_factory=tuple)
+    filter_where_params: tuple = field(default_factory=tuple)
 
 
 def _fetch_scalar(cursor: sqlite3.Cursor) -> int:
@@ -62,13 +74,14 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
     """Build the filter clauses for ``filter_lists``.
 
     Returns ``(state, display_string)`` where ``state`` carries the new
-    ``filter_join``/``filter_where`` clauses and ``display_string`` is the
-    historical ``"count (percent%)"`` label. A join is skipped when every value
-    in that category is selected.
+    ``filter_join``/``filter_where``/``filter_where_params`` clauses and
+    ``display_string`` is the historical ``"count (percent%)"`` label. A join is
+    skipped when every value in that category is selected.
     """
 
     filter_join = []
     filter_where = []
+    filter_where_params = []
     cursor = connection.cursor()
     try:
         # swl
@@ -78,7 +91,8 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
             if swl_count > len(filter_lists['Softwarelists']):
                 filter_join.append("JOIN swl ON swl.id = sets.swllink_id")
                 filter_where.append(
-                    "swl.id IN ({})".format(','.join(filter_lists['Softwarelists'])))
+                    "swl.id IN ({})".format(_placeholders(filter_lists['Softwarelists'])))
+                filter_where_params.extend(filter_lists['Softwarelists'])
             else:
                 log("UMSA datbase define_filter: all swls, no filter used", level='debug')
         # game categories, machines
@@ -86,16 +100,15 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
                 (filter_lists.get('Machine Categories'))):
             cursor.execute("SELECT COUNT(id) FROM category")
             cat_count = _fetch_scalar(cursor)
-            len_filterlists = len(filter_lists['Game Categories'] +
-                                   filter_lists['Machine Categories'])
-            log(f"UMSA database: filter categories {cat_count}, {len_filterlists}",
+            cat_ids = (filter_lists['Game Categories'] +
+                       filter_lists['Machine Categories'])
+            log(f"UMSA database: filter categories {cat_count}, {len(cat_ids)}",
                 level='debug')
-            if cat_count > len_filterlists:
+            if cat_count > len(cat_ids):
                 filter_join.append(
                     "JOIN category ON category.id = sets.classification_id")
-                filter_where.append("category.id IN ({})".format(
-                    ','.join(filter_lists['Game Categories'] +
-                             filter_lists['Machine Categories'])))
+                filter_where.append("category.id IN ({})".format(_placeholders(cat_ids)))
+                filter_where_params.extend(cat_ids)
             else:
                 log("UMSA database: define_filter: all categories, no filter used",
                     level='debug')
@@ -108,7 +121,8 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
             if players_count > len(filter_lists['Players']):
                 filter_join.append("JOIN nplayers ON nplayers.id = sets.nplayers_id")
                 filter_where.append("nplayers.id IN ({})".format(
-                    ','.join(filter_lists['Players'])))
+                    _placeholders(filter_lists['Players'])))
+                filter_where_params.extend(filter_lists['Players'])
             else:
                 log("UMSA database: define_filter: all players, no filter used",
                     level='debug')
@@ -119,19 +133,22 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
             if year_count > len(filter_lists['Years']):
                 filter_join.append("JOIN year ON year.id = sets.year_id")
                 filter_where.append(
-                    "year.id IN ({})".format(','.join(filter_lists['Years'])))
+                    "year.id IN ({})".format(_placeholders(filter_lists['Years'])))
+                filter_where_params.extend(filter_lists['Years'])
             else:
                 log("UMSA database: define_filter: all years, no filter used",
                     level='debug')
         # count
         filter_where_clause = ''
+        count_params = []
         if filter_join and filter_where:
             filter_where_clause = \
                 "WHERE sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
                     " ".join(filter_join), " AND ".join(filter_where))
+            count_params = list(filter_where_params)
         select_statement = f"SELECT COUNT (DISTINCT software.id) \
             FROM sets JOIN software ON software.id = sets.softwarelink_id {filter_where_clause}"
-        cursor.execute(select_statement)
+        cursor.execute(select_statement, count_params)
         count = _fetch_scalar(cursor)
         cursor.execute("SELECT COUNT (software.id) FROM software")
         all_count = _fetch_scalar(cursor)
@@ -140,7 +157,10 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
         cursor.close()
 
     state = GamelistFilter(
-        filter_join=tuple(filter_join), filter_where=tuple(filter_where))
+        filter_join=tuple(filter_join),
+        filter_where=tuple(filter_where),
+        filter_where_params=tuple(filter_where_params),
+    )
     return state, f"{count} ({percent}%)"
 
 
@@ -157,10 +177,13 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
     time_start = time.time()
     result_count = 0
     where = ""
+    where_params = []
     filter_join = ""
     filter_where = ""
     filter_join_list = list(state.filter_join)
     filter_where_list = list(state.filter_where)
+    filter_where_params = list(state.filter_where_params)
+    state_where_params = list(state.where_params)
     if filter_join_list and filter_where_list:
         filter_join = " ".join(filter_join_list)
         filter_where = " AND ".join(filter_where_list)
@@ -173,20 +196,29 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
             s_join = filter_join
         if state.where and filter_where:
             s_where = f"{state.where} AND {filter_where}"
+            s_where_params = state_where_params + filter_where_params
         elif state.where:
             s_where = state.where
+            s_where_params = state_where_params
         elif filter_where:
             s_where = filter_where
+            s_where_params = filter_where_params
+        else:
+            s_where_params = []
         if s_join and s_where:
             where = f"sets.id IN (SELECT sets.id FROM sets {s_join} WHERE {s_where})"
+            where_params = s_where_params
         # only for source
         elif state.where:
             where = state.where
+            where_params = state_where_params
     elif state.use_filter:
         if filter_join and filter_where:
             where = f"sets.id IN (SELECT sets.id FROM sets {filter_join} WHERE {filter_where})"
+            where_params = filter_where_params
     elif state.join and state.where:
         where = f"sets.id IN (SELECT sets.id FROM sets {state.join} WHERE {state.where})"
+        where_params = state_where_params
     else:
         log("UMSA database: execute_statement: no join and where clause", level='debug')
 
@@ -224,18 +256,23 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                     i_where = "WHERE "+where
                 else:
                     i_where = ""
+                i_params = list(where_params)
                 limit = ""
             elif prevnext == 'prev':
                 if where:
-                    i_where = f'WHERE software.name <= "{sname}" AND {where}'
+                    i_where = f'WHERE software.name <= ? AND {where}'
+                    i_params = [sname] + list(where_params)
                 else:
-                    i_where = f'WHERE software.name <= "{sname}"'
+                    i_where = 'WHERE software.name <= ?'
+                    i_params = [sname]
                 limit = "DESC LIMIT 100"
             elif prevnext == 'next':
                 if where:
-                    i_where = f'WHERE software.name >= "{sname}" AND {where}'
+                    i_where = f'WHERE software.name >= ? AND {where}'
+                    i_params = [sname] + list(where_params)
                 else:
-                    i_where = f'WHERE software.name >= "{sname}"'
+                    i_where = 'WHERE software.name >= ?'
+                    i_params = [sname]
                 limit = "ASC LIMIT 100"
             else:
                 log("UMSA database execute_statement: prevnext error {prevnext}",
@@ -248,7 +285,7 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                     JOIN year ON year.id = software.year_id \
                     JOIN maker ON maker.id = software.developer_id \
                 {i_where} ORDER BY {order} {limit}"
-            cursor.execute(select_statement)
+            cursor.execute(select_statement, i_params)
             slist = cursor.fetchall()
             # no results: try without filter
             if len(slist) == 0:
@@ -256,8 +293,10 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                     level='debug')
                 if state.where:
                     where = f"sets.id IN (SELECT sets.id FROM sets {state.join} WHERE {state.where})"
+                    where_params = list(state.where_params)
                 else:
                     where = ""
+                    where_params = []
         time_fetch = time.time()
 
         # get position and set prevnext
@@ -315,39 +354,39 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
 def software_query():
     """Selector state for the complete list."""
 
-    return '', ''
+    return '', '', []
 
 
 def source_query(source):
     """Selector state for a MAME source file."""
 
-    return '', f'sets.source = "{source}"'
+    return '', 'sets.source = ?', [source]
 
 
 def category_query(cat):
     """Selector state for a category name."""
 
     return ("JOIN category ON category.id = sets.classification_id",
-            f'category.name = "{cat}"')
+            'category.name = ?', [cat])
 
 
 def year_query(year):
     """Selector state for a year name."""
 
-    return 'JOIN year ON year.id = sets.year_id', f'year.name = "{year}"'
+    return 'JOIN year ON year.id = sets.year_id', 'year.name = ?', [year]
 
 
 def players_query(players):
     """Selector state for a player count name."""
 
     return ('JOIN nplayers ON nplayers.id = sets.nplayers_id',
-            f'nplayers.name = "{players}"')
+            'nplayers.name = ?', [players])
 
 
 def swl_query(swl_name):
     """Selector state for a software-list name."""
 
-    return 'JOIN swl ON swl.id = sets.swllink_id', f'swl.name = "{swl_name}"'
+    return 'JOIN swl ON swl.id = sets.swllink_id', 'swl.name = ?', [swl_name]
 
 
 def maker_query(connection: sqlite3.Connection, maker):
@@ -377,7 +416,10 @@ def maker_query(connection: sqlite3.Connection, maker):
     # set join and where
     join = 'JOIN maker ON maker.id = sets.publisher_id'
     if all_maker_ids:
-        where = 'maker.id IN ({})'.format(','.join(all_maker_ids))
+        where = 'maker.id IN ({})'.format(
+            ",".join("?" * len(all_maker_ids)))
+        params = all_maker_ids
     else:
-        where = f'maker.name = "{maker}"'
-    return join, where
+        where = 'maker.name = ?'
+        params = [maker]
+    return join, where, params

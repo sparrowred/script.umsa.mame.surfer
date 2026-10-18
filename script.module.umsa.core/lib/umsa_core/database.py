@@ -284,6 +284,8 @@ class DBMod:
         self.scan_status = True
         self.join = ''
         self.where = ''
+        self._where_params = []
+        self._filter_where_params = []
         if not filter_lists:
             filter_lists = {}
 
@@ -863,15 +865,17 @@ class DBMod:
         """get a random id"""
 
         where = ''
+        where_params = []
         if self.filter_join and self.filter_where:
             where = "WHERE sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
                 " ".join(self.filter_join), " AND ".join(self.filter_where)
             )
+            where_params = list(self._filter_where_params)
 
         select_statement = f"SELECT DISTINCT software.id \
                             FROM sets JOIN software ON software.id = sets.softwarelink_id \
                             {where} ORDER BY RANDOM() LIMIT 1"
-        self.gdbc.execute(select_statement)
+        self.gdbc.execute(select_statement, where_params)
         return self.gdbc.fetchone()[0]
 
     def get_random_art(self, art_types):
@@ -906,7 +910,7 @@ class DBMod:
             "art_set.type, art_set.extension, art_set.relative_path, "
             "art_set.archive_member"
         )
-        types_in = "'" + "','".join(art_types) + "'"
+        types_in = ",".join("?" * len(art_types))
 
         rand_art = None
         end_result = {}
@@ -921,14 +925,15 @@ class DBMod:
                              " ".join(self.filter_join),
                              types_in,
                              " AND ".join(self.filter_where))
-            self.gdbc.execute(statement)
+            self.gdbc.execute(statement,
+                              list(art_types) + list(self._filter_where_params))
             rand_art = self.gdbc.fetchone()
         # and without filter if we haven't found anything
         if not rand_art:
             statement = "SELECT {} FROM art_set JOIN sets ON sets.id = art_set.id \
                         WHERE art_set.type IN ({}) \
                         ORDER BY RANDOM() LIMIT 1".format(art_columns, types_in)
-            self.gdbc.execute(statement)
+            self.gdbc.execute(statement, list(art_types))
             rand_art = self.gdbc.fetchone()
             if not rand_art:
                 log(f"UMSA database get_random art: no artwork for {art_types}", level='warning')
@@ -1218,6 +1223,7 @@ class DBMod:
         state, display = _define_filter(self.gdb, filter_lists)
         self.filter_join = list(state.filter_join)
         self.filter_where = list(state.filter_where)
+        self._filter_where_params = list(state.filter_where_params)
         return display
 
     def execute_statement(self, set_id=None, software_id=None, prevnext=None):
@@ -1238,6 +1244,8 @@ class DBMod:
             use_filter=self.use_filter,
             filter_join=tuple(self.filter_join),
             filter_where=tuple(self.filter_where),
+            where_params=tuple(self._where_params),
+            filter_where_params=tuple(self._filter_where_params),
         )
         slist, pos, result_count = _execute_statement(
             self.gdb, state, set_id, software_id, prevnext)
@@ -1247,43 +1255,43 @@ class DBMod:
     def get_by_software(self, set_id):
         """Return list of software"""
 
-        self.join, self.where = _software_query()
+        self.join, self.where, self._where_params = _software_query()
         return self.execute_statement(set_id)
 
     def get_software_for_source(self, set_id, source):
         """Return list of software based on MAME source file"""
 
-        self.join, self.where = _source_query(source)
+        self.join, self.where, self._where_params = _source_query(source)
         return self.execute_statement(set_id)
 
     def get_by_cat(self, cat, set_id):
         """Return list of software based on category"""
 
-        self.join, self.where = _category_query(cat)
+        self.join, self.where, self._where_params = _category_query(cat)
         return self.execute_statement(set_id)
 
     def get_by_year(self, year, set_id):
         """Return list of software based on year"""
 
-        self.join, self.where = _year_query(year)
+        self.join, self.where, self._where_params = _year_query(year)
         return self.execute_statement(set_id)
 
     def get_by_players(self, players, set_id):
         """Return list of software based on number of players"""
 
-        self.join, self.where = _players_query(players)
+        self.join, self.where, self._where_params = _players_query(players)
         return self.execute_statement(set_id)
 
     def get_by_maker(self, maker, set_id):
         """Return list of software based on maker"""
 
-        self.join, self.where = _maker_query(self.gdb, maker)
+        self.join, self.where, self._where_params = _maker_query(self.gdb, maker)
         return self.execute_statement(set_id)
 
     def get_by_swl(self, swl_name, set_id):
         """Return list of software based on softwarelist"""
 
-        self.join, self.where = _swl_query(swl_name)
+        self.join, self.where, self._where_params = _swl_query(swl_name)
         return self.execute_statement(set_id)
 
     def get_maker(self):
