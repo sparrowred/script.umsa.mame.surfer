@@ -9,12 +9,18 @@ Query methods do not manage transactions. The atomic operations
 (``replace_scan_unit`` and the ``running``/``error``/``done`` scan-status
 updates) manage their own short transactions and only commit a transaction
 they started themselves, so they can never flush unrelated caller work.
+
+Connections must use ``sqlite3.Row`` (step 4.2b contract, decision Q7), which
+is what the read helpers convert rows with and what callers consume; a
+connection with any other row factory is rejected at construction.
 """
 
 from __future__ import annotations
 
 import sqlite3
 from typing import Iterable, Optional
+
+from .sqlite import require_row_connection
 
 
 def create_artwork_tables(db_cursor: sqlite3.Cursor) -> None:
@@ -85,7 +91,11 @@ class ArtworkRepository:
         Args:
             connection: An existing SQLite connection to operate on. The
                 repository does not own this connection.
+
+        Raises:
+            ValueError: If the connection does not use ``sqlite3.Row``.
         """
+        require_row_connection(connection, "ArtworkRepository")
         self._conn = connection
 
     @property
@@ -96,9 +106,8 @@ class ArtworkRepository:
     def get_artwork_for_set(self, set_id: int) -> list:
         """Return artwork records for a single set ID.
 
-        Returns a list of dict-like rows (matching sqlite3.Row behaviour via
-        the connection's row factory) as fetched from the database. The
-        caller's connection row factory is respected.
+        Returns a list of dicts built from the ``sqlite3.Row`` rows, matching
+        the historical caller expectation (dict-like rows with named access).
 
         TODO think about if dict with key = type is better?
         """
@@ -110,27 +119,7 @@ class ArtworkRepository:
                 "FROM art_set WHERE id = ?",
                 (set_id,),
             )
-            rows = cursor.fetchall()
-            # Return list of dicts to match existing caller expectations
-            result = []
-            for r in rows:
-                try:
-                    result.append(dict(r))
-                except Exception:
-                    result.append(
-                        {
-                            "art_id": r[0] if len(r) > 0 else None,
-                            "id": r[1] if len(r) > 1 else None,
-                            "source": r[2] if len(r) > 2 else None,
-                            "root_key": r[3] if len(r) > 3 else None,
-                            "scan_unit": r[4] if len(r) > 4 else None,
-                            "type": r[5] if len(r) > 5 else None,
-                            "extension": r[6] if len(r) > 6 else None,
-                            "relative_path": r[7] if len(r) > 7 else None,
-                            "archive_member": r[8] if len(r) > 8 else None,
-                        }
-                    )
-            return result
+            return [dict(row) for row in cursor.fetchall()]
         finally:
             cursor.close()
 
@@ -154,18 +143,7 @@ class ArtworkRepository:
             row = cursor.fetchone()
             if row is None:
                 return None
-            try:
-                return dict(row)
-            except Exception:
-                return {
-                    "source": row[0] if len(row) > 0 else None,
-                    "root_key": row[1] if len(row) > 1 else None,
-                    "scan_unit": row[2] if len(row) > 2 else None,
-                    "type": row[3] if len(row) > 3 else None,
-                    "extension": row[4] if len(row) > 4 else None,
-                    "relative_path": row[5] if len(row) > 5 else None,
-                    "archive_member": row[6] if len(row) > 6 else None,
-                }
+            return dict(row)
         finally:
             cursor.close()
 
@@ -186,20 +164,7 @@ class ArtworkRepository:
             )
             art_set = {}
             for i in cursor.fetchall():
-                try:
-                    row = dict(i)
-                except Exception:
-                    row = {
-                        "art_id": i[0] if len(i) > 0 else None,
-                        "id": i[1] if len(i) > 1 else None,
-                        "source": i[2] if len(i) > 2 else None,
-                        "root_key": i[3] if len(i) > 3 else None,
-                        "scan_unit": i[4] if len(i) > 4 else None,
-                        "type": i[5] if len(i) > 5 else None,
-                        "extension": i[6] if len(i) > 6 else None,
-                        "relative_path": i[7] if len(i) > 7 else None,
-                        "archive_member": i[8] if len(i) > 8 else None,
-                    }
+                row = dict(i)
                 row["filename"] = row.get("relative_path")
                 row_id = row.get("id")
                 if row_id not in art_set:
@@ -219,10 +184,7 @@ class ArtworkRepository:
             cursor.execute("SELECT DISTINCT type FROM art_set ORDER BY type")
             art_types = []
             for i in cursor.fetchall():
-                try:
-                    t = i["type"]
-                except Exception:
-                    t = i[0] if i else None
+                t = i["type"]
                 if t is None:
                     continue
                 if t not in excluded_set:
@@ -245,10 +207,7 @@ class ArtworkRepository:
             row = cursor.fetchone()
             if row is None:
                 return None
-            try:
-                return row["status"]
-            except Exception:
-                return row[0] if row else None
+            return row["status"]
         finally:
             cursor.close()
 
@@ -395,10 +354,7 @@ class ArtworkRepository:
                 "SELECT scan_unit FROM art_set WHERE source=? AND root_key=?",
                 (source, root_key, source, root_key),
             )
-            # Index the single selected column positionally so the method works
-            # with both the default tuple rows and ``sqlite3.Row`` rows, without
-            # depending on the caller's row factory.
-            units = [row[0] for row in cursor.fetchall()]
+            units = [row["scan_unit"] for row in cursor.fetchall()]
             return sorted(u for u in units if u is not None)
         finally:
             cursor.close()

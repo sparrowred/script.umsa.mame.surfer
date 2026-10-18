@@ -13,9 +13,10 @@ they manage no transactions, never commit, and own only short-lived cursors
 that are closed in a ``finally`` block.
 
 Row shapes are transparent: query methods return the connection's native rows
-untouched, so a ``sqlite3.Row`` connection keeps both ``row['col']`` and
-``row[i]`` access while a plain tuple connection keeps only ``row[i]`` —
-exactly what the historical ``DBMod`` methods returned. Methods whose public
+untouched — a ``sqlite3.Row`` keeps both ``row['col']`` and ``row[i]`` access,
+exactly what the historical ``DBMod`` methods returned. Connections that do not
+use ``sqlite3.Row`` are rejected at construction (step 4.2b contract,
+decision Q7). Methods whose public
 shape was never a row (``get_machine_name``'s plain tuple, the scalar counts,
 ``get_set_name``'s bare name, ``get_set_ids_for_software``'s list of ids)
 normalise at the boundary and keep that shape.
@@ -24,6 +25,8 @@ normalise at the boundary and keep that shape.
 from __future__ import annotations
 
 import sqlite3
+
+from .sqlite import require_row_connection
 
 
 class GameRepository:
@@ -39,7 +42,11 @@ class GameRepository:
         Args:
             connection: An existing SQLite connection to operate on. The
                 repository does not own this connection.
+
+        Raises:
+            ValueError: If the connection does not use ``sqlite3.Row``.
         """
+        require_row_connection(connection, "GameRepository")
         self._conn = connection
 
     @property

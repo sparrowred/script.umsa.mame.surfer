@@ -44,3 +44,29 @@ def connect_sqlite_readonly(
     if row_factory is not None:
         connection.row_factory = row_factory
     return connection
+
+
+def require_row_connection(connection: sqlite3.Connection, owner: str) -> None:
+    """Enforce the repository row-factory contract (roadmap step 4.2b).
+
+    Repositories hand their rows straight back to callers that use both
+    ``row['col']`` and ``row[i]`` access, so they only accept connections
+    configured with ``row_factory=sqlite3.Row``. ``connect_sqlite()``'s
+    default (``None``) is unchanged for callers that deliberately want plain
+    tuples and use no repository.
+
+    Args:
+        connection: The connection a repository is about to wrap.
+        owner: The repository class name, used in the error message.
+
+    Raises:
+        ValueError: If ``connection.row_factory`` is not ``sqlite3.Row``.
+    """
+
+    row_factory = getattr(connection, "row_factory", None)
+    if row_factory is not sqlite3.Row:
+        raise ValueError(
+            f"{owner} requires a connection with row_factory=sqlite3.Row, "
+            f"got {row_factory!r}; open it with "
+            "connect_sqlite(path, row_factory=sqlite3.Row)"
+        )

@@ -10,6 +10,10 @@ transaction management to the caller. The staging and publication methods
 manage their own short transaction and only commit a transaction they started
 themselves, so they can never flush unrelated caller work.
 
+Connections must use ``sqlite3.Row`` (step 4.2b contract, decision Q7):
+callers consume the returned rows with both named and positional access, so a
+connection with any other row factory is rejected at construction.
+
 ``dat.file`` keeps its historical meaning: the visible display category. The
 nullable ``origin`` column is internal bookkeeping that records which import
 produced a row (see :data:`ORIGIN_MAME_SUPPORT`, :data:`ORIGIN_EXODOS` and
@@ -22,6 +26,7 @@ import sqlite3
 from typing import Iterable, Optional
 
 from .scan_coordinator import scan_coordinator
+from .sqlite import require_row_connection
 
 ORIGIN_MAME_SUPPORT = "mame_support"
 ORIGIN_EXODOS = "exodos"
@@ -115,6 +120,12 @@ class DatRepository:
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:
+        """Wrap an existing connection that uses ``sqlite3.Row``.
+
+        Raises:
+            ValueError: If the connection does not use ``sqlite3.Row``.
+        """
+        require_row_connection(connection, "DatRepository")
         self._conn = connection
 
     @property

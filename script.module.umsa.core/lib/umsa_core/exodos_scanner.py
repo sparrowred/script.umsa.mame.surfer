@@ -18,6 +18,7 @@ replaced independently: the scan does not claim atomicity across them.
 from __future__ import annotations
 
 import os
+import sqlite3
 from zipfile import ZipFile
 
 from .artwork_repository import ArtworkRepository, create_artwork_tables
@@ -239,9 +240,11 @@ class ExodosScanner:
         dat_conn = None
         art_conn = None
         try:
-            dat_conn = connect_sqlite(self._db_paths.dat_db)
+            dat_conn = connect_sqlite(
+                self._db_paths.dat_db, row_factory=sqlite3.Row)
             self._init_dat_schema(dat_conn)
-            art_conn = connect_sqlite(self._db_paths.artwork_db)
+            art_conn = connect_sqlite(
+                self._db_paths.artwork_db, row_factory=sqlite3.Row)
             self._init_art_schema(art_conn)
 
             dat_repo = DatRepository(dat_conn)

@@ -1039,20 +1039,6 @@ class DBMod:
 
         return self._get_game_repository().get_set_ids_for_software(software_id)
 
-    def get_status_for_software(self, software_id):
-        """Return play status for given software id"""
-
-        # call umsa.db for sets
-        sets = self.get_set_ids_for_software(software_id)
-        # get count of play_count and time_played from status.db
-        select_statement = "SELECT COUNT(play_count), COUNT(time_played) \
-                            FROM sets WHERE id IN ({})".format(','.join(['?'] * len(sets)))
-        self.sdbc.execute(select_statement, sets)
-
-        status = self.sdbc.fetchone()
-        log(f"UMSA database get_status_for_software: result = {status}", level='debug')
-        return status
-
     def get_series(self, software_id):
         """Return all software from a series based on a software id
 
@@ -1298,14 +1284,6 @@ class DBMod:
         self.sdbc.execute("DELETE FROM emu_conn WHERE emu_id = ?", (emu_id,))
         self.sdb.commit()
         self.sdbc.execute("DELETE FROM emu WHERE id = ?", (emu_id,))
-        self.sdb.commit()
-
-    def write_options(self, set_id, options):
-        """Write options"""
-
-        self.sdbc.execute(
-            "UPDATE sets SET options = ? WHERE id = ?", (set_id, options)
-        )
         self.sdb.commit()
 
     def write_status_after_play(self, set_id, played_seconds):
@@ -2108,17 +2086,6 @@ class DBMod:
 
         return machines, pos
 
-    def get_swl_id(self, swl_name):
-        """get swl id
-
-        TODO: unused
-        """
-
-        self.gdbc.execute(
-            "SELECT id FROM swl WHERE name = ?", (swl_name,)
-        )
-        return self.gdbc.fetchone()[0]
-
     def get_set_name(self, set_id):
         """Returns set name from set id
 
@@ -2126,64 +2093,6 @@ class DBMod:
         """
 
         return self._get_game_repository().get_set_name(set_id)
-
-    def get_info_for_id(self, _id):
-        """get info for id
-
-        TODO: unused
-        """
-
-        self.gdbc.execute(
-            "SELECT DISTINCT v.id, v.name, v.gamename, c.name, c.flag \
-             FROM sets v, swl, \
-                  year y, category c \
-             WHERE v.id = swl.system_id AND y.id = v.year_id \
-                   AND c.id = v.classification_id AND swl.id IN \
-                   ( SELECT DISTINCT swl.id \
-                     FROM sets v, software s, \
-                          swl, year y \
-                     WHERE v.softwarelink_id = s.id AND y.id = s.year_id \
-                           AND v.swllink_id = swl.id AND s.id = ? ) \
-             ORDER BY y.name DESC", (_id,)
-        )
-        machines = self.gdbc.fetchall()
-        return machines
-
-    def get_sets_for_machine(self, software_id, machine_id):
-        """Get sets for a machine
-
-        TODO: unused
-
-        Gets software and machine id
-        Returns list of all sets and set is saved in database dictonary
-        """
-
-        # get_sets: get all sets for s.id and machine (can mean more than 1 swl)
-        self.gdbc.execute(
-            "SELECT \
-                v.id, v.name, v.gamename, v.detail, v.source, \
-                y.name as year, m.name as publisher, swl.name as swl_name, \
-                v.display_type , v.display_rotation, c.name as category, \
-                c.flag as category_is_machine \
-             FROM \
-                sets v, swl, \
-                year y, maker m, \
-                category c \
-             WHERE \
-                v.softwarelink_id = ? \
-                AND v.year_id = y.id \
-                AND v.publisher_id = m.id \
-                AND c.id = v.classification_id \
-                AND v.swllink_id = swl.id \
-                AND swl.id IN \
-                    ( SELECT DISTINCT swl.id \
-                      FROM swl, sets v \
-                      WHERE swl.system_id = v.id AND v.id = ? ) \
-             ORDER BY v.cloneof_id, v.detail, v.gamename",
-            (software_id, machine_id)
-        )
-
-        return self.gdbc.fetchall()
 
     def get_best_machine_for_set(self, swl_name, detail, swl_machine_id):
         """Determine which machine to take for MAME emulation

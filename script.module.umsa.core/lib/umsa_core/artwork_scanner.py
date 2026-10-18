@@ -14,6 +14,7 @@ its dependencies explicitly instead.
 
 import errno
 import os
+import sqlite3
 import stat
 import threading
 
@@ -426,7 +427,8 @@ class ArtworkScanner:
             }
 
         try:
-            db_conn = connect_sqlite(db_paths.artwork_db)
+            db_conn = connect_sqlite(
+                db_paths.artwork_db, row_factory=sqlite3.Row)
             dbc = db_conn.cursor()
             gdb = connect_sqlite(db_paths.umsa_db)
             gdbc = gdb.cursor()

@@ -21,6 +21,7 @@ discovery); until then its records are preserved.
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat as stat_module
 from zipfile import ZipFile
 
@@ -429,9 +430,11 @@ class GB64Scanner:
         dat_conn = None
         art_conn = None
         try:
-            dat_conn = connect_sqlite(self._db_paths.dat_db)
+            dat_conn = connect_sqlite(
+                self._db_paths.dat_db, row_factory=sqlite3.Row)
             self._init_dat_schema(dat_conn)
-            art_conn = connect_sqlite(self._db_paths.artwork_db)
+            art_conn = connect_sqlite(
+                self._db_paths.artwork_db, row_factory=sqlite3.Row)
             self._init_art_schema(art_conn)
 
             dat_repo = DatRepository(dat_conn)

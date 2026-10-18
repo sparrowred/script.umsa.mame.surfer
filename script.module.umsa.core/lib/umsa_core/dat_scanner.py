@@ -166,7 +166,8 @@ class DatScanner:
         repo = None
         staged_cur = None
         try:
-            db_conn = connect_sqlite(db_paths.dat_db)
+            db_conn = connect_sqlite(
+                db_paths.dat_db, row_factory=sqlite3.Row)
             cursor = db_conn.cursor()
             try:
                 if self._initialize_tables is not None:
