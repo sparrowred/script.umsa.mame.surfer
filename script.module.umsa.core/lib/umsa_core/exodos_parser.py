@@ -20,8 +20,8 @@ rather than the literal ``"None"``.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping, Optional
 
 DAT_FILE = "eXoDOS"
 
@@ -104,7 +104,7 @@ def render_note(genre, developer, publisher, notes, source, rating, series,
     )
 
 
-def _root_folder_component(text: Optional[str]) -> str:
+def _root_folder_component(text: str | None) -> str:
     """Return the final path component of a RootFolder value.
 
     Both Windows-style backslashes and forward slashes are accepted regardless
@@ -118,7 +118,7 @@ def _root_folder_component(text: Optional[str]) -> str:
 
 
 def _match_set_id(root_folder: str,
-                  root_folder_map: Mapping[str, int]) -> Optional[int]:
+                  root_folder_map: Mapping[str, int]) -> int | None:
     """Map a RootFolder component to a UMSA set id.
 
     An exact mapping match is preferred. Otherwise a genuine case-insensitive

@@ -600,7 +600,7 @@ class ArtworkScanner:
                         interrupted = True
                         break
                     name, ext = os.path.splitext(f)
-                    ext_clean = ext[1:] if ext.startswith('.') else ext
+                    ext_clean = ext.removeprefix('.')
                     if not ext_clean:
                         continue
                     if name in swl_dict:

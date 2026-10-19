@@ -107,7 +107,7 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
             if cat_count > len(cat_ids):
                 filter_join.append(
                     "JOIN category ON category.id = sets.classification_id")
-                filter_where.append("category.id IN ({})".format(_placeholders(cat_ids)))
+                filter_where.append(f"category.id IN ({_placeholders(cat_ids)})")
                 filter_where_params.extend(cat_ids)
             else:
                 log("UMSA database: define_filter: all categories, no filter used",

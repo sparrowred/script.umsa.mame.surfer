@@ -18,7 +18,7 @@ connection with any other row factory is rejected at construction.
 from __future__ import annotations
 
 import sqlite3
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from .sqlite import require_row_connection
 
@@ -125,7 +125,7 @@ class ArtworkRepository:
 
     def get_artwork_record_for_set_type(
         self, set_id: int, art_type: str
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Return one artwork record for a set and type, or ``None``.
 
         Used to fetch the additional artwork record (for example the
@@ -159,7 +159,7 @@ class ArtworkRepository:
             cursor.execute(
                 "SELECT art_id,id,source,root_key,scan_unit,type,extension,"
                 "relative_path,archive_member "
-                "FROM art_set WHERE id in ({})".format(placeholders),
+                f"FROM art_set WHERE id in ({placeholders})",
                 set_ids_list,
             )
             art_set = {}
@@ -174,7 +174,7 @@ class ArtworkRepository:
         finally:
             cursor.close()
 
-    def get_art_types(self, excluded: Optional[Iterable[str]] = None) -> list:
+    def get_art_types(self, excluded: Iterable[str] | None = None) -> list:
         """Get distinct artwork types, excluding specified types."""
         if excluded is None:
             excluded = ("videosnaps", "manuals", "soundtrack", "ips")
@@ -195,7 +195,7 @@ class ArtworkRepository:
 
     def get_scan_unit_status(
         self, source: str, root_key: str, scan_unit: str
-    ) -> Optional[str]:
+    ) -> str | None:
         """Get the current status for a scan unit, or None if not found."""
         cursor = self._conn.cursor()
         try:
@@ -217,8 +217,8 @@ class ArtworkRepository:
         root_key: str,
         scan_unit: str,
         status: str,
-        last_error: Optional[str] = None,
-        db_cursor: Optional[sqlite3.Cursor] = None,
+        last_error: str | None = None,
+        db_cursor: sqlite3.Cursor | None = None,
     ) -> None:
         """Persist one scan-unit status in a short, explicit transaction.
 
@@ -262,7 +262,7 @@ class ArtworkRepository:
         source: str,
         root_key: str,
         scan_unit: str,
-        db_cursor: Optional[sqlite3.Cursor] = None,
+        db_cursor: sqlite3.Cursor | None = None,
     ) -> None:
         """Mark a scan unit as running."""
         self._write_status(source, root_key, scan_unit, "running", db_cursor=db_cursor)
@@ -272,8 +272,8 @@ class ArtworkRepository:
         source: str,
         root_key: str,
         scan_unit: str,
-        last_error: Optional[str] = None,
-        db_cursor: Optional[sqlite3.Cursor] = None,
+        last_error: str | None = None,
+        db_cursor: sqlite3.Cursor | None = None,
     ) -> None:
         """Mark a scan unit as error, storing the last error message."""
         self._write_status(
@@ -290,7 +290,7 @@ class ArtworkRepository:
         source: str,
         root_key: str,
         scan_unit: str,
-        db_cursor: Optional[sqlite3.Cursor] = None,
+        db_cursor: sqlite3.Cursor | None = None,
     ) -> None:
         """Mark a scan unit as done."""
         self._write_status(source, root_key, scan_unit, "done", db_cursor=db_cursor)

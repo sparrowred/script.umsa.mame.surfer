@@ -3,6 +3,9 @@
 IDEA switch mode after some time -> save time and beginning and check diff in loop
 """
 
+import os
+import uuid
+import zipfile
 from functools import reduce
 from hashlib import md5
 from os import path
@@ -13,7 +16,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcvfs
-from umsa_core import check_image_aspect, resolve_artwork_path, root_key_for_path
+from umsa_core import check_image_aspect, resolve_artwork_path
 from umsa_core.history_repository import normalize_set_id
 from umsa_core_kodi import (
     get_core_settings,
@@ -150,6 +153,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.current_software_id = None
         # guard so one ContextMenu does not dispatch twice
         self.opening = False
+        # track temporary extracted video files for cleanup: {set_id: temp_path}
+        self._temp_video_files = {}
 
         if PIL:
             self.bad_image_list = [
@@ -466,6 +471,130 @@ class Saver(xbmcgui.WindowXMLDialog):
             derived['extension'] = extension
         return resolve_artwork_path(derived, art, source_roots)
 
+    def _extract_exodos_video(self, art, source_roots):
+        """Extract an eXoDOS videosnap from a ZIP archive to Kodi's temp directory.
+
+        Args:
+            art: Artwork metadata dict with source, relative_path, archive_member, id (set_id)
+            source_roots: Mapping of source names to root paths
+
+        Returns:
+            Extracted file path (str) or None if extraction failed or not applicable
+        """
+        # Only handle eXoDOS videosnaps stored in archives
+        if art.get('source') != 'exodos':
+            return None
+        if art.get('type') != 'videosnaps':
+            return None
+        archive_member = art.get('archive_member')
+        if not archive_member:
+            return None
+        relative_path = art.get('relative_path')
+        if not relative_path:
+            return None
+
+        exodos_root = source_roots.get('exodos')
+        if not exodos_root:
+            xbmc.log("UMSA SSaver: eXoDOS root not configured", xbmc.LOGWARNING)
+            return None
+
+        # Resolve full archive path and validate it's inside the eXoDOS root
+        archive_full = path.join(exodos_root, relative_path)
+        try:
+            archive_real = path.realpath(archive_full)
+            exodos_real = path.realpath(exodos_root)
+            if not archive_real.startswith(exodos_real + path.sep) and archive_real != exodos_real:
+                xbmc.log(f"UMSA SSaver: archive path outside eXoDOS root: {archive_full}", xbmc.LOGERROR)
+                return None
+        except OSError:
+            xbmc.log(f"UMSA SSaver: cannot resolve archive path: {archive_full}", xbmc.LOGERROR)
+            return None
+
+        # Validate archive_member: reject absolute paths and traversal components
+        if path.isabs(archive_member) or '..' in archive_member.split('/'):
+            xbmc.log(f"UMSA SSaver: invalid archive member path: {archive_member}", xbmc.LOGERROR)
+            return None
+
+        # Check if we already have a cached extraction for this set_id + member
+        set_id = art.get('id')
+        cache_key = f"{set_id}:{archive_member}"
+        if cache_key in self._temp_video_files:
+            cached_path = self._temp_video_files[cache_key]
+            if xbmcvfs.exists(cached_path):
+                xbmc.log(f"UMSA SSaver: reusing cached extraction: {cached_path}", xbmc.LOGDEBUG)
+                return cached_path
+            else:
+                # Cached file was deleted externally, remove from cache
+                del self._temp_video_files[cache_key]
+
+        # Generate unique temp filename in screensaver-specific subdirectory
+        temp_dir = xbmcvfs.translatePath('special://temp/umsa_screensaver_videos')
+        try:
+            xbmcvfs.mkdirs(temp_dir)
+        except OSError as e:
+            xbmc.log(f"UMSA SSaver: cannot create temp dir {temp_dir}: {e}", xbmc.LOGERROR)
+            return None
+
+        # Use set_id and a UUID for uniqueness, preserve .mp4 extension
+        temp_filename = f"exodos_{set_id}_{uuid.uuid4().hex}.mp4"
+        temp_path = path.join(temp_dir, temp_filename)
+        temp_partial = temp_path + '.part'
+
+        # Extract the specific member from the ZIP
+        try:
+            with ZipFile(archive_real, 'r') as archive:
+                # Verify member exists
+                if archive_member not in archive.namelist():
+                    xbmc.log(f"UMSA SSaver: member not found in archive: {archive_member}", xbmc.LOGWARNING)
+                    return None
+                # Extract to a temporary name first, then rename atomically
+                with archive.open(archive_member) as source, open(temp_partial, 'wb') as dest:
+                    # Read in chunks to handle large files
+                    while True:
+                        chunk = source.read(8192)
+                        if not chunk:
+                            break
+                        dest.write(chunk)
+                # Atomic rename
+                os.rename(temp_partial, temp_path)
+        except (OSError, KeyError, RuntimeError, zipfile.BadZipFile) as e:
+            xbmc.log(f"UMSA SSaver: failed to extract {archive_member} from {archive_real}: {e}", xbmc.LOGERROR)
+            # Clean up partial file if it exists
+            try:
+                if path.exists(temp_partial):
+                    os.remove(temp_partial)
+            except OSError:
+                pass
+            return None
+
+        # Track for cleanup
+        self._temp_video_files[cache_key] = temp_path
+        xbmc.log(f"UMSA SSaver: extracted eXoDOS video to {temp_path}", xbmc.LOGDEBUG)
+        return temp_path
+
+    def _cleanup_temp_videos(self, keep_keys=None):
+        """Clean up temporary video files no longer needed.
+
+        Args:
+            keep_keys: Set of cache keys (set_id:member) to preserve. If None,
+                cleans all temp files (used on screensaver shutdown).
+        """
+        if keep_keys is None:
+            keep_keys = set()
+
+        for cache_key, temp_path in list(self._temp_video_files.items()):
+            if cache_key in keep_keys:
+                continue
+            try:
+                if xbmcvfs.exists(temp_path):
+                    xbmcvfs.delete(temp_path)
+                    xbmc.log(f"UMSA SSaver: cleaned up temp video: {temp_path}", xbmc.LOGDEBUG)
+            except OSError as e:
+                xbmc.log(f"UMSA SSaver: failed to delete temp video {temp_path}: {e}", xbmc.LOGWARNING)
+            finally:
+                # Always remove from tracking dict
+                self._temp_video_files.pop(cache_key, None)
+
     def add_video_to_playlist(self):
         """Add a new video to the playlist"""
 
@@ -483,9 +612,14 @@ class Saver(xbmcgui.WindowXMLDialog):
                          "own_artwork": self.path[0] if len(self.path) > 0 else "",
                          "exodos": self.parent.umsa.nonmame.get("exodos") if hasattr(self.parent.umsa, "nonmame") else "",
                          "gb64": self.parent.umsa.nonmame.get("gb64") if hasattr(self.parent.umsa, "nonmame") else ""}
-        filename = self.resolve_art_path(rand_vid, source_roots)
+
+        # For eXoDOS archive videos, extract to temp instead of using zip:// URL
+        filename = self._extract_exodos_video(rand_vid, source_roots)
+        if filename is None:
+            # Fall back to standard resolution (zip:// URL or regular path)
+            filename = self.resolve_art_path(rand_vid, source_roots)
+
         xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
-        # For archive-contained videos, Kodi can play zip:// paths directly
         machine_pic = self.get_machine_pic(rand_vid)
         # get left pic
         # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
@@ -742,6 +876,9 @@ class Saver(xbmcgui.WindowXMLDialog):
                 #i.setImage('blank.png')
             self.getControl(BACKG[0]).setImage('blank.png')
             self.getControl(BACKG[1]).setImage('blank.png')
+
+        # Clean up temporary extracted video files
+        self._cleanup_temp_videos()
 
         self.close()
         xbmc.log("UMSA SSaver - call screensaver deactivate", xbmc.LOGINFO)
@@ -1085,6 +1222,8 @@ class Monitor(xbmc.Monitor):
 
         xbmc.log("UMSA SSaver Monitor: now really deactive screensaver", xbmc.LOGINFO)
         self.saver.running = 'no'
+        # Clean up temporary extracted video files
+        self.saver._cleanup_temp_videos()
         xbmcgui.Window(10000).setProperty("UMSA.Screensaver.Mode", "no")
 
     def onDPMSActivated(self):

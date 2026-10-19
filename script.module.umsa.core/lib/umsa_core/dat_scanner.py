@@ -25,8 +25,8 @@ from .dat_repository import (
     create_dat_tables,
 )
 from .logging import log
-from .sqlite import connect_sqlite
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
+from .sqlite import connect_sqlite
 
 
 class DatScanner:

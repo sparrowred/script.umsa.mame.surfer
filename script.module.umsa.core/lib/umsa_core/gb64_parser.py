@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -100,7 +99,7 @@ def parse_version_nfo(nfo_text: str) -> Gb64VersionNfo:
     )
 
 
-def parse_cover_filename(filename: str) -> Optional[Tuple[str, str, str]]:
+def parse_cover_filename(filename: str) -> tuple[str, str, str] | None:
     """Map a cover file name to ``(title, art_type, extension)``.
 
     ``filename`` is the base name including its extension. The extension is
@@ -114,7 +113,7 @@ def parse_cover_filename(filename: str) -> Optional[Tuple[str, str, str]]:
     """
 
     filebase, filext = os.path.splitext(filename)
-    extension = filext[1:] if filext.startswith('.') else filext
+    extension = filext.removeprefix('.')
 
     tokens = filebase.split('_')
     if not tokens:

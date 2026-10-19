@@ -209,7 +209,7 @@ def search(ctx):
             ctx.searchold = keyboard.getText()
         else:
             return EARLY_RETURN
-    results, pos, result_count = ctx.db.get_searchresults(getattr(ctx, 'searchold'))
+    results, pos, result_count = ctx.db.get_searchresults(ctx.searchold)
     gl_label = '%d results for %s' % (result_count, ctx.searchold)
     gl_options = ('new search',)
 

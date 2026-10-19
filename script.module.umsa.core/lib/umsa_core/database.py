@@ -38,9 +38,9 @@ from urllib.request import urlopen
 from .artwork import resolve_artwork_path
 from .artwork_repository import ArtworkRepository, create_artwork_tables
 from .artwork_scanner import ArtworkScanner
-from .data_paths import CoreDataPaths
 from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
+from .data_paths import CoreDataPaths
 from .emulator_repository import EmulatorRepository
 from .game_repository import GameRepository
 from .gamelist_filter import GamelistFilter
@@ -54,15 +54,16 @@ from .gamelist_filter import source_query as _source_query
 from .gamelist_filter import swl_query as _swl_query
 from .gamelist_filter import year_query as _year_query
 from .gb64_scanner import GB64Scanner
-from .history_repository import HistoryRepository
 from .history_import import discover_legacy_paths as _discover_legacy_paths
 from .history_import import retry_import as _retry_import
 from .history_import import run_legacy_import as _run_legacy_import
+from .history_repository import HistoryRepository
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
 from .status_repository import StatusRepository
+
 
 def _core_data_paths(db_path):
     """Adapt legacy database-directory arguments to explicit Core paths."""
@@ -402,7 +403,7 @@ class DBMod:
             for alias in ('art', 'dat'):
                 if alias in attached:
                     try:
-                        gdbc.execute("DETACH DATABASE '{}'".format(alias))
+                        gdbc.execute(f"DETACH DATABASE '{alias}'")
                     except Exception:
                         pass
             if failed:
@@ -947,9 +948,9 @@ class DBMod:
             rand_art = self.gdbc.fetchone()
         # and without filter if we haven't found anything
         if not rand_art:
-            statement = "SELECT {} FROM art_set JOIN sets ON sets.id = art_set.id \
-                        WHERE art_set.type IN ({}) \
-                        ORDER BY RANDOM() LIMIT 1".format(art_columns, types_in)
+            statement = f"SELECT {art_columns} FROM art_set JOIN sets ON sets.id = art_set.id \
+                        WHERE art_set.type IN ({types_in}) \
+                        ORDER BY RANDOM() LIMIT 1"
             self.gdbc.execute(statement, list(art_types))
             rand_art = self.gdbc.fetchone()
             if not rand_art:

@@ -229,7 +229,7 @@ class GB64Scanner:
         """Return the extension of ``path`` without the leading dot."""
 
         ext = os.path.splitext(path)[1]
-        return ext[1:] if ext.startswith('.') else ext
+        return ext.removeprefix('.')
 
     def _screenshot_rows(self, set_id, root_key, unit, normalized, screenshots):
         """Build the artwork rows for one game from its normalised reference.

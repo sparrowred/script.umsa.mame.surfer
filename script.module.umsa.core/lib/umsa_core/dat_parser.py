@@ -14,8 +14,8 @@ the set associations are preserved; only the database access was removed.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Optional
 
 
 @dataclass(frozen=True)
@@ -36,7 +36,7 @@ class DatEntry:
     """
 
     file: str
-    entry: Optional[str]
+    entry: str | None
     set_ids: tuple
 
 

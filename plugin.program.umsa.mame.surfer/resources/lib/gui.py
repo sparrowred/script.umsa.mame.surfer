@@ -19,8 +19,6 @@ from retroplayer_cache import run_retroplayer
 from settings_adapter import load_all_settings
 from umsa_core import (
     FILTER_CATEGORIES,
-    build_artwork_path,
-    resolve_artwork_path,
     calculate_playback_plan,
     categorize_art_type,
     check_image_aspect,
@@ -28,6 +26,7 @@ from umsa_core import (
     get_machine_artwork_path,
     log,
     parse_vgm_header,
+    resolve_artwork_path,
     set_log,
 )
 from umsa_core.database import (

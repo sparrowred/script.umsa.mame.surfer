@@ -2,7 +2,8 @@
 
 import hashlib
 import os
-from typing import Any, Dict, Optional
+from typing import Any
+from urllib.parse import quote
 
 
 def check_image_aspect(set_info: dict) -> str:
@@ -110,8 +111,8 @@ def root_key_for_path(root_path: str) -> str:
     return hashlib.sha256(normalized.encode('utf-8', errors='replace')).hexdigest()
 
 
-def resolve_artwork_path(art: Dict[str, Any], set_info: Dict[str, Any],
-                         source_roots: Dict[str, str]) -> str:
+def resolve_artwork_path(art: dict[str, Any], set_info: dict[str, Any],
+                         source_roots: dict[str, str]) -> str:
     """Resolve the full filesystem path for an artwork entry.
 
     Supports both ordinary files and files stored inside ZIP archives.
@@ -152,8 +153,11 @@ def resolve_artwork_path(art: Dict[str, Any], set_info: Dict[str, Any],
     if archive_member:
         if relative_path:
             archive_full = os.path.join(current_root, relative_path)
-            # Kodi archive path format
-            return f"zip://{archive_full}/{archive_member}"
+            # Kodi archive path format: zip://<urlencoded_archive_path>/<member_path>
+            # The archive path becomes the URL-encoded hostname component.
+            # Example: /tmp/exodos/archive.zip -> zip://%2ftmp%2fexodos%2farchive.zip/member.mp4
+            encoded_archive = quote(archive_full, safe='')
+            return f"zip://{encoded_archive}/{archive_member}"
         # If no relative_path but archive member exists, cannot construct
         return ''
 
@@ -184,8 +188,8 @@ def resolve_artwork_path(art: Dict[str, Any], set_info: Dict[str, Any],
     return filename
 
 
-def _build_legacy_path(art: Dict[str, Any], set_info: Dict[str, Any],
-                       source_roots: Dict[str, str]) -> str:
+def _build_legacy_path(art: dict[str, Any], set_info: dict[str, Any],
+                       source_roots: dict[str, str]) -> str:
     """Build path using old-style art dict (for backward compatibility)."""
 
     art_path_flag = art.get('path')

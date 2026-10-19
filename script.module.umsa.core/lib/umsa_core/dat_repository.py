@@ -23,7 +23,7 @@ produced a row (see :data:`ORIGIN_MAME_SUPPORT`, :data:`ORIGIN_EXODOS` and
 from __future__ import annotations
 
 import sqlite3
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from .scan_coordinator import scan_coordinator
 from .sqlite import require_row_connection
@@ -133,7 +133,7 @@ class DatRepository:
         """Return the underlying connection (read-only access)."""
         return self._conn
 
-    def create_tables(self, db_cursor: Optional[sqlite3.Cursor] = None) -> None:
+    def create_tables(self, db_cursor: sqlite3.Cursor | None = None) -> None:
         """Create/upgrade the DAT tables, optionally using a supplied cursor."""
 
         if db_cursor is not None:
@@ -195,7 +195,7 @@ class DatRepository:
     # -- staging ---------------------------------------------------------
 
     def create_staging_tables(
-        self, db_cursor: Optional[sqlite3.Cursor] = None
+        self, db_cursor: sqlite3.Cursor | None = None
     ) -> None:
         """Create the staging tables used by a DAT scan, if not present."""
 
@@ -230,7 +230,7 @@ class DatRepository:
             if close:
                 db_cursor.close()
 
-    def clear_staging(self, db_cursor: Optional[sqlite3.Cursor] = None) -> None:
+    def clear_staging(self, db_cursor: sqlite3.Cursor | None = None) -> None:
         """Discard every staged DAT entry without touching published data."""
 
         _guard_staging_coordinated()
@@ -248,9 +248,9 @@ class DatRepository:
     def stage_entry(
         self,
         file: str,
-        entry: Optional[str],
+        entry: str | None,
         set_ids: Iterable[int],
-        db_cursor: Optional[sqlite3.Cursor] = None,
+        db_cursor: sqlite3.Cursor | None = None,
     ) -> int:
         """Stage one parsed entry and its set relationships.
 
@@ -282,7 +282,7 @@ class DatRepository:
                 db_cursor.close()
 
     def replace_origin_for_set(
-        self, origin: str, set_id: int, file: str, entry: Optional[str]
+        self, origin: str, set_id: int, file: str, entry: str | None
     ) -> int:
         """Replace the ``origin`` metadata attached to one set.
 
