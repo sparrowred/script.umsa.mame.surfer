@@ -1,21 +1,27 @@
 # Phase 4.6.1a — `status.db` history & legacy-file migration: audit and plan
 
-**Status: IMPLEMENTED (2026-10-18); corrected 2026-10-19 (D20/D21).** The design questions
-Q1–Q6 are **resolved** — the maintainer's phase brief answered Q1, Q3, Q4 and Q5, the
-follow-up decisions answered Q2 and Q6, and both are recorded as **D12–D21** (sections 1.1
-and 1.2) plus the per-section updates — and the production work described here has since
-landed:
+**Status: IMPLEMENTED (2026-10-18); corrected 2026-10-19 (D20/D21); screensaver history
+implemented 2026-10-19 (4.6.2).** The design questions Q1–Q6 are **resolved** — the
+maintainer's phase brief answered Q1, Q3, Q4 and Q5, the follow-up decisions answered Q2
+and Q6, and both are recorded as **D12–D21** (sections 1.1 and 1.2) plus the per-section
+updates — and the production work described here landed and is committed:
 `status_migrations.py` (versioned `status.db` migration, `user_version` 0→1),
-`history_repository.py` (four tables + lastgames/filter/marker persistence),
-`history_import.py` (discovery, strict validation, one-time import, cleanup, `retry_import`),
-the `DBMod` facades, the GUI startup wiring and the `retry_import` script command. While
-implementing, the `filter_<name>.txt` line-count rule became **strict** (D14, corrected
-below) and the file-level recovery semantics follow D18. The 2026-10-19 corrective
-follow-up (§1.2) fixed the empty-filter-name loss (D20) and the misclassification of
-unreadable files as malformed (D21) without changing the version-1 schema or
-`user_version`. What remains open is limited to the manually verified **Kodi-runtime
-items** (section 16.2), which are not design decisions and cannot be settled by code
-inspection.
+`history_repository.py` (four tables + lastgames/filter/marker/screensaver-history
+persistence), `history_import.py` (discovery, strict validation, one-time import,
+cleanup, `retry_import`), the `DBMod` facades, the GUI startup wiring and the
+`retry_import` script command (4.6.1, committed as `7c369a9` with the corrective
+follow-up `fe5502b`), plus the screensaver display-history writes (4.6.2, committed as
+`e7cb00a`, no schema change). While implementing, the `filter_<name>.txt` line-count
+rule became **strict** (D14, corrected below) and the file-level recovery semantics
+follow D18. The 2026-10-19 corrective follow-up (§1.2) fixed the empty-filter-name loss
+(D20) and the misclassification of unreadable files as malformed (D21) without changing
+the version-1 schema or `user_version`.
+
+**Runtime verification is not assumed.** The repository contains automated repository
+and Kodi-stub tests, but no documented manual Kodi test run for the screensaver history.
+Section 16.2 therefore records, per item, whether it is covered only by automated
+tests/mocks, inspected statically, or still unverified; it does not claim that a manual
+Kodi run was completed.
 
 **Scope of this update:** the finalized direction for moving three related but distinct
 concepts into `status.db`, all under **one** versioned schema migration, followed by
@@ -28,20 +34,20 @@ their cleanup:
    `screensaver_history`; starts empty, **no import**).
 
 Basis: read-only inspection of the code as of `b84341e` — the **last code commit** at the
-time of the original audit; steps 4.5 (`fcdefe5`) and 4.6 (`b84341e`) are committed and the
-tracked tree was clean — plus `git log -S` history searches, verification against the
-**real Kodi profile on this machine** (`/home/opencode/.kodi/userdata/addon_data/script.module.umsa.core/`)
-and the contents of the distributed `umsa_db.zip` (section 12). Line references are to that
-code. This document itself lives in the tracked `docs/database_refactor/` directory
-(first committed in `ec400f4`, refreshed in `5514efd`); the audit snapshot is of code
-`b84341e` — since then Phase 4.7 landed (`479e202` + `10f9fbd` + `da65a62` + `bc631eb`),
-which satisfies this document's 4.7 dependency without changing its scope (front-end
-text-file persistence is untouched), and the bounded retry-without-filters fix landed as
-`bd83a4d`. **Re-verified 2026-10-18 at HEAD `bd83a4d` (tracked tree clean, full suite
-661 passed / 5 skipped / 18 subtests):** every line reference in sections 2–5 and 7–10 was
-re-checked against that tree, the runtime facts in sections 5 and 16.2 were re-checked
-against the installed Kodi **21.3 (Omega)** and Kodistubs 21.0.0, and the profile inventory
-in section 12 was re-read (unchanged).
+time of the original audit — plus `git log -S` history searches, inspection of the
+**real Kodi profile on this machine**
+(`/home/opencode/.kodi/userdata/addon_data/script.module.umsa.core/`) and the contents of
+the distributed `umsa_db.zip` (section 12). Line references are to that audited snapshot.
+This document itself lives in the tracked `docs/database_refactor/` directory (first
+committed in `ec400f4`, refreshed in `5514efd`); the audit snapshot is of code `b84341e`.
+Since then Phase 4.7 landed (`479e202` + `10f9fbd` + `da65a62` + `bc631eb` + `bd83a4d`),
+satisfying this document's 4.7 dependency without changing its scope (front-end text-file
+persistence was untouched), 4.6.1 landed (`7c369a9` + corrective follow-up `fe5502b`) and
+4.6.2 landed as `e7cb00a`. Every line reference in sections 2–5 and 7–10 was re-checked
+against the 4.7 baseline; the Kodi API facts in sections 5 and 16.2 were checked against
+the installed Kodi **21.3 (Omega)** and Kodistubs 21.0.0, and the profile inventory in
+section 12 was re-read (unchanged). That API/environment inspection is **not** a
+documented end-to-end manual Kodi test run; §16.2 keeps the distinction explicit.
 
 Scope restrictions that bound this document as an **audit/plan**: documentation-only
 changes; no production-code changes attributed to the audit itself; no migrations or
@@ -85,7 +91,7 @@ new binding rules. Every row is a *decision*, not a proposal.
 | **D13** | **Token validation: strip, then decimal digits (Q2, token half).** Every candidate id token is whitespace-stripped and must then be a non-empty decimal-integer string (`^[0-9]+$`). Whitespace around ids is accepted (matching today's `int()` semantics in `load_software_list`, `persistence.py:91`), so a hand-edited `"12, 34"` is **not** a data loss. A token that is not a decimal integer after stripping, or undecodable bytes, makes the **whole file** malformed → discarded whole, recorded as a warning, still deleted after the commit (D3/D5). |
 | **D14** | **Filter line count is a validity criterion — strict five-line rule (Q2, line half; supersedes the earlier "tolerance kept" wording).** `lastgames.txt`: line 1 is the data, any further lines are **ignored, unreported** (today's reader only calls `readline()`); a zero-byte file *or* an empty first line means **no entries**. `filter_<name>.txt`: the file must contain **exactly five logical lines**, mapping positionally onto the five categories in the order `Softwarelists`, `Game Categories`, `Machine Categories`, `Years`, `Players`; lines may be empty (an empty line is an empty category). A single trailing newline does not add a sixth logical line. **A file with any other line count (fewer or more than five) is malformed and discarded whole** — the import never pads missing categories and never ignores extras (so the legacy `IndexError` on shorter files is neither inherited nor silently reinterpreted). Every non-empty line is a comma-separated list of decimal-integer id tokens, each whitespace-stripped; a non-decimal or undecodable token discards the whole file (D13). Files we ship always contain exactly five lines (`save_filter`), so strictness only ever affects hand-edited input, and it never partially imports one. |
 | **D15** | **No new runtime-state persistence (Q3 resolved).** `act_filter` (the active filter *name*), `use_filter` and `order` are **not** persisted — verified they are not persisted today either (`database.py:280-281`, `gui.py:345-346`), so adding them would visibly change what the GUI shows on the next start. Only the five selections per named filter move into `filter_selections`. The **public Core API dictionary keys stay exactly as they are** (`"Softwarelists"`, `"Game Categories"`, `"Machine Categories"`, `"Players"`, `"Years"` — `persistence.py:13-19`); the database may store the **internal** keys `softwarelists`, `game_categories`, `machine_categories`, `years`, `players` **with an explicit, documented mapping table** used on read and write (verified: the dict-literal order at `persistence.py:13-19` differs from the file-line order at `persistence.py:29-35` — `Players`/`Years` are swapped — so the mapping is by *name*, never by position). The Load/Save Filter dialog keeps offering exactly the imported names (replacing the `os.listdir` scan with `list_filter_names()` changes nothing visible). |
-| **D16** | **Screensaver history semantics (Q4 resolved).** Records are keyed by **`set_id`** (the `sets.id` that `get_random_art` returns as `art['id']`, `database.py:908`); the **software id is stored alongside** (`art['s_id']` = `sets.softwarelink_id`) and stays the value the context-menu handoff uses today (`ui.py:192-195`, `ui.py:143`). Bound: **at most 100 distinct sets, ordered by most recent successful display**; re-displaying a set moves its single row to the newest position (only the newest copy is retained) — i.e. one row per set, not an event log; rows are pruned past the newest 100 inside the same savepoint as the write. **Images** are recorded only after the iteration's controls have been populated — immediately after the render block (`ui.py:454-571`), **before** the wait loop — because `remember_art` fires before the bad-image rejection (`ui.py:435` vs `ui.py:444-446`) and is therefore not a boundary. **Videos** are recorded only once the stream is available, in `Player.onAVStarted()` (verified present in Kodistubs 21.0.0, annotated `@python_v18`, so available on every Kodi the add-ons support) — not in `onPlayBackStarted`, and never at enqueue time. **Orphan `set_id` rows are never silently substituted:** if the set no longer resolves in `umsa.db` (`get_info_by_set_and_swl` raises `TypeError` on no match, `game_repository.py:482-484`), the row is kept, the handoff is refused with a logged + notified "set no longer available", and no other set is shown instead. |
+| **D16** | **Screensaver history semantics (Q4 resolved).** Records are keyed by **`set_id`** (the `sets.id` that `get_random_art` returns as `art['id']`, `database.py:908`); the **software id is stored alongside** (`art['s_id']` = `sets.softwarelink_id`) and stays the value the context-menu handoff uses today (`ui.py:192-195`, `ui.py:143`). Bound: **at most 100 distinct sets, ordered by most recent successful display**; re-displaying a set moves its single row to the newest position (only the newest copy is retained) — i.e. one row per set, not an event log; rows are pruned past the newest 100 inside the same savepoint as the write. **Images** are recorded only after the iteration's controls have been populated — immediately after the render block (`ui.py:454-571`), **before** the wait loop — because `remember_art` fires before the bad-image rejection (`ui.py:435` vs `ui.py:444-446`) and is therefore not a boundary. **Videos** are recorded only once the stream is available, in `Player.onAVStarted()` (verified present in Kodistubs 21.0.0, annotated `@python_v18`, so available on every Kodi the add-ons support) — not in `onPlayBackStarted`, and never at enqueue time. **Orphan `set_id` rows are preserved, never substituted:** a stored `set_id` is kept even when the set no longer exists in the current `umsa.db`, and no other set id is written in its place. The history reader returns stored rows as they are, does not query `umsa.db`, and therefore does **not** itself detect or report orphans; any consumer-side "set no longer available" diagnostic is future work, not implemented in 4.6.2. Orphans age out naturally under the 100-distinct-set retention rule. |
 | **D17** | **Deletion scope (Q5 resolved).** Only `lastgames.txt` and validated `filter_*.txt` are ever deleted (D6). `lastsaver.txt` — for which **no writer exists in any revision**, only `load_lastsaver` + its single consumer (`gamelist_strategies.py:153`) — and every other unknown file are **preserved and reported to the maintainer**, never added to the cleanup scope by name-guessing. |
 | **D18** | **Database-failure recovery (Q6 resolved).** (a) If `status.db` cannot be read or written such that the required outcome **cannot be committed**, the failure is **reported and the import retries at the next GUI startup** — no marker exists in that case, so "no marker" *is* the retry signal — and **no separate fallback status file may be introduced** (this reverses the "no fallback is adopted until you decide" holding position in 9.3). (b) A durably recorded **`failed` state stays terminal** (D4 unchanged): it is reported on every startup and retried only through a new explicit frontend script command `retry_import`, registered beside `del_db`/`del_status` in `addon.py:18-37`. (c) A **deletion** failure never re-triggers the import — cleanup-only on the next startup (D4). |
 | **D19** | **`gui_lastgames` retention is the newest 100, not 10** (maintainer change). Storage keeps the newest **100** ids (`position` 0..99) instead of today's `self.last[-10:]` trim (`gui.py:2566`); the in-memory session list, the pointer and the navigation behaviour are unchanged. This is the one deliberate *visible* behaviour change of the phase: after a restart the GUI resumes with up to 100 entries of backward history instead of 10. The legacy import reads whatever the file holds and writes at most the newest 100. |
@@ -317,9 +323,10 @@ source):
   recent successful display, re-display moving the single row to the newest position;
   images recorded immediately after the render block (`ui.py:454-571`) and **before** the
   wait loop; videos recorded in **`Player.onAVStarted()`**, which exists in the installed
-  runtime (`onAVStarted` is annotated `@python_v18`, i.e. Kodi ≥ 18 — verified against
-  Kodistubs 21.0.0 and the Kodi **21.3 (Omega)** on this machine); orphan `set_id`s kept
-  and reported, never substituted. The **mechanism for carrying `set_id` on a video** is
+  runtime (`onAVStarted` is annotated `@python_v18`, i.e. Kodi ≥ 18 — checked against
+  Kodistubs 21.0.0 and the Kodi **21.3 (Omega)** API on this machine); orphan `set_id`s
+  are kept and never substituted, but they are not detected or reported by the repository
+  (see 6.3). The **mechanism for carrying `set_id` on a video** is
   the video unique-ID API — `InfoTagVideo.setUniqueID(str(set_id), 'umsa_set_id')`
   (value first, type second) written on the playlist ListItem and read back with
   `getUniqueID('umsa_set_id')` — which is `@python_v20`
@@ -333,7 +340,8 @@ source):
 ## 6. Storage model — four new tables, one schema
 
 All four live in `status.db` alongside the existing tables (D1, D10). The schemas below
-are the decided design (D12–D19, section 1.1); nothing has been implemented yet.
+are the decided design (D12–D19, section 1.1) and are implemented by the version-1
+migration; 4.6.1 uses the first, second and fourth, and 4.6.2 writes the third.
 
 ### 6.1 `gui_lastgames` — backward-navigation state
 
@@ -375,8 +383,8 @@ CREATE TABLE IF NOT EXISTS filter_selections (
   equivalent of an empty line). Since the corrective follow-up (D20) every saved or
   imported filter **also** carries exactly one **definition marker** row under the
   reserved internal category `__filter_definition__`, so an all-empty filter is still
-  discoverable by name; a filter that does not exist has no rows at all.
-  faithful equivalent of a missing file).
+  discoverable by name; a filter that does not exist has no rows at all (the faithful
+  equivalent of a missing file).
 - **Category keys:** the table stores the **internal** keys `softwarelists`,
   `game_categories`, `machine_categories`, `years`, `players` (D15); the public Core API
   keeps returning the exact legacy labels `load_filter` / `save_filter` use
@@ -414,15 +422,19 @@ CREATE TABLE IF NOT EXISTS screensaver_history (
   — all inside one savepoint. Retrieval: `ORDER BY id DESC LIMIT 100`.
 - **No foreign key to `umsa.db`:** `sets` lives in a different database on a different
   connection, so referential integrity cannot be expressed in SQLite here. An orphaned
-  `set_id` is therefore *kept* and handled at read time (D16: report, never substitute).
+  `set_id` is therefore *kept*, never substituted, and not deleted merely because the set
+  is absent from the current general database. `list_screensaver_history` returns stored
+  rows unchanged and does **not** query `umsa.db`, so it does not detect or report
+  orphans; consumer-side diagnostics are future work. Orphans age out naturally under the
+  100-distinct-set retention rule.
 - `displayed_at` is advisory only — ordering is the monotonic `id`, so no clock
   dependency.
 - No import, ever — starts empty (D2).
-- **Status (4.6.2 implemented):** the write/retention contract above lives in
-  `HistoryRepository.record_screensaver_display` (`SCREENSAVER_HISTORY_LIMIT = 100`, the
-  delete + re-insert + prune triple inside one `SAVEPOINT`), read back by
-  `list_screensaver_history` `ORDER BY id DESC`; `DBMod` exposes both through
-  `record_screensaver_display`/`get_screensaver_history`.
+- **Status (4.6.2 implemented, committed as `e7cb00a`):** the write/retention contract
+  above lives in `HistoryRepository.record_screensaver_display`
+  (`SCREENSAVER_HISTORY_LIMIT = 100`, the delete + re-insert + prune triple inside one
+  `SAVEPOINT`), read back by `list_screensaver_history` `ORDER BY id DESC`; `DBMod`
+  exposes both through `record_screensaver_display`/`get_screensaver_history`.
 
 ### 6.4 `status_meta` — durable import marker
 
@@ -475,10 +487,10 @@ per-file state machine (section 9).
   **dropped** — it would be three increments for what must be one.
 - Existing play history, emulator configuration and further-media data are untouched
   (D10): the migration only ever *adds* tables.
-- Test churn this causes when implemented (listed for the later task, not done now):
-  `tests/test_status_repository.py:136-137,175`,
-  `tests/test_emulator_repository.py:225-226,269`, `tests/test_database.py:360-361` all
-  pin `user_version == 0` and must be updated.
+- Test churn handled at implementation: `tests/test_status_repository.py`,
+  `tests/test_emulator_repository.py` and `tests/test_database.py` previously pinned
+  `user_version == 0`; those assertions were updated to version 1 when the migration
+  landed.
 - **Migration failure** (exception at open) aborts `DBMod.__init__` → GUI startup fails
   with the source files **untouched** (nothing imported, nothing deleted). That is the
   safe failure mode; no marker is involved because no import was attempted.
@@ -487,8 +499,9 @@ per-file state machine (section 9).
 
 ## 8. One-time legacy import and cleanup
 
-Core function, Kodi-free, e.g. `history_repository.import_legacy_files(connection, paths)
--> ImportResult` in a later task; orchestrated by the GUI at startup (section 10).
+Core function, Kodi-free: `history_import.run_legacy_import(connection, paths) ->
+ImportResult` (with the explicit `history_import.retry_import` recovery path); orchestrated
+by the GUI at startup (section 10). Implemented in 4.6.1.
 
 ### 8.1 Sequence (fixed order — the brief's steps 1–8)
 
@@ -712,22 +725,23 @@ unexpected files applies to *this* machine; on other installations section 11's
   construction):
   - `create_history_tables(cursor)` — authoritative DDL for the four new tables (called
     from the migration).
-  - `read_lastgames() -> list[int]` / `replace_lastgames(ids) -> None` (keep the newest
+  - `load_lastgames() -> list[int]` / `save_lastgames(ids) -> None` (keep the newest
     **100**, D19).
-  - `read_filter_selections(name) -> dict[str, list[str]]` /
-    `replace_filter_selections(name, lists) -> None` / `list_filter_names() -> list[str]`
+  - `load_filter_selections(name) -> dict[str, list[str]]` /
+    `save_filter_selections(name, lists) -> None` / `list_filter_names() -> list[str]`
     (internal category keys internally, public labels at the boundary — D15).
-  - `import_legacy_files(paths) -> ImportResult` (section 8) and
-    `record_import_result(...)` / `get_import_marker()` / `clear_import_marker()` (the
-    last one only from the explicit `retry_import` path — D18b).
-  - later, for the screensaver: `record_screensaver_display(set_id, software_id)`,
-    `get_screensaver_history(limit=100)` (D16).
+  - `history_import.run_legacy_import(connection, paths) -> ImportResult` (section 8)
+    and repository methods `record_import_marker(...)` / `get_import_marker()` /
+    `clear_import_marker()` (the last one only from the explicit `retry_import` path —
+    D18b).
+  - for the screensaver: `record_screensaver_display(set_id, software_id=None)` and
+    `list_screensaver_history(limit=None)` (D16).
 - **DBMod facades** (the connection-attribute guard forbids add-ons touching `.sdb`, so
   both the GUI and the screensaver go through `DBMod`): `load_lastgames` /
   `save_lastgames`, `load_filter_selections` / `save_filter_selections` /
-  `list_filter_names`, `get_import_marker` / `run_legacy_import` (later
-  `record_screensaver_display`), each a one-line delegate to a per-call
-  `_get_history_repository()` mirroring `_get_status_repository` (`database.py:759-767`).
+  `list_filter_names`, `get_import_marker` / `run_legacy_import` /
+  `record_screensaver_display` / `get_screensaver_history`, each a one-line delegate to a
+  per-call `_get_history_repository()` mirroring `_get_status_repository`.
 - **Frontend retry command:** `addon.py` gains `retry_import` beside `del_db` /
   `del_status` (`addon.py:18-37`); it clears a recorded `failed` marker through the
   facade and re-runs the import — **the only path that may clear a recorded failure**
@@ -755,7 +769,7 @@ The five responsibilities stay separate:
 |---|---|---|
 | GUI lastgames persistence (immediate) + its one-time import/cleanup | `history_repository.py` + `status_migrations.py` + GUI call sites | **4.6.1** (this plan) |
 | Filter-selection persistence + its one-time import/cleanup | same repository/migration, `filter_selections` table, GUI Load/Save call sites | **4.6.1** (same migration, D1) |
-| Screensaver history (writes only, starts empty) | same repository, `screensaver_history` table, screensaver call sites | **4.6.2** (semantics decided in D16; implementation still follows 4.6.1) |
+| Screensaver history (writes only, starts empty) | same repository, `screensaver_history` table, screensaver call sites | **4.6.2** — implemented (D16; no schema change) |
 | Filter *query* composition, filter-state accessors, parameterisation | `gamelist_filter.py` (4.7) | **4.7** — acceptance criteria unchanged |
 | Play history (`sets.last_played`/`time_played`/`play_count`) | untouched; separate concept (D7/D8) | — |
 
@@ -789,13 +803,14 @@ earlier, but that option is no longer part of the plan.
 
 ---
 
-## 15. Implementation and regression-test plan (executed — items 1–6 landed, 7 verified)
+## 15. Implementation and regression-test plan (executed — items 1–6 landed, 7 completed)
 
-**Preconditions (D11):** Phase 4.7 has landed with its existing scope and acceptance
-criteria (text-file persistence untouched — committed through `bd83a4d`), and Q1–Q6 are
-resolved and recorded as D12–D19 (section 1.1) and in section 16. The Kodi-runtime
-verifications in 16.2 were performed *while* implementing. The steps below were
-characterisation-first; items 1–5 are the 4.6.1 migration/import work and item 6 is 4.6.2:
+**Preconditions (D11):** Phase 4.7 landed with its existing scope and acceptance
+criteria (text-file persistence untouched — at the 4.7 baseline `bd83a4d`), and Q1–Q6
+were resolved and recorded as D12–D19 (section 1.1) and in section 16. The steps below
+were characterisation-first; items 1–5 are the 4.6.1 migration/import work and item 6 is
+4.6.2. The Kodi-runtime status of the result is recorded in 16.2 from the available
+evidence; it is not inferred from the implementation or from passing tests.
 
 1. **Migration module** — `status_migrations.py`, single `MIGRATIONS = {1: ...}`
    calling the three `create_*` helpers; swap the call site; tests: fresh DB (all seven
@@ -837,14 +852,17 @@ characterisation-first; items 1–5 are the 4.6.1 migration/import work and item
    `set_id` carried through the `attach_set_id`/`read_set_id` `umsa_set_id` unique ID (value
    first: `setUniqueID(str(set_id), 'umsa_set_id')`), capability-guarded for Kodi < 20 via
    `hasattr` (video displays then logged, not recorded, and nothing faked); `read_software_id`
-   keeps the `Votes`-based handoff unchanged. Orphan rows are reported and never substituted.
-   Tests: `tests/test_screensaver_history_repository.py` (51) and
+   keeps the `Votes`-based handoff unchanged. Orphan rows are preserved and never
+   substituted, but the repository does not detect or report them (see 6.3). Tests:
+   `tests/test_screensaver_history_repository.py` (51) and
    `tests/test_screensaver_history_hooks.py` (52).
 7. Full suite + per-file ruff/mypy comparisons. No Kodi-runtime automation exists
-   (`AGENTS.md`) — GUI/screensaver behaviour is verified manually, including the 16.2
-   items. Full suite after 4.6.2: **819 passed**, 5 skipped, 18 subtests passed; new files
-   add no ruff findings (per-file comparison against the HEAD baseline), and the
-   pre-existing `ui.py`/`database.py` findings are unchanged.
+   (`AGENTS.md`), and no manual Kodi test run is documented in this repository. The
+   screensaver hooks are covered by the Kodi-stub harness only; that does not establish
+   runtime behaviour. Full suite after 4.6.2: **819 passed**, 5 skipped, 18 subtests
+   passed; new files add no ruff findings (per-file comparison against the pre-change
+   baseline), and the pre-existing `ui.py`/`database.py` findings are unchanged. See
+   16.2 for the item-by-item evidence status.
 
 No test is added or modified by this document.
 
@@ -910,29 +928,23 @@ lastgames persistence after a successful display, and the **4.7 → 4.6.1 → 4.
 
 ### 16.2 Kodi-runtime verification items (cannot be settled by code inspection)
 
-Not design decisions — checked while implementing, on a real Kodi (this machine runs
-**Kodi 21.3 (Omega)**, add-ons declare `xbmc.python 3.0.0` = Kodi 19 floor):
+Not design decisions. Per-item status given available evidence:
 
-1. **`onAVStarted` per playlist item** — fires once per video, including when
-   `playnext()` advances the playlist, so exactly one record is written per displayed
-   video (the callback exists since Kodi 18; `ui.py` currently uses only
-   `onPlayBackStarted`/`onPlayBackEnded`, `ui.py:712`, `:773`).
-2. **Unique-ID round-trip** — `setUniqueID(str(set_id), 'umsa_set_id')` (value first,
-   type second) on the playlist ListItem
-   must read back as `getUniqueID('umsa_set_id')` from `Player.getVideoInfoTag()` during
-   playback; both are `@python_v20`, so the capability guard must degrade cleanly on
-   Kodi 19 (video displays then not recorded; the `Votes`-based software-id handoff at
-   `ui.py:143` unaffected).
-3. **Image boundary reality** — Kodi exposes no image-load success callback, so
-   "control populated" is the strongest available "actually displayed" signal; confirm
-   that known-bad files are still rejected earlier by `check_snapshot` (`ui.py:252-293`)
-   and never reach the record.
-4. **Orphan row behaviour** — with a `set_id` absent from `umsa.db`, the context-menu
-   handoff must produce the documented report instead of the `TypeError` that
-   `get_info_by_set_and_swl` raises on no match (`game_repository.py:482-484`).
-5. **Startup notification ordering** — the migration/import notification appears once,
-   after `DBMod` is open, including on a brand-new profile (fresh `status.db`,
-   no legacy files).
+| # | Item | Status | Evidence |
+|---|-----|--------|----------|
+| 1 | **onAVStarted per playlist item** (including `playnext()` playlist advancement) — exactly one record per displayed video | **Unverified (needs manual Kodi test)** | Code: `Player.onAVStarted()` in `screensaver/ui.py` + `umsa_set_id` read. API: callback exists since Kodi 18 (annotated `@python_v18` in stubs). **No** end-to-end manual test run recorded in repo; covered **only by automated mocks/stubs** in `tests/test_screensaver_history_hooks.py` (Kodi-stub harness). |
+| 2 | **Unique-ID round-trip**: `setUniqueID(str(set_id), 'umsa_set_id')` (value first, type second) → `getUniqueID('umsa_set_id')` from `Player.getVideoInfoTag()`; capability guard degrades cleanly on Kodi < 20 | **Unverified (needs manual Kodi test)** | Implemented with `hasattr` guards; `setUniqueID`/`getUniqueID` are `@python_v20` in stubs. Behavior on real Kodi 19 vs 20+ **not** documented; mocked in tests only. |
+| 3 | **Image boundary reality** — confirm known-bad files rejected by `check_snapshot` and never reach record; record is after render/control population (no image-load callback) | **Unverified (needs manual Kodi test)** | Static inspection: record happens after render block (`ui.py`), before wait loop; `check_snapshot` logic inspected statically. Real image rejection paths under Kodi **not** manually tested/documented. |
+| 4 | **Orphan row behavior** — `set_id` absent from `umsa.db`: repository keeps stored row (no `umsa.db` lookup); consumer handoff behavior when set no longer exists is future work (see D16, §6.3) | **Partially inspected statically** | `HistoryRepository.list_screensaver_history` has no `umsa.db` lookup (repo code). The "report instead of TypeError" handoff is a consumer-side concern not implemented as a separate reconciliation path; not verified at runtime. |
+| 5 | **Startup notification ordering** — migration/import notification appears once after `DBMod` is open (including fresh profile, no legacy files) | **Unverified (needs manual Kodi test)** | Wiring inspected statically in GUI (`gui.py`/`addon.py`) and importer. Fresh-profile run under Kodi **not** documented. |
+| 6 | **Image recording after successful render / before rejection window** — record called post-render, before wait; confirm no duplicate or premature records under cross/slide/wall modes | **Unverified (needs manual Kodi test)** | Call sites inspected statically; `Saver.record_display` takes path after render. Covered only by stubs. |
+| 7 | **Video recording only when stream available (`onAVStarted`)** — never at enqueue time, never via `onPlayBackStarted`/`onPlayBackEnded` alone | **Unverified (needs manual Kodi test)** | Call site is `Player.onAVStarted()` only; static inspection confirms no other paths. Mocked only. |
+| 8 | **Handoff uses `Votes` software ID for context menu (unchanged)** — screensaver history stores `software_id` but handoff keeps `Votes` | **Inspected statically (low risk)** | Code: `read_software_id` returns `Votes` (unchanged), history stores `art['s_id']`. No Kodi runtime test needed; semantics match implementation. |
+| 9 | **Graceful DB write failures during screensaver playback** — any DB error logged, never breaks rendering (try/except around `record_display`) | **Partially inspected statically** | Failure-safety in hooks (logs and swallows). Behavior under real I/O/DB conditions **not** manually verified. |
+| 10 | **Dedup/recency (one row per `set_id`, move to newest on redisplay), newest 100 distinct sets retained, prune inside SAVEPOINT** | **Automated (repository unit tests)** | `tests/test_screensaver_history_repository.py` (51) validate semantics, retention 100, savepoint behavior. No Kodi runtime dependency. |
+| 11 | **Legacy import preconditions unchanged (4.6.1) and `retry_import` still works** | **Automated (repository unit tests)** | `tests/test_history_import.py`, `tests/test_history_repository.py` cover marker/retry/cleanup. No Kodi runtime dependency. |
+
+**Note:** Items 8 and 11 are low risk and covered by automated unit tests/static inspection. Items 1–7 and 9 require a documented manual Kodi test run to be considered "verified" at runtime. No such manual test run is present in the repository; this matrix therefore does not change those to "verified".
 
 ---
 
@@ -950,8 +962,8 @@ ruff findings unchanged).
 the five follow-up answers: Q1–Q6 are resolved as **D12–D19** (section 1.1, section 16),
 including the `gui_lastgames` retention change to **100** entries (D19); sections 2–11
 were restated from proposals into decided rules, line references were re-checked against
-`bd83a4d`, and the remaining open work is limited to the Kodi-runtime verifications in
-**16.2** (tested while implementing, this machine runs Kodi 21.3 with Kodistubs 21.0.0).
+`bd83a4d`, and the only remaining open work is the Kodi-runtime verification items in
+**16.2**, which are recorded by evidence status rather than claimed as verified.
 
 **Implementation (2026-10-18):** the production work is now in place — the versioned
 migration, the history repository, the legacy importer/cleanup/`retry_import`, the `DBMod`
@@ -961,17 +973,20 @@ nothing was implemented: the real profile listed in section 12 was opened **read
 and no user file was deleted, renamed or rewritten. Companion updates in this directory:
 the step 4.6.1a entry and execution-order note in `roadmap.md`, the checklist / documents
 / next-step / validation entries in `README.md`. The D11 ordering **4.7 → 4.6.1 → 4.6.2**
-holds with 4.7 and 4.6.1 complete; 4.6.2 (screensaver history) remains, with the 16.2
-checks verified during implementation on this machine.
+holds with 4.7, 4.6.1 and 4.6.2 committed (`e7cb00a`), with the 16.2 items tracked for
+evidence (no documented manual Kodi test run).
 
-**Step 4.6.2 (2026-10-19, in the working tree):** the screensaver display-history writes
-are now implemented on top of the 4.6.1 schema with **no new migration and no schema
-change** — `HistoryRepository.record_screensaver_display`/`list_screensaver_history`
-(Kodi-free), the `DBMod` facades `record_screensaver_display`/`get_screensaver_history`,
-and the `ui.py` boundary hooks (`Saver.record_display` for cross/slide/wall after the
-render block; `Player.onAVStarted()` for videos via the `umsa_set_id` unique ID, Kodi < 20
-guarded) — see section 15 item 6. New tests: `tests/test_screensaver_history_repository.py`
-(51 passed) and `tests/test_screensaver_history_hooks.py` (52 passed); full suite
-**819 passed**, 5 skipped, 18 subtests passed, with the new files adding no ruff findings.
-The section 16.2 items were re-checked while implementing; the `setUniqueID` argument order
-is documented correctly now (value first, type second) in sections 5 and 16.2.
+**Step 4.6.2 (2026-10-19, committed as `e7cb00a`):** the screensaver display-history writes
+are implemented on top of the 4.6.1 schema with **no new migration and no schema change**
+(`user_version` remains 1) — `HistoryRepository.record_screensaver_display` /
+`list_screensaver_history` (Kodi-free), the `DBMod` facades
+`record_screensaver_display` / `get_screensaver_history`, and the `ui.py` boundary hooks
+(`Saver.record_display` for cross/slide/wall after the render block;
+`Player.onAVStarted()` for videos via the `umsa_set_id` unique ID, Kodi < 20
+capability-guarded) — see section 15 item 6. New tests:
+`tests/test_screensaver_history_repository.py` (51 passed) and
+`tests/test_screensaver_history_hooks.py` (52 passed); full suite **819 passed**, 5
+skipped, 18 subtests passed, with the new files adding no ruff findings. The
+`setUniqueID` argument order is documented correctly (value first, type second) in
+sections 5 and 16.2. Section 16.2 now records the evidence status per item (no
+documented manual Kodi test run).
