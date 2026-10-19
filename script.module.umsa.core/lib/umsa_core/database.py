@@ -1928,3 +1928,8 @@ class DBMod:
         """get info by set and swl"""
 
         return self._get_game_repository().get_info_by_set_and_swl(setname, swlname)
+
+    def get_set_info_by_id(self, set_id):
+        """get info by set id"""
+
+        return self._get_game_repository().get_set_info_by_id(set_id)

@@ -168,6 +168,40 @@ class GameRepository:
         finally:
             cursor.close()
 
+    def get_set_info_by_id(self, set_id) -> dict | None:
+        """Return the info dict for a set by its ID.
+
+        Returns a plain dict with keys: ``software_id``, ``set_id``, ``name``,
+        ``year``, ``maker``, ``label``. Returns ``None`` if the set does not
+        exist. This method is read-only and never commits.
+        """
+        if not set_id:
+            return None
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT v.id, v.gamename, y.name, m.name, s.id "
+                "FROM software s, sets v, "
+                "     swl, year y, maker m "
+                "WHERE s.id = v.softwarelink_id AND v.swllink_id = swl.id "
+                "AND y.id = v.year_id AND m.id = v.publisher_id "
+                "AND v.id = ?",
+                (set_id,)
+            )
+            db_fetch = cursor.fetchone()
+            if db_fetch is None:
+                return None
+            return {
+                'software_id'   : db_fetch[4],
+                'set_id'        : db_fetch[0],
+                'name'          : db_fetch[1],
+                'year'          : db_fetch[2],
+                'maker'         : db_fetch[3],
+                'label'         : f"{db_fetch[2]} - {db_fetch[1]}, {db_fetch[3]}",
+            }
+        finally:
+            cursor.close()
+
     def get_set_ids_for_software(self, software_id) -> list:
         """Return all set ids belonging to a software id, in row order."""
         cursor = self._conn.cursor()

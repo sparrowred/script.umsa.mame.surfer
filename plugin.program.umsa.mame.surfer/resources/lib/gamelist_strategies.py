@@ -5,8 +5,6 @@ they need. They return either the 4-tuple `(results, pos, gl_label, gl_options)`
 or `EARLY_RETURN` when they have fully handled the request themselves.
 """
 
-from umsa_core import load_lastsaver
-
 EARLY_RETURN = object()
 
 def all_games(ctx):
@@ -149,14 +147,26 @@ def source(ctx):
 def last_saver(ctx):
     results, pos = [], 0
     results = []
-    lastsaver_path = getattr(ctx, 'lastsaver_path', None)
-    for i in load_lastsaver(lastsaver_path):
-        saver_list = ctx.db.get_info_by_set_and_swl(i[0], i[1])
+    # Use database-backed screensaver history instead of legacy file
+    history = ctx.db.get_screensaver_history()
+    for entry in history:
+        set_id = entry['set_id']
+        software_id = entry['software_id']
+        set_info = ctx.db.get_set_info_by_id(set_id)
+        if set_info is None:
+            # Stale history record: set no longer exists in umsa.db
+            # Skip but do not delete the history record
+            import xbmc
+            xbmc.log(
+                f"UMSA gui: last_saver: skipping stale history entry for set_id={set_id}",
+                xbmc.LOGWARNING
+            )
+            continue
         results.append(
-            {'name': saver_list['name'],
-             'id': str(saver_list['software_id']),
-             'year': saver_list['year'],
-             'maker': saver_list['maker'],
+            {'name': set_info['name'],
+             'id': str(software_id),
+             'year': set_info['year'],
+             'maker': set_info['maker'],
             }
         )
     gl_label = 'last screensaver session'

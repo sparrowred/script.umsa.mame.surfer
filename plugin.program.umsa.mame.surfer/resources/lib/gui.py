@@ -464,15 +464,15 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         self.lastptr += 1
         self.last.insert(self.lastptr, software_id)
-        # Cap in-memory history at 100 entries to match persistent storage limit.
-        # If we removed an entry before the current pointer, adjust the pointer.
-        if len(self.last) > 100:
-            del self.last[0]
-            self.lastptr -= 1
         if not self.select_software(software_id):
             del self.last[self.lastptr]
             self.lastptr -= 1
             return False
+        # Cap in-memory history at 100 entries to match persistent storage limit.
+        # Only applied after successful selection; failed selection fully rolls back.
+        if len(self.last) > 100:
+            del self.last[0]
+            self.lastptr -= 1
         self._save_lastgames()
         return True
 
