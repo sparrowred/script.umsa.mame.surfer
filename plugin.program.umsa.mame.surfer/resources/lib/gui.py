@@ -1862,6 +1862,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
             outcome = strategy(gl_ctx)
             self.searchold = gl_ctx.searchold
             if outcome is EARLY_RETURN:
+                # Ensure the submenu is populated for strategies that open a gamelist
+                # (Series, Recommended) so that left navigation from the gamelist works.
+                self.build_sublist_menu(item)
                 return
             results, pos, gl_label, gl_options = outcome
 
