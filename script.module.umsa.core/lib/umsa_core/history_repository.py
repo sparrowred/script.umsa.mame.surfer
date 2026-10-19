@@ -40,6 +40,15 @@ FILTER_CATEGORY_INTERNAL_ORDER = [
     "players",
 ]
 
+# Reserved internal category holding the "this filter exists" marker row.
+# It is deliberately absent from every mapping above: it is never selectable,
+# never returned to a caller, and never written by anything but
+# ``save_filter_selections``. Its single row is what lets a filter with five
+# empty categories keep its name - ``list_filter_names`` reads names from
+# ``filter_selections``, and an all-empty selection set would otherwise leave
+# that table with no rows for the filter at all.
+FILTER_DEFINITION_CATEGORY = "__filter_definition__"
+
 
 def _write_within_savepoint(
     connection: sqlite3.Connection, operation
@@ -179,6 +188,14 @@ class HistoryRepository:
             cursor.execute(
                 "DELETE FROM filter_selections WHERE filter_name = ?",
                 (filter_name,),
+            )
+            # Definition marker: keeps the name discoverable even when every
+            # category is empty. Replaced atomically with the selections below.
+            cursor.execute(
+                "INSERT INTO filter_selections "
+                "(filter_name, category, position, value) "
+                "VALUES (?, ?, 0, '1')",
+                (filter_name, FILTER_DEFINITION_CATEGORY),
             )
             for public_key in FILTER_CATEGORY_ORDER:
                 internal_key = FILTER_CATEGORY_INTERNAL[public_key]

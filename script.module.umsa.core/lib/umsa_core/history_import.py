@@ -71,10 +71,20 @@ def _logical_lines(content: str) -> list[str]:
 
 
 def _read_decodable(path: Path) -> str:
+    """Read ``path`` as UTF-8.
+
+    Undecodable bytes are a *content* problem and surface as ``ValueError``
+    (the whole file is discarded). Filesystem failures (``OSError``: missing
+    file, permissions, I/O) are *not* a content verdict and are allowed to
+    propagate so the caller can abort the attempt without deleting anything.
+    """
+
     try:
         return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise ValueError(f"cannot read {path.name}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"cannot decode {path.name}: {exc}"
+        ) from exc
 
 
 def _validate_ids(tokens: list[str]) -> list[str]:
@@ -212,17 +222,45 @@ def _existing_recognized(
     return existing
 
 
+def _record_failure(repo: HistoryRepository, error: str) -> bool:
+    """Best-effort durable ``failed`` marker with ``error`` diagnostics.
+
+    Returns ``True`` when the marker was recorded. When it returns ``False``
+    (the marker write itself failed) no durable marker exists, which is the
+    established signal for the next ordinary startup to retry.
+    """
+
+    try:
+        repo.record_import_marker(
+            {
+                "status": "failed",
+                "discarded": [],
+                "pending_cleanup": [],
+                "error": error,
+            }
+        )
+        return True
+    except sqlite3.Error as exc:  # a lost marker just means "retry next start"
+        log(f"UMSA legacy import: could not record failure: {exc}",
+            level="warning")
+        return False
+
+
 def run_legacy_import(connection, paths: CoreDataPaths) -> ImportResult:
     """Run (or resume) the one-time legacy import.
 
-    The full sequence is: discover → validate all → commit data + terminal
+    The full sequence is: discover → read+validate all → commit data + terminal
     marker + pending-delete list in one transaction → delete recognized files
     → update the pending list → return the result. Terminal markers are never
     re-imported; a ``completed*`` marker with leftovers degrades to
     cleanup-only. A recorded ``failed`` marker is reported and left alone.
+
+    A filesystem failure while discovering or reading a recognized source is
+    **not** treated as malformed content: the attempt aborts before the import
+    transaction, no legacy file is deleted, and a best-effort ``failed`` marker
+    is recorded so subsequent startups wait for the explicit retry command.
     """
 
-    lastgames_path, filter_paths = discover_legacy_paths(paths)
     repo = HistoryRepository(connection)
 
     marker = repo.get_import_marker()
@@ -245,25 +283,47 @@ def run_legacy_import(connection, paths: CoreDataPaths) -> ImportResult:
                 pending_cleanup=remaining,
             )
 
-    # No terminal marker: attempt the one-time import.
+    # Discovery touches the filesystem: an enumeration error is not proof that
+    # any source is malformed, so abort before validating or deleting anything.
+    try:
+        lastgames_path, filter_paths = discover_legacy_paths(paths)
+    except OSError as exc:
+        error = f"legacy discovery failed: {exc}"
+        _record_failure(repo, error)
+        return ImportResult(status="failed", error=error)
+
+    # No terminal marker: read and validate every source *before* opening the
+    # import transaction. A filesystem read error aborts the whole attempt, so
+    # no other recognized file is partially imported.
     lastgames_ids: list[int] = []
     filters: dict[str, dict[str, list[str]]] = {}
     discarded: list[str] = []
+    read_errors: list[str] = []
 
-    if lastgames_path is not None and lastgames_path.exists():
+    if lastgames_path is not None:
         try:
-            lastgames_ids = validate_lastgames(lastgames_path)
+            if lastgames_path.exists():
+                lastgames_ids = validate_lastgames(lastgames_path)
         except ValueError:
             discarded.append(lastgames_path.name)
+        except OSError as exc:
+            read_errors.append(f"{lastgames_path.name}: {exc}")
 
     for filter_path in filter_paths:
-        if not filter_path.exists():
-            continue
         name = filter_path.name[len(_FILTER_PREFIX):-len(_FILTER_SUFFIX)]
         try:
+            if not filter_path.exists():
+                continue
             filters[name] = validate_filter(filter_path)
         except ValueError:
             discarded.append(filter_path.name)
+        except OSError as exc:
+            read_errors.append(f"{filter_path.name}: {exc}")
+
+    if read_errors:
+        error = "unreadable legacy source(s): " + "; ".join(read_errors)
+        _record_failure(repo, error)
+        return ImportResult(status="failed", error=error)
 
     recognized = _existing_recognized(lastgames_path, filter_paths)
 

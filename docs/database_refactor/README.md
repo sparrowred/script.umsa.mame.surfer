@@ -336,6 +336,18 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
   legacy first-line-only tolerance. **Q1–Q6 resolved as D12–D19**
   (`history_persistence_audit.md` §1.1/§16); ordering 4.7 → 4.6.1 → 4.6.2 (D11) with 4.7
   and 4.6.1 complete.
+  - **Corrective follow-up (2026-10-19), D20/D21 — no schema change.** (a) A saved filter
+    now keeps its name even with five empty categories: `save_filter_selections` writes a
+    reserved definition-marker row (`category = '__filter_definition__'`) in the same
+    `filter_selections` table, replaced atomically on every save, never a selectable
+    category and never part of a public filter dictionary. Version-1 databases with
+    pre-marker, non-empty filters keep working with no reset or re-import. (b) An
+    unreadable recognized file (`OSError`, including discovery enumeration errors) is no
+    longer treated as malformed content: the attempt aborts before the import transaction,
+    a best-effort durable `failed` marker is recorded, and no file is deleted or partially
+    imported. Only `UnicodeDecodeError` remains malformed input. Startup and
+    `retry_import` notifications now name the pending-cleanup filenames and keep the
+    discarded filenames. These corrections are a **prerequisite for 4.6.2**.
 
 ### Planned, not implemented (see `history_persistence_audit.md`)
 
@@ -620,11 +632,13 @@ Python from `.venv-debian-vm` (single consistent venv across all docs):
 # Step 4.6.1 — migration, history repository and one-time import (new files)
 .venv-debian-vm/bin/python -m pytest tests/test_status_migrations.py \
   tests/test_history_repository.py tests/test_history_import.py -q
-# → 40 passed  (5 migration version/txn cases; 12 repository DDL/round-trip/marker
-#   cases incl. the 100-cap + duplicate lastgames and the by-name Years/Players
-#   mapping; 23 import cases incl. strict five-line filter validation, commit-
-#   before-delete ordering, malformed-discard, cleanup-only after a terminal
-#   marker, failed-marker fallback and the retry_import command)
+# → 54 passed  (5 migration version/txn cases; 17 repository DDL/round-trip/marker
+#   cases incl. the 100-cap + duplicate lastgames, the by-name Years/Players
+#   mapping and the D20 empty-filter definition marker; 32 import cases incl.
+#   strict five-line filter validation, commit-before-delete ordering,
+#   malformed-discard, cleanup-only after a terminal marker, failed-marker
+#   fallback, the retry_import command, and the D20/D21 follow-up
+#   empty-filter-name and unreadable-vs-malformed cases)
 ```
 
 The step 4.0 runs (guards, subset, full suite, lint) were executed for that documentation
@@ -662,6 +676,14 @@ tree clean); the step 4.6.1 runs (`tests/test_status_migrations.py` `5 passed`,
 full suite **`702 passed`**, 5 skipped, 18 subtests run) were executed against the new
 migration/repository/import modules in the working tree, and the per-file lint comparison
 showed no new findings beyond the one deliberately broad startup guard in `gui.py`.
+The 2026-10-19 corrective follow-up (D20/D21) was executed as
+`tests/test_history_repository.py` `17 passed` + `tests/test_history_import.py`
+`32 passed` + the focused trio (`tests/test_status_migrations.py`,
+`tests/test_history_repository.py`, `tests/test_history_import.py`) `54 passed`, plus a
+full suite **`716 passed`**, 5 skipped, 18 subtests run; `history_repository.py`/
+`history_import.py` mypy and ruff stayed clean, `addon.py` ruff clean, and `gui.py`'s
+ruff findings were unchanged from HEAD apart from the pre-existing executable-mode
+`EXE002`.
 Only the guard test file is new from 4.0; `tests/test_cmd_line_options.py`,
 `tests/test_emulator_launcher.py`, `tests/test_save_further_media.py`,
 `tests/test_status_repository.py`, `tests/test_emulator_repository.py`,

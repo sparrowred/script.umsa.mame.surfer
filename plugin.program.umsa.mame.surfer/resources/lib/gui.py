@@ -430,15 +430,21 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 'UMSA migration', 'Nothing to migrate.',
                 xbmcgui.NOTIFICATION_INFO, 3000, False)
         elif result.status == 'failed':
+            detail = result.error or 'unknown'
+            if result.discarded:
+                detail += ' (discarded: ' + ', '.join(result.discarded) + ')'
             self.dialog.notification(
                 'UMSA migration',
-                f'Import failed: {result.error or "unknown"} '
-                f'(use retry_import).',
+                f'Import failed: {detail} (use retry_import).',
                 xbmcgui.NOTIFICATION_ERROR, 7000, False)
         if result.pending_cleanup:
+            names = ', '.join(
+                os.path.basename(path) for path in result.pending_cleanup
+            )
             self.dialog.notification(
                 'UMSA migration',
-                f'{len(result.pending_cleanup)} legacy file(s) not removed.',
+                f'{len(result.pending_cleanup)} legacy file(s) not removed: '
+                f'{names}.',
                 xbmcgui.NOTIFICATION_WARNING, 5000, False)
 
     def _save_lastgames(self):

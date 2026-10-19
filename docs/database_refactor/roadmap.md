@@ -707,6 +707,17 @@ section 1.1/16 of the audit document, with `gui_lastgames` retention raised to *
 (D19). The §16.2 Kodi-runtime items were verified during implementation; the former Q7
 (ordering) is **resolved**: 4.7 → 4.6.1 → 4.6.2.
 
+**Corrective follow-up (2026-10-19, D20/D21):** two post-landing defects are fixed
+**without** a schema change or new migration — (D20) a completely empty saved filter now
+keeps its name via a reserved `__filter_definition__` marker row in `filter_selections`,
+so version-1 databases with pre-marker, non-empty filters still load with no reset or
+re-import; (D21) an unreadable recognized file (`OSError`, including discovery
+enumeration errors) is no longer treated as malformed content — it aborts before the
+import transaction after a best-effort durable `failed` marker, deleting and importing
+nothing, so only `UnicodeDecodeError` is malformed. Notifications now name the
+pending-cleanup files and keep discarded filenames. These fixes are a **prerequisite for
+4.6.2**; 4.6.2's own scope is unchanged.
+
 **Dependencies:** conventions from 4.2–4.6 (Row contract, repository style, savepoint
 ownership); **Phase 4.7 for the filter-selection consumption path** — persisted
 selections are handed to `define_filter`, i.e. into the filter state 4.7 makes explicit.
@@ -960,11 +971,15 @@ migration. The six questions Q1–Q6 (lastgames duplicates,
 validation strictness, filter semantics, screensaver semantics, unknown files, DB-failure
 recovery) are **resolved as D12–D19** (recorded in `history_persistence_audit.md`
 §1.1/§16), and the §16.2 Kodi-runtime verifications were performed during
-implementation. **Step 4.6.2** (screensaver display-history writes into the same
-migration's `screensaver_history` table) is the next step.
+implementation. A **corrective follow-up (2026-10-19, D20/D21)** fixed the empty-filter
+name loss and the misclassification of unreadable files as malformed, with no change to
+the version-1 schema or `user_version` and no reset/re-import for existing databases
+(`history_repository.py` `17 passed` + `history_import.py` `32 passed`). It is a
+**prerequisite for 4.6.2**. **Step 4.6.2** (screensaver display-history writes into the
+same migration's `screensaver_history` table) is the next step.
 Steps 4.5-4.6 (status.db) proceeded independently of the 4.2-4.4 chain; 4.7 is
 deliberately late and 4.8 deliberately last. Every step lands with: characterisation
 tests, facade delegation, unchanged public API, and a green full suite
-(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **702 passed**, 5 skipped, 18 subtests
-after step 4.6.1 — **661 passed** at the 4.7/HEAD `bd83a4d` baseline, **654 passed** at HEAD
-`bc631eb`).
+(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **716 passed**, 5 skipped, 18 subtests
+after the 4.6.1 corrective follow-up — **702 passed** after step 4.6.1, **661 passed** at
+the 4.7/HEAD `bd83a4d` baseline, **654 passed** at HEAD `bc631eb`).

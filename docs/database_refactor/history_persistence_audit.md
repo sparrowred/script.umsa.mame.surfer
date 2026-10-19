@@ -1,17 +1,21 @@
 # Phase 4.6.1a — `status.db` history & legacy-file migration: audit and plan
 
-**Status: IMPLEMENTED (2026-10-18).** The design questions Q1–Q6 are **resolved** — the
-maintainer's phase brief answered Q1, Q3, Q4 and Q5, the follow-up decisions answered Q2
-and Q6, and both are recorded as **D12–D19** (section 1.1) plus the per-section updates —
-and the production work described here has since landed:
+**Status: IMPLEMENTED (2026-10-18); corrected 2026-10-19 (D20/D21).** The design questions
+Q1–Q6 are **resolved** — the maintainer's phase brief answered Q1, Q3, Q4 and Q5, the
+follow-up decisions answered Q2 and Q6, and both are recorded as **D12–D21** (sections 1.1
+and 1.2) plus the per-section updates — and the production work described here has since
+landed:
 `status_migrations.py` (versioned `status.db` migration, `user_version` 0→1),
 `history_repository.py` (four tables + lastgames/filter/marker persistence),
 `history_import.py` (discovery, strict validation, one-time import, cleanup, `retry_import`),
-the `DBMod` facades, the GUI startup wiring and the `retry_import` script command. Two
-wording changes were made while implementing: the `filter_<name>.txt` line-count rule is
-now **strict** (D14, corrected below) and the file-level recovery semantics follow D18.
-What remains open is limited to the manually verified **Kodi-runtime items** (section
-16.2), which are not design decisions and cannot be settled by code inspection.
+the `DBMod` facades, the GUI startup wiring and the `retry_import` script command. While
+implementing, the `filter_<name>.txt` line-count rule became **strict** (D14, corrected
+below) and the file-level recovery semantics follow D18. The 2026-10-19 corrective
+follow-up (§1.2) fixed the empty-filter-name loss (D20) and the misclassification of
+unreadable files as malformed (D21) without changing the version-1 schema or
+`user_version`. What remains open is limited to the manually verified **Kodi-runtime
+items** (section 16.2), which are not design decisions and cannot be settled by code
+inspection.
 
 **Scope of this update:** the finalized direction for moving three related but distinct
 concepts into `status.db`, all under **one** versioned schema migration, followed by
@@ -85,6 +89,34 @@ new binding rules. Every row is a *decision*, not a proposal.
 | **D17** | **Deletion scope (Q5 resolved).** Only `lastgames.txt` and validated `filter_*.txt` are ever deleted (D6). `lastsaver.txt` — for which **no writer exists in any revision**, only `load_lastsaver` + its single consumer (`gamelist_strategies.py:153`) — and every other unknown file are **preserved and reported to the maintainer**, never added to the cleanup scope by name-guessing. |
 | **D18** | **Database-failure recovery (Q6 resolved).** (a) If `status.db` cannot be read or written such that the required outcome **cannot be committed**, the failure is **reported and the import retries at the next GUI startup** — no marker exists in that case, so "no marker" *is* the retry signal — and **no separate fallback status file may be introduced** (this reverses the "no fallback is adopted until you decide" holding position in 9.3). (b) A durably recorded **`failed` state stays terminal** (D4 unchanged): it is reported on every startup and retried only through a new explicit frontend script command `retry_import`, registered beside `del_db`/`del_status` in `addon.py:18-37`. (c) A **deletion** failure never re-triggers the import — cleanup-only on the next startup (D4). |
 | **D19** | **`gui_lastgames` retention is the newest 100, not 10** (maintainer change). Storage keeps the newest **100** ids (`position` 0..99) instead of today's `self.last[-10:]` trim (`gui.py:2566`); the in-memory session list, the pointer and the navigation behaviour are unchanged. This is the one deliberate *visible* behaviour change of the phase: after a restart the GUI resumes with up to 100 entries of backward history instead of 10. The legacy import reads whatever the file holds and writes at most the newest 100. |
+| **D20** | **A saved filter keeps its name even with five empty categories (corrective follow-up)**. The published version-1 schema is unchanged: `save_filter_selections` also writes one **definition marker** row into the existing `filter_selections` table under the reserved internal category `__filter_definition__` (position 0, value `"1"`). The marker is written for imported *and* GUI-saved filters, replaced atomically with the selections on every save, is never a selectable category, and never appears in any public filter dictionary (it is absent from all four category maps/orders). `list_filter_names()` keeps reading names with `SELECT DISTINCT filter_name`, so version-1 databases whose non-empty filters predate the marker keep working with no reset and no re-import. |
+| **D21** | **Filesystem read/discovery failures are not malformed content (corrective follow-up)**. `_read_decodable` maps only `UnicodeDecodeError` to `ValueError` (whole-file discard, filename recorded, deleted only after the outcome commits). `OSError` (permissions, I/O, missing file) and directory-enumeration errors propagate to `run_legacy_import`, which aborts *before* the import transaction: no recognized source is deleted and no other file is partially imported. A best-effort durable `failed` marker carrying the diagnostic is recorded (D18); if that write also fails, no marker exists and the next ordinary startup retries; if it succeeds, ordinary startups wait for the explicit `retry_import` command. |
+
+### 1.2 Corrective follow-up (2026-10-19)
+
+Two defects found after the initial 4.6.1 landing are corrected **without** changing the
+version-1 schema, `PRAGMA user_version`, or the migration strategy:
+
+1. **Completely empty filters lost their name** (D20). Because a filter with no
+   selections wrote no rows, `list_filter_names()` could not see it; a successful import
+   would then delete the legacy file and lose the name permanently. Fixed with the
+   reserved `__filter_definition__` marker row (D20). The fix is schema-compatible: no
+   `ALTER TABLE`, no new column, no new migration - the existing
+   `(filter_name, category, position, value)` primary key already distinguishes the marker
+   from the five selectable categories. Version-1 databases with pre-marker, non-empty
+   filters continue to load and list unchanged (regression-tested).
+2. **Unreadable files were misclassified as malformed** (D21). `_read_decodable()`
+   previously folded `OSError` and `UnicodeDecodeError` into `ValueError`, so a
+   permission/I/O error on a recognized file caused that file to be scheduled for
+   deletion. Now only `UnicodeDecodeError` is malformed content; `OSError` (and discovery
+   enumeration errors) abort the attempt before the import transaction, after a
+   best-effort durable `failed` marker, leaving every source in place for the explicit
+   `retry_import`.
+
+Notification detail was tightened at the same time: the startup and explicit-retry paths
+now include the pending-cleanup **filenames** (not just a count) and preserve the
+discarded filenames for diagnosis. These fixes are a **prerequisite for 4.6.2**; 4.6.2's
+own status is otherwise unchanged.
 
 ---
 
@@ -329,16 +361,20 @@ CREATE TABLE IF NOT EXISTS gui_lastgames (
 ```sql
 CREATE TABLE IF NOT EXISTS filter_selections (
     filter_name TEXT    NOT NULL,   -- filename part: 'default', 'arcade', ...
-    category    TEXT    NOT NULL,   -- 'Softwarelists' | 'Game Categories' |
-                                   -- 'Machine Categories' | 'Years' | 'Players'
+    category    TEXT    NOT NULL,   -- 'softwarelists' | 'game_categories' |
+                                   -- 'machine_categories' | 'years' | 'players'
+                                   -- | '__filter_definition__' (definition marker, D20)
     position    INTEGER NOT NULL,   -- value order within the category (file order)
     value       TEXT    NOT NULL,   -- opaque id string, preserved verbatim
     PRIMARY KEY (filter_name, category, position)
 )
 ```
 
-- One row per selected value; an empty category or an empty file has **no rows** (the
-  faithful equivalent of an empty line); a filter that does not exist has no rows (the
+- One row per selected value; an empty category has **no value rows** (the faithful
+  equivalent of an empty line). Since the corrective follow-up (D20) every saved or
+  imported filter **also** carries exactly one **definition marker** row under the
+  reserved internal category `__filter_definition__`, so an all-empty filter is still
+  discoverable by name; a filter that does not exist has no rows at all.
   faithful equivalent of a missing file).
 - **Category keys:** the table stores the **internal** keys `softwarelists`,
   `game_categories`, `machine_categories`, `years`, `players` (D15); the public Core API
@@ -352,7 +388,9 @@ CREATE TABLE IF NOT EXISTS filter_selections (
   whitespace-stripped on import (D13) and `filter_name` is the filename part of
   `filter_<name>.txt`.
 - **Write semantics: full replace per `filter_name`** in one savepoint, mirroring
-  `save_filter`'s whole-file rewrite.
+  `save_filter`'s whole-file rewrite. The definition marker (D20) is written in the same
+  savepoint, so replacing a populated filter with an empty one leaves no stale selection
+  rows behind.
 - The active-filter name, `use_filter` and `order` are **not** part of this table —
   nothing runtime-persisted is added (D15).
 - No id→name conversion, no cross-checking against `umsa.db` — the two databases are
@@ -476,12 +514,14 @@ Special outcomes:
   If not even the failure can be recorded, nothing was committed → **report and retry at
   the next GUI startup** (D18a), with no fallback file.
 
-### 8.2 Per-file validation rules (decided — D13/D14)
+### 8.2 Per-file validation rules (decided — D13/D14/D21)
 
 The reader helpers are intentionally *not* reused blindly here, because they crash on
 exactly the inputs the import must survive (`ValueError` on a non-integer token,
-`IndexError` on a short filter file, `UnicodeDecodeError` on bad bytes). Decided rules,
-each file validated as a unit:
+`IndexError` on a short filter file, `UnicodeDecodeError` on bad bytes). A **filesystem**
+failure while reading (``OSError``: permission, I/O, missing) is *not* a content verdict —
+it aborts the whole attempt before step 6 above, leaving every source for `retry_import`
+(D21). Decided rules, each file validated as a unit:
 
 | Source | Valid shape (decided) | On failure |
 |---|---|---|
@@ -693,6 +733,10 @@ unexpected files applies to *this* machine; on other installations section 11's
   established `xbmcgui.Dialog().notification(...)` pattern (`gui.py:513, 1793, 2040`)
   can be used directly. Either way, `umsa_core` stays Kodi-free and no *second* adapter
   is created.
+- **Notification detail (corrective follow-up):** the startup and explicit-`retry_import`
+  notifications name the pending-cleanup files (basenames, not just a count) and keep the
+  discarded filenames, so the failure/cleanup state is diagnosable from the notification
+  alone.
 - `umsa_core_python.py` is not assumed to exist (still a roadmap item).
 
 ---
