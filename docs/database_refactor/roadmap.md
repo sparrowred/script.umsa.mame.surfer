@@ -38,13 +38,16 @@ docs/database_refactor") and refreshed in `5514efd` ("update docs", docs-only si
 `b84341e`); the 4.7 code commits sit on top. Current **HEAD is `bd83a4d`**
 (tracked tree clean, no pending working-tree changes).
  **Status:** steps 4.0, 4.2, 4.2a,
- 4.2b, 4.3, 4.4, 4.5-pre, 4.5, 4.6, 4.7 and **4.6.1** are implemented; step **4.6.1
+ 4.2b, 4.3, 4.4, 4.5-pre, 4.5, 4.6, 4.7, **4.6.1** and **4.6.2** are implemented; step
+ **4.6.1
  (`status.db` history & legacy-file migration — GUI lastgames + filter selections +
  screensaver history)** is done (2026-10-18: the `status_migrations.py` migration, the
  `history_repository.py` persistence, the `history_import.py` one-time import/cleanup,
  the `DBMod` facades, the GUI startup wiring and the `retry_import` command) — see
  [`history_persistence_audit.md`](history_persistence_audit.md);
- the **4.6.2** screensaver-history writes, steps 4.8–4.9 are planned — each step is
+ the **4.6.2** screensaver-history writes are done (2026-10-19, in the working tree: the
+ `HistoryRepository`/`DBMod` methods and the `ui.py` image/video hooks, no schema change),
+ steps 4.8–4.9 are planned — each step is
  designed to be independently reviewable and testable; no step changes public method
  signatures, return values, `row_factory` defaults, or database schemas (4.2b changed
  only which *connections repositories accept*, with an explicit `ValueError`; 4.5 and
@@ -730,6 +733,44 @@ three tests pinning `user_version == 0`.
 
 ---
 
+## Step 4.6.2 — screensaver display history (`screensaver_history` writes) ✅ implemented
+
+**Status: IMPLEMENTED (2026-10-19, in the working tree).** The last piece of 4.6.1's
+decided scope: record the last **100** distinct sets the screensaver actually displays into
+the `screensaver_history` table that the version-1 `status.db` migration already created.
+**No new migration, no schema change, `user_version` stays 1** — the write path simply uses
+the existing DDL. Design decisions: D16 (identity = `set_id`, one row per set, recency by
+the monotonic `id`), D2 (starts empty, no import source).
+
+**What landed:**
+- `umsa_core/history_repository.py` — `SCREENSAVER_HISTORY_LIMIT = 100`, `normalize_set_id`
+  (Kodi-free id normaliser; **raises `ValueError`**, never returns `None`),
+  `HistoryRepository.record_screensaver_display(set_id, software_id=None)` (delete existing
+  row → re-insert as newest → prune beyond the newest 100, all inside one `SAVEPOINT`, so a
+  failure leaves history untouched and never commits/closes the caller's transaction) and
+  `HistoryRepository.list_screensaver_history(limit=None)` (`ORDER BY id DESC`).
+- `umsa_core/database.py` — `DBMod.record_screensaver_display` /
+  `DBMod.get_screensaver_history` facades (no `.sdb`/`.sdbc` access from callers).
+- `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py` — `SET_ID_UNIQUE_TYPE =
+  'umsa_set_id'`, `attach_set_id(video_item, set_id)`, `read_set_id(video_tag)`,
+  `read_software_id(video_tag)` (the `Votes` handoff stays the software id); `Saver.record_display`
+  called **once** after the completed cross/slide/wall render block and before the wait loop
+  (missing/invalid ids and any DB failure are logged and never break rendering);
+  `Player.onAVStarted()` writes the video record with the `set_id` carried on the playlist
+  ListItem via `setUniqueID(str(set_id), 'umsa_set_id')` (value first, type second —
+  `@python_v20`), capability-guarded with `hasattr` so Kodi < 20 logs and does not record;
+  a per-instance token deduplicates the callback.
+
+**Boundary rule honoured:** the repository is Kodi-free; every Kodi touch sits in the
+screensaver add-on; the screensaver uses only `DBMod`.
+
+**Tests:** `tests/test_screensaver_history_repository.py` (51 passed) and
+`tests/test_screensaver_history_hooks.py` (52 passed, Kodi-stub harness). Full suite
+**819 passed**, 5 skipped, 18 subtests passed; per-file ruff comparison against the HEAD
+baseline shows the new code adds no findings.
+
+---
+
 ## Step 4.7 — `gamelist_filter.py`: explicit-state filter/query composition (decisions Q2/Q9) ✅ implemented
 
 **Responsibility:** make `define_filter`, `execute_statement` and the `get_by_*` wrappers
@@ -945,9 +986,13 @@ guard); no behaviour change. Not urgent — schedule after 4.6.
              Q1-Q6 RESOLVED as D12-D19 (16.2 Kodi checks done; D14 tightened to a
              strict five-line filter rule);
              order CONFIRMED: after 4.7 (D11);
-             4.6.2 = screensaver history writes (decided D16) — NEXT)
+             4.6.2 = screensaver history writes (decided D16))
 4.7 ✅ ──► (accessors `10f9fbd` + order fix `479e202` first; extraction `da65a62`;
              parameterisation `bc631eb`; retry-loop fix `bd83a4d`)
+4.6.2 ✅ ──► (screensaver display-history writes: HistoryRepository
+             record_screensaver_display/list_screensaver_history + DBMod facades +
+             ui.py Saver.record_display / Player.onAVStarted hooks; no schema change;
+             IMPLEMENTED 2026-10-19 in the working tree)
 4.8                         (after 4.3-4.6; touches GUI)
 4.9                         (proposal; after 4.6)
 ```
@@ -976,10 +1021,13 @@ name loss and the misclassification of unreadable files as malformed, with no ch
 the version-1 schema or `user_version` and no reset/re-import for existing databases
 (`history_repository.py` `17 passed` + `history_import.py` `32 passed`). It is a
 **prerequisite for 4.6.2**. **Step 4.6.2** (screensaver display-history writes into the
-same migration's `screensaver_history` table) is the next step.
+same migration's `screensaver_history` table) **is implemented** (2026-10-19, in the
+working tree: `HistoryRepository.record_screensaver_display`/`list_screensaver_history`,
+the `DBMod` facades and the `ui.py` image/video hooks, no schema change) — full suite
+**819 passed**, 5 skipped, 18 subtests passed.
 Steps 4.5-4.6 (status.db) proceeded independently of the 4.2-4.4 chain; 4.7 is
 deliberately late and 4.8 deliberately last. Every step lands with: characterisation
 tests, facade delegation, unchanged public API, and a green full suite
-(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **716 passed**, 5 skipped, 18 subtests
+(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **819 passed** after 4.6.2, **716 passed**
 after the 4.6.1 corrective follow-up — **702 passed** after step 4.6.1, **661 passed** at
 the 4.7/HEAD `bd83a4d` baseline, **654 passed** at HEAD `bc631eb`).

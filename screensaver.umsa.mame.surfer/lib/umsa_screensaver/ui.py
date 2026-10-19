@@ -14,6 +14,7 @@ import xbmcaddon
 import xbmcgui
 import xbmcvfs
 from umsa_core import check_image_aspect, resolve_artwork_path, root_key_for_path
+from umsa_core.history_repository import normalize_set_id
 from umsa_core_kodi import (
     get_core_settings,
     send_vgm_action,
@@ -43,6 +44,88 @@ PIC_3TO4 = 106
 PIC_1TO1 = 107
 IMAGE = [1, 2]
 BACKG = [5, 6]
+
+# Unique-ID type label carrying the UMSA set id (sets.id) with a video.
+# InfoTagVideo.setUniqueID()/getUniqueID() exist only from Kodi 20
+# (@python_v20); every use below is capability-guarded, so on Kodi 19 the
+# value simply never travels with the item and video history is not
+# recorded (logged), while the Votes-based software-id handoff keeps working.
+SET_ID_UNIQUE_TYPE = 'umsa_set_id'
+
+
+def attach_set_id(video_item, set_id):
+    """Attach the UMSA set id to a playlist item as ``umsa_set_id``.
+
+    Argument order matters: the official API is
+    ``setUniqueID(uniqueid, type)`` - the id value first, the type label
+    second. Returns ``True`` when the value was written, ``False`` when the
+    runtime lacks the Kodi 20 unique-ID API, the id is invalid or the write
+    failed (each case is logged; the caller is never interrupted).
+    """
+
+    try:
+        normalized = normalize_set_id(set_id)
+    except ValueError:
+        xbmc.log(f"UMSA SSaver: not attaching invalid set id {set_id!r}", xbmc.LOGWARNING)
+        return False
+    try:
+        video_tag = video_item.getVideoInfoTag()
+    except (AttributeError, RuntimeError) as error:
+        xbmc.log(f"UMSA SSaver: no video info tag for set id: {error}", xbmc.LOGDEBUG)
+        return False
+    if video_tag is None or not hasattr(video_tag, 'setUniqueID'):
+        xbmc.log(
+            "UMSA SSaver: Kodi has no InfoTagVideo.setUniqueID (Kodi < 20); "
+            "screensaver video history recording is unavailable",
+            xbmc.LOGDEBUG)
+        return False
+    try:
+        video_tag.setUniqueID(str(normalized), SET_ID_UNIQUE_TYPE)
+    except (TypeError, ValueError, RuntimeError) as error:
+        xbmc.log(f"UMSA SSaver: could not attach umsa_set_id {normalized}: {error}", xbmc.LOGWARNING)
+        return False
+    return True
+
+
+def read_set_id(video_tag):
+    """Return the positive ``set_id`` carried by ``video_tag``, or ``None``.
+
+    ``None`` means "no recordable set id": the runtime has no
+    ``InfoTagVideo.getUniqueID`` (Kodi < 20), the ``umsa_set_id`` value is
+    absent, or it does not validate as a positive decimal ``sets.id`` (the
+    latter is logged). The value is never replaced by any other id.
+    """
+
+    if video_tag is None or not hasattr(video_tag, 'getUniqueID'):
+        return None
+    try:
+        raw = video_tag.getUniqueID(SET_ID_UNIQUE_TYPE)
+    except (TypeError, ValueError, RuntimeError) as error:
+        xbmc.log(f"UMSA SSaver: could not read umsa_set_id: {error}", xbmc.LOGWARNING)
+        return None
+    if raw is None or raw == '':
+        return None
+    try:
+        return normalize_set_id(raw)
+    except ValueError:
+        xbmc.log(f"UMSA SSaver: ignoring invalid umsa_set_id {raw!r}", xbmc.LOGWARNING)
+        return None
+
+
+def read_software_id(video_tag):
+    """Return the software id carried in the video ``Votes`` label, or ``None``.
+
+    ``Votes`` keeps holding the software id (``sets.softwarelink_id``) exactly
+    as the context-menu handoff reads it today; it is never repurposed for the
+    set id.
+    """
+
+    if video_tag is None or not hasattr(video_tag, 'getVotes'):
+        return None
+    try:
+        return int(video_tag.getVotes())
+    except (TypeError, ValueError):
+        return None
 
 
 class Saver(xbmcgui.WindowXMLDialog):
@@ -193,6 +276,38 @@ class Saver(xbmcgui.WindowXMLDialog):
         """Remember the software id of the artwork being rendered."""
 
         self.current_software_id = art['s_id'] if art else None
+
+    def record_display(self, art):
+        """Record the displayed set in the shared screensaver history.
+
+        Called once per completed cross/slide/wall render, after the
+        display-success boundary and before the wait loop. A missing or
+        invalid ``set_id`` is ignored; database failures are logged and never
+        allowed to break rendering. Returns ``True`` only when the history
+        write succeeded.
+        """
+
+        set_id = art.get('id') if art else None
+        software_id = art.get('s_id') if art else None
+        try:
+            normalized_set_id = normalize_set_id(set_id)
+        except ValueError:
+            xbmc.log(
+                f"UMSA SSaver: no valid set id for history: {set_id!r}",
+                xbmc.LOGWARNING)
+            return False
+        try:
+            self.parent.umsa.ggdb.record_screensaver_display(
+                normalized_set_id, software_id)
+        except Exception as error:  # noqa: BLE001 - history must never break rendering
+            xbmc.log(
+                f"UMSA SSaver: history recording failed: {error}",
+                xbmc.LOGWARNING)
+            return False
+        xbmc.log(
+            f"UMSA SSaver: recorded screensaver history for set {normalized_set_id}",
+            xbmc.LOGDEBUG)
+        return True
 
     def open_software(self, software_id):
         """Hand the currently displayed software to the frontend.
@@ -388,6 +503,9 @@ class Saver(xbmcgui.WindowXMLDialog):
             'Trailer': machine_pic,
             'Director': snapshot,
             'Votes': rand_vid['s_id']})
+        # carry the set id alongside the Votes software id so the playback
+        # callback can record history; degrades to a logged no-op on Kodi < 20
+        attach_set_id(video_item, rand_vid.get('id'))
         self.playlist.add(url=filename, listitem=video_item)
         xbmc.log(f"UMSA SSaver: playlist size {self.playlist.size()}, pos {self.playlist.getposition()}", xbmc.LOGDEBUG)
         return True
@@ -433,6 +551,11 @@ class Saver(xbmcgui.WindowXMLDialog):
             art = self.parent.umsa.ggdb.get_random_art(self.art_types)
             # remember the software being rendered for the context handoff
             self.remember_art(art)
+            # no artwork to render: nothing was displayed, so nothing may be
+            # recorded (and there is no path to resolve)
+            if not art:
+                xbmc.log("UMSA SSaver: no artwork returned, skipping iteration", xbmc.LOGDEBUG)
+                continue
 
             source_roots = {"progettosnaps": self.path[1] if len(self.path) > 1 else self.path[0],
                              "own_artwork": self.path[0] if len(self.path) > 0 else "",
@@ -570,6 +693,13 @@ class Saver(xbmcgui.WindowXMLDialog):
                 self.setProperty(f'SlideView.Fade1{order[0]+1}', '0')
                 self.setProperty(f'SlideView.Fade1{order[1]+1}', '1')
 
+            # the render path completed for cross/slide/wall: this is the
+            # display-success boundary (Kodi gives no image-load callback),
+            # so record the set now, once, immediately before the wait loop.
+            # Anything raised above skips this call - no partial render is
+            # ever recorded.
+            self.record_display(art)
+
             # set wait_time
             if self.running == 'videos':
                 xbmc.log(f"UMSA SSaver isPlayingVideo {self.parent.player.isPlayingVideo()}", xbmc.LOGDEBUG)
@@ -699,19 +829,120 @@ class Player(xbmc.Player):
 
     Reacts to:
      onPlayBackStarted
+     onAVStarted
      onPlayBackEnded
 
     Used by video screensaver as Kodi Monitor ends when a video is started.
     Controls after how many seconds the video label blends in.
+
+    History recording happens only in ``onAVStarted``: that callback is the
+    Kodi-recommended point at which an actual audio/video stream exists,
+    whereas ``onPlayBackStarted`` may fire while the item is merely queued or
+    not yet delivering a stream. Nothing is ever recorded at enqueue time.
     """
 
     def __init__(self, **kwargs):
         self.parent = kwargs['itself']
         self.runp = False
+        # per-playback-instance bookkeeping: the instance counter is bumped
+        # by onPlayBackStarted, the token identifies the playlist item whose
+        # history has already been recorded (or deliberately skipped).
+        self._playback_instance = 0
+        self._av_recorded_token = None
+
+    def _av_instance_token(self):
+        """Return an identity for the current playback instance, or ``None``.
+
+        The token combines the playback instance counter (bumped by
+        ``onPlayBackStarted``), the playlist position and the playing file,
+        so duplicate ``onAVStarted`` callbacks for one playback instance
+        collapse to a single record while a later playback of the same set
+        (a new instance / playlist position) is recorded again.
+        """
+
+        try:
+            position = self.parent.saver.playlist.getposition()
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            position = None
+        try:
+            playing_file = self.getPlayingFile()
+        except RuntimeError:
+            playing_file = None
+        if position is None and playing_file is None:
+            return None
+        return (self._playback_instance, position, playing_file)
+
+    def onAVStarted(self):
+        """Record the displayed video once a stream is actually available.
+
+        Exactly once per playback instance (deduplicated by the instance
+        token) and only while the screensaver runs in video mode. Missing or
+        invalid ``umsa_set_id`` metadata (including Kodi < 20, which has no
+        unique-ID API) and database failures are logged without disrupting
+        playback; no exception ever escapes this callback.
+        """
+
+        try:
+            saver = getattr(self.parent, 'saver', None)
+            if saver is None or saver.running != 'videos':
+                return
+
+            token = self._av_instance_token()
+            if token is not None and token == self._av_recorded_token:
+                xbmc.log(
+                    "UMSA SSaver Player: onAVStarted duplicate for the current "
+                    "playback instance, not recording again",
+                    xbmc.LOGDEBUG)
+                return
+            # this playback instance is handled from here on, whether or not
+            # a record can be written (prevents duplicate log spam too)
+            self._av_recorded_token = token
+
+            xbmc.log("UMSA SSaver Player: onAVStarted", xbmc.LOGDEBUG)
+            try:
+                video_tag = self.getVideoInfoTag()
+            except (AttributeError, RuntimeError) as error:
+                xbmc.log(
+                    f"UMSA SSaver Player: no video info tag yet: {error}",
+                    xbmc.LOGWARNING)
+                return
+            if video_tag is None or not hasattr(video_tag, 'getUniqueID'):
+                xbmc.log(
+                    "UMSA SSaver Player: video history recording unavailable "
+                    "(Kodi has no InfoTagVideo.getUniqueID)",
+                    xbmc.LOGWARNING)
+                return
+            set_id = read_set_id(video_tag)
+            if set_id is None:
+                xbmc.log(
+                    "UMSA SSaver Player: no valid umsa_set_id in video "
+                    "metadata, history not recorded",
+                    xbmc.LOGWARNING)
+                return
+            software_id = read_software_id(video_tag)
+
+            ggdb = getattr(getattr(self.parent, 'umsa', None), 'ggdb', None)
+            if ggdb is None:
+                xbmc.log(
+                    "UMSA SSaver Player: no database handle, history not recorded",
+                    xbmc.LOGWARNING)
+                return
+            ggdb.record_screensaver_display(set_id, software_id)
+            xbmc.log(
+                f"UMSA SSaver Player: recorded screensaver history for "
+                f"set {set_id}",
+                xbmc.LOGDEBUG)
+        except (SystemExit, Exception) as err:  # noqa: BLE001 - a history failure must never escape into Kodi's player callback
+            xbmc.log(
+                f"UMSA SSaver Player: onAVStarted history recording failed: {err}",
+                xbmc.LOGWARNING)
 
     def onPlayBackStarted(self):
         """Reacts to Kodi event 'onPlayBackStarted'"""
 
+        # a new playback instance begins; history is never written here
+        # (the stream may not exist yet) - onAVStarted does that
+        self._playback_instance += 1
         try:
             xbmc.log("UMSA SSaver Player: onPlayBackStarted", xbmc.LOGINFO)
             # when video ssaver runs

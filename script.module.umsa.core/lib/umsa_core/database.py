@@ -1216,6 +1216,31 @@ class DBMod:
             filter_name, filter_lists
         )
 
+    def record_screensaver_display(self, set_id, software_id=None):
+        """Record one successfully displayed set in ``screensaver_history``.
+
+        One row per distinct set (``set_id``), moved to the newest position on
+        every display and pruned past the newest 100 (decision D16);
+        ``software_id`` is the context-menu handoff id stored alongside. The
+        write only touches the ``status.db`` history table inside one
+        savepoint: it never runs the legacy import, never deletes legacy
+        files and never commits an unrelated caller transaction.
+        """
+
+        self._get_history_repository().record_screensaver_display(
+            set_id, software_id
+        )
+
+    def get_screensaver_history(self, limit=None):
+        """Return the screensaver display history, newest first.
+
+        Each entry carries the persisted ``set_id`` with its ``software_id``
+        and ``displayed_at``; a ``set_id`` no longer present in ``umsa.db`` is
+        returned as stored, never substituted (decision D16).
+        """
+
+        return self._get_history_repository().list_screensaver_history(limit)
+
     def get_import_marker(self):
         """Return the durable legacy-import marker dict, or ``None``."""
 

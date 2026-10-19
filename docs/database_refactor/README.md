@@ -206,7 +206,7 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 |---|---|
 | [`dbmod_audit.md`](dbmod_audit.md) | Complete inventory of every remaining SQL-bearing method/helper in `database.py`, grouped by responsibility: connection lifecycle, cross-database sync, scan facades, repository delegations, mixed application queries, game/set reads, filter composition, status.db play history, emulator config. Records tables, read/write behaviour, connection/transaction ownership, callers, result shapes, and the recommended future owner of each method. Referenced by method name (no line numbers). |
 | [`row_factory_audit.md`](row_factory_audit.md) | Result-shape and row-access audit: which connections are `sqlite3.Row` vs default tuples, which methods/callers use positional vs named row access (including mixed-style consumers), the implicit public contracts, and the staged strategy — now including the implemented `sqlite3.Row` input requirement for repositories (step 4.2b, done) and the fixed row-leak closure step (4.8). Read-only; nothing was converted by the audit itself. |
-| [`roadmap.md`](roadmap.md) | Prioritised, incremental implementation plan: boundary checks (4.0), decided removals (4.2a), the `sqlite3.Row` contract (4.2b), repository extensions (4.3-4.6), the history/legacy-file migration (4.6.1, implemented) and the screensaver history (4.6.2, planned), the filter service (4.7), row-leak closure (4.8) and the database.py reorganisation proposal (4.9) — what each step extracts, contract, required tests, dependencies, risk, acceptance criteria, and what deliberately stays in `DBMod`. |
+| [`roadmap.md`](roadmap.md) | Prioritised, incremental implementation plan: boundary checks (4.0), decided removals (4.2a), the `sqlite3.Row` contract (4.2b), repository extensions (4.3-4.6), the history/legacy-file migration (4.6.1, implemented) and the screensaver history (4.6.2, implemented), the filter service (4.7), row-leak closure (4.8) and the database.py reorganisation proposal (4.9) — what each step extracts, contract, required tests, dependencies, risk, acceptance criteria, and what deliberately stays in `DBMod`. |
 | [`history_persistence_audit.md`](history_persistence_audit.md) | **Implemented (2026-10-18).** Phase 4.6.1a: the GUI `lastgames.txt` contract (path, format, ordering, pointer, five insert sites, exit-only save defect, failure handling) and the `filter_*.txt` contract (five-line format, id-string values, Load/Save dialogs, crash/silent-failure modes) with every call site; the precise `load_lastsaver()` status (live but always-empty consumer, no writer ever existed — not an import source); the screensaver lifecycle and the decided display boundaries (D16: images post-render, videos `onAVStarted`); four purpose-specific `status.db` tables covered by **one** `PRAGMA user_version` migration; the **one-time import + cleanup sequence** (per-file all-or-nothing validation, commit-before-delete, terminal marker states `completed`/`completed_discards`/`completed_no_source`/`failed`, no-reimport, cleanup-only recovery, unknown-file preservation); the verified Core userdata inventory; the Core/Kodi boundary, facade API and notification; the dependency on Phase 4.7, the confirmed 4.7 → 4.6.1 → 4.6.2 ordering (D11); and the six questions Q1–Q6 — **resolved 2026-10-18 as decisions D12–D19** (recorded in §1.1 and §16 of that document, including `gui_lastgames` retention of **100** and the strict five-line filter rule of D14), with the §16.2 Kodi-runtime verification items checked during implementation. |
 
 ## Phase checklist
@@ -351,12 +351,15 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 
 ### Planned, not implemented (see `history_persistence_audit.md`)
 
-- [ ] Step 4.6.2 — screensaver display history writes into the same migration's
+- [x] Step 4.6.2 — screensaver display history writes into the same migration's
   `screensaver_history` table (feature starts empty; hooks at the render /
   `onAVStarted` boundaries). **Resolved by D16:** unique sets with recency move-up (one
   row per `set_id`, `software_id` alongside), ordered by monotonic `id`, images recorded
   post-render, videos on `Player.onAVStarted()` via the `umsa_set_id` unique ID
-  (Kodi 20+ guard), orphans kept and reported.
+  (Kodi 20+ guard), orphans kept and reported. **Done** (2026-10-19, in the working tree:
+  `HistoryRepository.record_screensaver_display`/`list_screensaver_history`, the `DBMod`
+  facades and the `ui.py` `Saver.record_display` / `Player.onAVStarted` hooks; no schema
+  change, `user_version` stays 1; new tests 51 + 52, full suite **819 passed**).
 - Note: `load_lastsaver()` stays untouched legacy read-side code with one live but
   always-empty consumer (`M_LSSAVER`); no writer of `lastsaver.txt` exists in any
   revision — it is **not** an import source, and a stray `lastsaver.txt` would be an
@@ -392,10 +395,12 @@ D18 recovery semantics. Its design questions **Q1–Q6 are resolved as D12–D19
 with the §16.2 Kodi-runtime items verified during implementation. Its ordering
 **4.7 → 4.6.1 → 4.6.2** holds — the migration depended on **Phase 4.7**, now satisfied
 (persisted selections are consumed by `define_filter`, whose explicit-state
-composition 4.7 delivered). **Step 4.6.2** (screensaver display history writes) is the
-next implementation step; it proceeds independently of the completed 4.2–4.7 chain.
+composition 4.7 delivered). **Step 4.6.2** (screensaver display history writes) **is
+implemented** (2026-10-19, in the working tree — no schema change; new tests 51 + 52, full
+suite **819 passed**, 5 skipped, 18 subtests passed); it proceeded independently of the
+completed 4.2–4.7 chain.
 Steps 4.0, 4.2, 4.2a, 4.2b,
-4.3, 4.4, 4.5-pre, 4.5, 4.6, 4.7 and 4.6.1 are done.
+4.3, 4.4, 4.5-pre, 4.5, 4.6, 4.7, 4.6.1 and 4.6.2 are done.
 See [`roadmap.md`](roadmap.md) for the full contracts.
 
 ## Boundary guards (step 4.0 implemented)

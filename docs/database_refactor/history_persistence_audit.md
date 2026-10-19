@@ -320,8 +320,9 @@ source):
   runtime (`onAVStarted` is annotated `@python_v18`, i.e. Kodi ≥ 18 — verified against
   Kodistubs 21.0.0 and the Kodi **21.3 (Omega)** on this machine); orphan `set_id`s kept
   and reported, never substituted. The **mechanism for carrying `set_id` on a video** is
-  the video unique-ID API — `InfoTagVideo.setUniqueID('umsa_set_id', …)` written on the
-  playlist ListItem and read back as `getUniqueID('umsa_set_id')` — which is `@python_v20`
+  the video unique-ID API — `InfoTagVideo.setUniqueID(str(set_id), 'umsa_set_id')`
+  (value first, type second) written on the playlist ListItem and read back with
+  `getUniqueID('umsa_set_id')` — which is `@python_v20`
   and therefore guarded with a capability check: on a Kodi older than 20 the set id cannot
   be carried, video displays are then not recorded (logged), while the existing
   `Votes`-based software-id handoff keeps working unchanged. See 16.2 for what that
@@ -417,6 +418,11 @@ CREATE TABLE IF NOT EXISTS screensaver_history (
 - `displayed_at` is advisory only — ordering is the monotonic `id`, so no clock
   dependency.
 - No import, ever — starts empty (D2).
+- **Status (4.6.2 implemented):** the write/retention contract above lives in
+  `HistoryRepository.record_screensaver_display` (`SCREENSAVER_HISTORY_LIMIT = 100`, the
+  delete + re-insert + prune triple inside one `SAVEPOINT`), read back by
+  `list_screensaver_history` `ORDER BY id DESC`; `DBMod` exposes both through
+  `record_screensaver_display`/`get_screensaver_history`.
 
 ### 6.4 `status_meta` — durable import marker
 
@@ -783,13 +789,13 @@ earlier, but that option is no longer part of the plan.
 
 ---
 
-## 15. Implementation and regression-test plan (later task — not executed)
+## 15. Implementation and regression-test plan (executed — items 1–6 landed, 7 verified)
 
 **Preconditions (D11):** Phase 4.7 has landed with its existing scope and acceptance
 criteria (text-file persistence untouched — committed through `bd83a4d`), and Q1–Q6 are
-resolved and recorded as D12–D19 (section 1.1) and in section 16. The only remaining
-pre-implementation checks are the Kodi-runtime verifications in 16.2, which are performed
-*while* implementing. Then, ordered and characterisation-first, none of it done now:
+resolved and recorded as D12–D19 (section 1.1) and in section 16. The Kodi-runtime
+verifications in 16.2 were performed *while* implementing. The steps below were
+characterisation-first; items 1–5 are the 4.6.1 migration/import work and item 6 is 4.6.2:
 
 1. **Migration module** — `status_migrations.py`, single `MIGRATIONS = {1: ...}`
    calling the three `create_*` helpers; swap the call site; tests: fresh DB (all seven
@@ -822,14 +828,23 @@ pre-implementation checks are the Kodi-runtime verifications in 16.2, which are 
    (`gui.py:1311-1313`), `retry_import` command wired beside `del_db`/`del_status`
    (`addon.py:18-37`), notification at startup. `tests/test_persistence.py`'s pinned
    file behaviours stay green — the helpers remain for the import path.
-6. **Screensaver history (4.6.2)** — repository methods plus the boundary hooks: record
-   after the render block for images (`ui.py:454-571`, before the wait loop — D15/D16),
-   record in `Player.onAVStarted()` for videos with the `set_id` carried through the
-   `umsa_set_id` unique ID (guarded for Kodi < 20), orphan rows reported and never
-   substituted, context-menu software id unchanged.
+6. **Screensaver history (4.6.2) — ✅ implemented.** `HistoryRepository.record_screensaver_display`
+   / `list_screensaver_history` (Kodi-free) behind the `DBMod.record_screensaver_display` /
+   `get_screensaver_history` facades, plus the boundary hooks in `ui.py`: `Saver.record_display`
+   is called once after the completed cross/slide/wall render block and before the wait loop
+   (`normalize_set_id` → `record_screensaver_display`; a missing/invalid id or any DB failure is
+   logged and never breaks rendering), and `Player.onAVStarted()` records for videos with the
+   `set_id` carried through the `attach_set_id`/`read_set_id` `umsa_set_id` unique ID (value
+   first: `setUniqueID(str(set_id), 'umsa_set_id')`), capability-guarded for Kodi < 20 via
+   `hasattr` (video displays then logged, not recorded, and nothing faked); `read_software_id`
+   keeps the `Votes`-based handoff unchanged. Orphan rows are reported and never substituted.
+   Tests: `tests/test_screensaver_history_repository.py` (51) and
+   `tests/test_screensaver_history_hooks.py` (52).
 7. Full suite + per-file ruff/mypy comparisons. No Kodi-runtime automation exists
    (`AGENTS.md`) — GUI/screensaver behaviour is verified manually, including the 16.2
-   items.
+   items. Full suite after 4.6.2: **819 passed**, 5 skipped, 18 subtests passed; new files
+   add no ruff findings (per-file comparison against the HEAD baseline), and the
+   pre-existing `ui.py`/`database.py` findings are unchanged.
 
 No test is added or modified by this document.
 
@@ -902,7 +917,8 @@ Not design decisions — checked while implementing, on a real Kodi (this machin
    `playnext()` advances the playlist, so exactly one record is written per displayed
    video (the callback exists since Kodi 18; `ui.py` currently uses only
    `onPlayBackStarted`/`onPlayBackEnded`, `ui.py:712`, `:773`).
-2. **Unique-ID round-trip** — `setUniqueID('umsa_set_id', …)` on the playlist ListItem
+2. **Unique-ID round-trip** — `setUniqueID(str(set_id), 'umsa_set_id')` (value first,
+   type second) on the playlist ListItem
    must read back as `getUniqueID('umsa_set_id')` from `Player.getVideoInfoTag()` during
    playback; both are `@python_v20`, so the capability guard must degrade cleanly on
    Kodi 19 (video displays then not recorded; the `Votes`-based software-id handoff at
@@ -947,3 +963,15 @@ the step 4.6.1a entry and execution-order note in `roadmap.md`, the checklist / 
 / next-step / validation entries in `README.md`. The D11 ordering **4.7 → 4.6.1 → 4.6.2**
 holds with 4.7 and 4.6.1 complete; 4.6.2 (screensaver history) remains, with the 16.2
 checks verified during implementation on this machine.
+
+**Step 4.6.2 (2026-10-19, in the working tree):** the screensaver display-history writes
+are now implemented on top of the 4.6.1 schema with **no new migration and no schema
+change** — `HistoryRepository.record_screensaver_display`/`list_screensaver_history`
+(Kodi-free), the `DBMod` facades `record_screensaver_display`/`get_screensaver_history`,
+and the `ui.py` boundary hooks (`Saver.record_display` for cross/slide/wall after the
+render block; `Player.onAVStarted()` for videos via the `umsa_set_id` unique ID, Kodi < 20
+guarded) — see section 15 item 6. New tests: `tests/test_screensaver_history_repository.py`
+(51 passed) and `tests/test_screensaver_history_hooks.py` (52 passed); full suite
+**819 passed**, 5 skipped, 18 subtests passed, with the new files adding no ruff findings.
+The section 16.2 items were re-checked while implementing; the `setUniqueID` argument order
+is documented correctly now (value first, type second) in sections 5 and 16.2.
