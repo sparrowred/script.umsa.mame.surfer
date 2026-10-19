@@ -254,7 +254,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # list for last selected games, only saves the software id
         self.last = []
         # pointer for last selected games list
-        self.lastptr = 9
+        self.lastptr = 0
         # old search
         self.searchold = None
         # diff emu toggle
@@ -381,6 +381,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # fill with random software if not 10
         while len(self.last) < 10:
             self.last.append(self.ggdb.get_random_id())
+        # initialize pointer to the newest entry
+        self.lastptr = len(self.last) - 1
         # select software
         if self.initial_software_id is None:
             self.select_software(self.last[self.lastptr])
@@ -462,6 +464,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         self.lastptr += 1
         self.last.insert(self.lastptr, software_id)
+        # Cap in-memory history at 100 entries to match persistent storage limit.
+        # If we removed an entry before the current pointer, adjust the pointer.
+        if len(self.last) > 100:
+            del self.last[0]
+            self.lastptr -= 1
         if not self.select_software(software_id):
             del self.last[self.lastptr]
             self.lastptr -= 1
@@ -1938,7 +1945,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def software_move(self, direction):
         """Get next random software or move one back in history"""
 
-        if direction == 'left' and self.lastptr >= 1:
+        # The navigable window is the latest 10 entries (or fewer if history is smaller)
+        nav_start = max(0, len(self.last) - 10)
+
+        if direction == 'left' and self.lastptr > nav_start:
             self.lastptr -= 1
             self.select_software(self.last[self.lastptr])
             return
