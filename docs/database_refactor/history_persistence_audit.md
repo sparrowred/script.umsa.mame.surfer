@@ -1,11 +1,17 @@
 # Phase 4.6.1a — `status.db` history & legacy-file migration: audit and plan
 
-**Status: PLANNED — NOTHING IMPLEMENTED.** No production code, schema, migration, test or
-user file was changed by this audit or by this document. **The design questions Q1–Q6 are
-resolved** — the maintainer's phase brief answered Q1, Q3, Q4 and Q5, the follow-up
-decisions answered Q2 and Q6, and both are recorded as **D12–D19** (section 1.1) plus the
-per-section updates. What remains open is limited to **Kodi-runtime verification items**
-(section 16.2), which are not design decisions and cannot be settled by code inspection.
+**Status: IMPLEMENTED (2026-10-18).** The design questions Q1–Q6 are **resolved** — the
+maintainer's phase brief answered Q1, Q3, Q4 and Q5, the follow-up decisions answered Q2
+and Q6, and both are recorded as **D12–D19** (section 1.1) plus the per-section updates —
+and the production work described here has since landed:
+`status_migrations.py` (versioned `status.db` migration, `user_version` 0→1),
+`history_repository.py` (four tables + lastgames/filter/marker persistence),
+`history_import.py` (discovery, strict validation, one-time import, cleanup, `retry_import`),
+the `DBMod` facades, the GUI startup wiring and the `retry_import` script command. Two
+wording changes were made while implementing: the `filter_<name>.txt` line-count rule is
+now **strict** (D14, corrected below) and the file-level recovery semantics follow D18.
+What remains open is limited to the manually verified **Kodi-runtime items** (section
+16.2), which are not design decisions and cannot be settled by code inspection.
 
 **Scope of this update:** the finalized direction for moving three related but distinct
 concepts into `status.db`, all under **one** versioned schema migration, followed by
@@ -33,10 +39,12 @@ re-checked against that tree, the runtime facts in sections 5 and 16.2 were re-c
 against the installed Kodi **21.3 (Omega)** and Kodistubs 21.0.0, and the profile inventory
 in section 12 was re-read (unchanged).
 
-Scope restrictions that bound this document: documentation/audit updates only; no
-production-code changes; no migrations or schema changes; no tests added or modified; no
-deletion or rewriting of actual user files; no implementation of the screensaver
-history; no Phase 4.7 work.
+Scope restrictions that bound this document as an **audit/plan**: documentation-only
+changes; no production-code changes attributed to the audit itself; no migrations or
+schema changes from the audit; no tests added or modified by the audit; no deletion or
+rewriting of actual user files; no implementation of the screensaver history (4.6.2); no
+Phase 4.7 work. The subsequent implementation in this phase changed production code as
+described above; this document records the decided rules it followed.
 
 ---
 
@@ -71,7 +79,7 @@ new binding rules. Every row is a *decision*, not a proposal.
 |---|---|
 | **D12** | **History entries exist only after a successful display (Q1 resolved).** A lastgames entry is appended **only once `select_software` has succeeded** — the early return (`gui.py:2038-2043`) must leave neither an in-memory nor a persisted entry, so the insert-and-advance currently done by the five call sites (and by `software_move`'s append) moves into `select_software`'s success funnel (or `select_software` must report success to its callers; it returns `None` on both paths today, `gui.py:2186`). **Repeated display events stay separate entries** — duplicates are preserved, no dedup. Order stays file order (index 0 = oldest, newest = resume point) and the pointer behaviour of `software_move` is unchanged: the established navigation semantics must not change. |
 | **D13** | **Token validation: strip, then decimal digits (Q2, token half).** Every candidate id token is whitespace-stripped and must then be a non-empty decimal-integer string (`^[0-9]+$`). Whitespace around ids is accepted (matching today's `int()` semantics in `load_software_list`, `persistence.py:91`), so a hand-edited `"12, 34"` is **not** a data loss. A token that is not a decimal integer after stripping, or undecodable bytes, makes the **whole file** malformed → discarded whole, recorded as a warning, still deleted after the commit (D3/D5). |
-| **D14** | **Line count is not a validity criterion (Q2, line half) — today's tolerance kept.** `lastgames.txt`: line 1 is the data, any further lines are **ignored, unreported** (today's reader only calls `readline()`); a zero-byte file *or* an empty first line means **no entries**. `filter_<name>.txt`: lines map **positionally** onto the five categories, extra lines are **ignored, unreported** (today's reader stops after five), and **missing trailing lines count as empty categories** (today's reader raises `IndexError`, `persistence.py:36` — a crash the import must not inherit). Empty lines and empty categories stay valid. Files we ship can only ever contain one line / five lines (`save_software_list`, `save_filter`), so tolerance only ever affects hand-edited input, and never partially reinterprets it. |
+| **D14** | **Filter line count is a validity criterion — strict five-line rule (Q2, line half; supersedes the earlier "tolerance kept" wording).** `lastgames.txt`: line 1 is the data, any further lines are **ignored, unreported** (today's reader only calls `readline()`); a zero-byte file *or* an empty first line means **no entries**. `filter_<name>.txt`: the file must contain **exactly five logical lines**, mapping positionally onto the five categories in the order `Softwarelists`, `Game Categories`, `Machine Categories`, `Years`, `Players`; lines may be empty (an empty line is an empty category). A single trailing newline does not add a sixth logical line. **A file with any other line count (fewer or more than five) is malformed and discarded whole** — the import never pads missing categories and never ignores extras (so the legacy `IndexError` on shorter files is neither inherited nor silently reinterpreted). Every non-empty line is a comma-separated list of decimal-integer id tokens, each whitespace-stripped; a non-decimal or undecodable token discards the whole file (D13). Files we ship always contain exactly five lines (`save_filter`), so strictness only ever affects hand-edited input, and it never partially imports one. |
 | **D15** | **No new runtime-state persistence (Q3 resolved).** `act_filter` (the active filter *name*), `use_filter` and `order` are **not** persisted — verified they are not persisted today either (`database.py:280-281`, `gui.py:345-346`), so adding them would visibly change what the GUI shows on the next start. Only the five selections per named filter move into `filter_selections`. The **public Core API dictionary keys stay exactly as they are** (`"Softwarelists"`, `"Game Categories"`, `"Machine Categories"`, `"Players"`, `"Years"` — `persistence.py:13-19`); the database may store the **internal** keys `softwarelists`, `game_categories`, `machine_categories`, `years`, `players` **with an explicit, documented mapping table** used on read and write (verified: the dict-literal order at `persistence.py:13-19` differs from the file-line order at `persistence.py:29-35` — `Players`/`Years` are swapped — so the mapping is by *name*, never by position). The Load/Save Filter dialog keeps offering exactly the imported names (replacing the `os.listdir` scan with `list_filter_names()` changes nothing visible). |
 | **D16** | **Screensaver history semantics (Q4 resolved).** Records are keyed by **`set_id`** (the `sets.id` that `get_random_art` returns as `art['id']`, `database.py:908`); the **software id is stored alongside** (`art['s_id']` = `sets.softwarelink_id`) and stays the value the context-menu handoff uses today (`ui.py:192-195`, `ui.py:143`). Bound: **at most 100 distinct sets, ordered by most recent successful display**; re-displaying a set moves its single row to the newest position (only the newest copy is retained) — i.e. one row per set, not an event log; rows are pruned past the newest 100 inside the same savepoint as the write. **Images** are recorded only after the iteration's controls have been populated — immediately after the render block (`ui.py:454-571`), **before** the wait loop — because `remember_art` fires before the bad-image rejection (`ui.py:435` vs `ui.py:444-446`) and is therefore not a boundary. **Videos** are recorded only once the stream is available, in `Player.onAVStarted()` (verified present in Kodistubs 21.0.0, annotated `@python_v18`, so available on every Kodi the add-ons support) — not in `onPlayBackStarted`, and never at enqueue time. **Orphan `set_id` rows are never silently substituted:** if the set no longer resolves in `umsa.db` (`get_info_by_set_and_swl` raises `TypeError` on no match, `game_repository.py:482-484`), the row is kept, the handoff is refused with a logged + notified "set no longer available", and no other set is shown instead. |
 | **D17** | **Deletion scope (Q5 resolved).** Only `lastgames.txt` and validated `filter_*.txt` are ever deleted (D6). `lastsaver.txt` — for which **no writer exists in any revision**, only `load_lastsaver` + its single consumer (`gamelist_strategies.py:153`) — and every other unknown file are **preserved and reported to the maintainer**, never added to the cleanup scope by name-guessing. |
@@ -166,7 +174,8 @@ question.
 
 The import (section 8) must therefore not reuse the crash-prone path blindly: a file with
 a non-integer token becomes a **discarded input with a warning** (D13), never a startup
-failure, while line-count irregularities are tolerated rather than discarded (D14).
+failure. For `lastgames.txt` the first line is the data and later lines are ignored (D14);
+for `filter_<name>.txt` a wrong line count is a **discard**, not a tolerated repair (D14).
 
 ---
 
@@ -194,8 +203,8 @@ failure, while line-count irregularities are tolerated rather than discarded (D1
   `define_filter` (`database.py:1212`, a one-line facade over `gamelist_filter.py` since step 4.7) feeds them into
   `swl.id IN (...)`, `category.id IN (...)`, `nplayers.id IN (...)`, `year.id IN (...)`.
   Values are therefore effectively decimal integers, and the import validates exactly
-  that: strip, then `^[0-9]+$`, whole file discarded otherwise (**D13**); line count is
-  not validated (**D14**).
+  that: strip, then `^[0-9]+$`, whole file discarded otherwise (**D13**); the file must
+  also hold **exactly five logical lines**, otherwise it is discarded whole (**D14**).
 
 ### 3.2 Discovery, load and save call sites
 
@@ -477,7 +486,7 @@ each file validated as a unit:
 | Source | Valid shape (decided) | On failure |
 |---|---|---|
 | `lastgames.txt` | decodable text; **line 1 is the data** (further lines ignored, unreported); every token whitespace-stripped and then a non-empty decimal integer; empty file or empty first line = **no entries** (not malformed) | a non-integer token or undecodable bytes → **whole file discarded**, warning recorded, still counted as a recognized input for deletion (D5) |
-| `filter_<name>.txt` | decodable text; lines map **positionally** onto the five categories (extra lines ignored unreported, missing trailing lines = empty categories); each non-empty line: tokens whitespace-stripped and then non-empty decimal integers; name part passes `filter_file()` validation (`data_paths.py:60-65`) | a non-integer token or undecodable bytes → same: **whole file discarded** + warning + still deleted afterwards |
+| `filter_<name>.txt` | decodable text; **exactly five logical lines** mapping positionally onto the five categories (an empty line = empty category; one trailing newline is not a sixth line; wrong line count → malformed); each non-empty line: tokens whitespace-stripped and then non-empty decimal integers; name part passes `filter_file()` validation (`data_paths.py:60-65`) | a wrong line count, a non-integer token or undecodable bytes → same: **whole file discarded** + warning + still deleted afterwards |
 
 Why this shape (both halves were open as Q2):
 
@@ -485,11 +494,12 @@ Why this shape (both halves were open as Q2):
   `save_software_list`), and today's lastgames loader already accepts spaces via `int()`
   (`persistence.py:91`) — so strip-then-validate imports every hand-edited file that
   today's loaders would accept, and rejects only what cannot be an id.
-- **Line count (D14):** both loaders are tolerant today (first line only; five lines,
-  extras ignored) and the tolerance decision keeps that — no file that today's code would
-  *read* is turned into a *discard* by line count alone. This deliberately does **not**
-  mean "discard anything shorter/longer than the writers emit"; only token errors and
-  decode errors discard a file.
+- **Line count (D14):** `lastgames.txt` keeps the legacy first-line-only tolerance
+  (further lines ignored, unreported). `filter_<name>.txt` is **strict**: exactly five
+  logical lines are required, because a positional category mapping with missing or extra
+  lines cannot be interpreted unambiguously — padding or ignoring lines would silently
+  invent or drop categories. A wrong line count therefore discards the whole file (no
+  partial import); token and decode errors discard a file in the same way.
 
 Deliberately **not** validated: whether an id still exists in `umsa.db`
 (`umsa.db` may be absent or being re-downloaded at first startup; ids are opaque
@@ -749,13 +759,15 @@ pre-implementation checks are the Kodi-runtime verifications in 16.2, which are 
    move-up on re-display, prune past 100 — D16), marker read/write; Row-contract
    rejection; savepoint ownership.
 3. **Import + validation** — valid lastgames (order preserved), valid filters, a token
-   with surrounding whitespace (accepted and normalised — D13), extra lines in either
-   file (ignored, unreported — D14), a non-integer token or undecodable bytes in file A
-   alongside valid file B (B imported, A discarded + recorded), an empty/short filter
-   file (imported as empty categories), all-empty (→ `completed_no_source`),
-   marker-present re-run (no-op, DB state kept), recorded failure → `failed` + no
-   deletion + **no** auto-retry on the next simulated startup, uncommittable outcome →
-   no marker + retry on the next simulated startup with **no fallback file** (D18).
+   with surrounding whitespace (accepted and normalised — D13), extra lines in
+   `lastgames.txt` (ignored, unreported — D14), a `filter_<name>.txt` with the wrong
+   line count (discarded whole — D14, never padded or truncated), a non-integer token or
+   undecodable bytes in file A alongside valid file B (B imported, A discarded +
+   recorded), an empty five-line filter file (imported as empty categories), all-empty
+   (→ `completed_no_source`), marker-present re-run (no-op, DB state kept), recorded
+   failure → `failed` + no deletion + **no** auto-retry on the next simulated startup,
+   uncommittable outcome → no marker + retry on the next simulated startup with **no
+   fallback file** (D18).
 4. **Cleanup** — deletion after commit; interrupted deletion → cleanup-only path;
    un-deletable file → path recorded and reported; **unknown files untouched**
    (assert a `lastsaver.txt` and a stray `.txt` survive every path) — D17.
@@ -797,11 +809,11 @@ with its binding decision and the evidence behind it. Nothing below is a proposa
 - **Q2 — Validation strictness → D13 (tokens) + D14 (line count).** Tokens: strip, then
   `^[0-9]+$` — anything else discards the whole file, recorded and deleted after commit,
   which keeps the brief's all-or-nothing rule exactly where a value cannot be an id.
-  Line count is **not** validated: the maintainer's follow-up decision was "keep today's
-  tolerance", so the first line carries `lastgames.txt`, filter lines map positionally
-  with missing trailing lines padded as empty categories, and extra lines are ignored
-  unreported. No file that today's loaders would read becomes a discard; a non-integer
-  token or undecodable bytes still does.
+  Line count: `lastgames.txt` keeps the legacy first-line-only tolerance (further lines
+  ignored, unreported), but `filter_<name>.txt` must have **exactly five logical lines** —
+  a wrong count discards the whole file (never padded, never truncated) because the
+  positional category mapping cannot be repaired without inventing or dropping
+  categories. A non-integer token or undecodable bytes discards a file in every case.
 - **Q3 — Filter semantics beyond the files → D15.** Verbatim id strings, value order via
   `position`, empty category / empty file / missing file ≡ no rows, `filter_name` =
   filename part — all as decided. The **active filter name, `use_filter` and `order` are
@@ -881,9 +893,13 @@ were restated from proposals into decided rules, line references were re-checked
 `bd83a4d`, and the remaining open work is limited to the Kodi-runtime verifications in
 **16.2** (tested while implementing, this machine runs Kodi 21.3 with Kodistubs 21.0.0).
 
-**Nothing implemented:** no production code, no schema, no migration, no tests, no user
-file was deleted, renamed or rewritten — the real profile listed in section 12 was opened
-**read-only**. Companion updates in this directory: the step 4.6.1a entry and
-execution-order note in `roadmap.md`, the checklist / documents / next-step / validation
-entries in `README.md`. The D11 ordering **4.7 → 4.6.1 → 4.6.2** holds with 4.7 complete;
-4.6.1 may start, with the 16.2 checks folded into its implementation task.
+**Implementation (2026-10-18):** the production work is now in place — the versioned
+migration, the history repository, the legacy importer/cleanup/`retry_import`, the `DBMod`
+facades, the GUI startup wiring and the `retry_import` script command — with the strict
+filter line-count rule (D14) and the D18 recovery semantics. During the audit itself
+nothing was implemented: the real profile listed in section 12 was opened **read-only**,
+and no user file was deleted, renamed or rewritten. Companion updates in this directory:
+the step 4.6.1a entry and execution-order note in `roadmap.md`, the checklist / documents
+/ next-step / validation entries in `README.md`. The D11 ordering **4.7 → 4.6.1 → 4.6.2**
+holds with 4.7 and 4.6.1 complete; 4.6.2 (screensaver history) remains, with the 16.2
+checks verified during implementation on this machine.

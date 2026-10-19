@@ -41,7 +41,7 @@ from .artwork_scanner import ArtworkScanner
 from .data_paths import CoreDataPaths
 from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
-from .emulator_repository import EmulatorRepository, create_emulator_tables
+from .emulator_repository import EmulatorRepository
 from .game_repository import GameRepository
 from .gamelist_filter import GamelistFilter
 from .gamelist_filter import category_query as _category_query
@@ -54,10 +54,15 @@ from .gamelist_filter import source_query as _source_query
 from .gamelist_filter import swl_query as _swl_query
 from .gamelist_filter import year_query as _year_query
 from .gb64_scanner import GB64Scanner
+from .history_repository import HistoryRepository
+from .history_import import discover_legacy_paths as _discover_legacy_paths
+from .history_import import retry_import as _retry_import
+from .history_import import run_legacy_import as _run_legacy_import
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite, connect_sqlite_readonly
-from .status_repository import StatusRepository, create_status_tables
+from .status_migrations import apply_migrations
+from .status_repository import StatusRepository
 
 def _core_data_paths(db_path):
     """Adapt legacy database-directory arguments to explicit Core paths."""
@@ -320,12 +325,14 @@ class DBMod:
         # defines filter with self.filter_tables, self.filter_where
         self.define_filter(filter_lists)
 
-        # create db layout (first run); the schemas live with their
-        # repositories (sets → status_repository, emu/emu_conn →
-        # emulator_repository), both helpers called here (steps 4.5/4.6)
-        create_status_tables(self.sdbc)
-        create_emulator_tables(self.sdbc)
-        self.sdb.commit()
+        # create/upgrade the status.db layout (first run and future
+        # versions); the schemas live with their repositories (`sets` →
+        # status_repository, `emu`/`emu_conn` → emulator_repository, the
+        # history/meta tables → history_repository) and the single
+        # `PRAGMA user_version` migration in `status_migrations` declares
+        # them in one transaction (steps 4.5/4.6/4.6.1). Migration failure
+        # propagates and leaves the connection in its pre-migration state.
+        apply_migrations(self.sdb)
 
     def open_db(self, db_path):
         """Reopen umsa database, needed after update of umsa.db
@@ -776,6 +783,16 @@ class DBMod:
 
         return EmulatorRepository(self.sdb)
 
+    def _get_history_repository(self):
+        """Return a history repository bound to the current status.db connection.
+
+        Created per call (never cached) so it can never hold a reference to a
+        connection that has since been replaced. It never owns or closes
+        ``self.sdb``.
+        """
+
+        return HistoryRepository(self.sdb)
+
     def add_art_to_db(self, db_path):
         """add artwork to database
 
@@ -1171,6 +1188,53 @@ class DBMod:
         """Delete emulator and all connections"""
 
         return self._get_emulator_repository().delete_emulator(emu_id)
+
+    def load_lastgames(self):
+        """Return the persisted GUI backward-navigation history (oldest first)."""
+
+        return self._get_history_repository().load_lastgames()
+
+    def save_lastgames(self, software_list):
+        """Persist the newest 100 GUI history ids (oldest to newest)."""
+
+        self._get_history_repository().save_lastgames(software_list)
+
+    def list_filter_names(self):
+        """Return the names of all saved (database-backed) filters."""
+
+        return self._get_history_repository().list_filter_names()
+
+    def load_filter_selections(self, filter_name):
+        """Return a saved filter's selections keyed by public category label."""
+
+        return self._get_history_repository().load_filter_selections(filter_name)
+
+    def save_filter_selections(self, filter_name, filter_lists):
+        """Atomically replace all persisted selections for ``filter_name``."""
+
+        self._get_history_repository().save_filter_selections(
+            filter_name, filter_lists
+        )
+
+    def get_import_marker(self):
+        """Return the durable legacy-import marker dict, or ``None``."""
+
+        return self._get_history_repository().get_import_marker()
+
+    def run_legacy_import(self):
+        """Run the one-time legacy import via the configured Core paths."""
+
+        return _run_legacy_import(self.sdb, self.db_paths)
+
+    def retry_legacy_import(self):
+        """Clear a recorded failure and re-run the legacy import once."""
+
+        return _retry_import(self.sdb, self.db_paths)
+
+    def discover_legacy_paths(self):
+        """Return the recognized legacy import paths ``(lastgames, filters)``."""
+
+        return _discover_legacy_paths(self.db_paths)
 
     def write_status_after_play(self, set_id, played_seconds):
         """Update play status for set id

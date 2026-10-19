@@ -26,12 +26,8 @@ from umsa_core import (
     check_image_aspect,
     find_local_snapshots,
     get_machine_artwork_path,
-    load_filter,
-    load_software_list,
     log,
     parse_vgm_header,
-    save_filter,
-    save_software_list,
     set_log,
 )
 from umsa_core.database import (
@@ -174,6 +170,20 @@ SUBMENU_ORDER = {
     M_ALL: 0, M_SERIES: 1, M_MAKER: 2, M_CAT: 3, M_REC: 4, M_YEAR: 5, M_PLAYERS: 6,
     M_SWL: 7, M_SOURCE: 7, M_SSAVER: 8, M_PLAYSTAT: 9
 }
+
+# public filter category labels in writer/file order
+FILTER_CATEGORY_KEYS = (
+    "Softwarelists",
+    "Game Categories",
+    "Machine Categories",
+    "Years",
+    "Players",
+)
+
+def empty_filter_lists():
+    """Return a fresh filter dict with all five categories empty."""
+
+    return {key: [] for key in FILTER_CATEGORY_KEYS}
 
 def create_gui_element_from_snap(set_info, image, art_type='unset'):
     """Return a Kodi list item for a snapshot."""
@@ -340,10 +350,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if not hasattr(self, 'vgm_monitor'):
             self.vgm_monitor = VgmCommandMonitor(self)
 
-        # load filters
-        self.filter_lists = load_filter(CORE_DATA_PATHS.filter_file())
+        # filters are loaded from status.db after the database is open and the
+        # one-time legacy import has run (the migration runs at DBMod open)
+        self.filter_lists = empty_filter_lists()
         self.act_filter = 'default'
-        self.getControl(FILTER_LABEL2).setLabel(f'Filter: {self.act_filter}')
 
         # fill filter lists
         list_items = []
@@ -361,8 +371,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.scan_thread = Thread(target=self.update('dat'))
             self.scan_thread.start()
 
+        # one-time legacy import + load persisted filter selections and history
+        self.run_startup_import()
+        self.filter_lists = self.ggdb.load_filter_selections(self.act_filter)
+        self.ggdb.define_filter(self.filter_lists)
+        self.getControl(FILTER_LABEL2).setLabel(f'Filter: {self.act_filter}')
+
         # load last internal software list
-        self.last = load_software_list(CORE_DATA_PATHS.lastgames_file)
+        self.last = self.ggdb.load_lastgames()
         # fill with random software if not 10
         while len(self.last) < 10:
             self.last.append(self.ggdb.get_random_id())
@@ -370,9 +386,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if self.initial_software_id is None:
             self.select_software(self.last[self.lastptr])
         else:
-            self.lastptr += 1
-            self.last.insert(self.lastptr, self.initial_software_id)
-            self.select_software(self.initial_software_id)
+            self._remember_and_select(self.initial_software_id)
 
         xbmc.log("UMSA gui: onInit: done")
         xbmc.log(f"UMSA gui: PDF Reader import: {KODIPDF}")
@@ -381,6 +395,74 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if self.quit:
             self.close()
             return
+
+    def run_startup_import(self):
+        """Run the one-time legacy import and report its outcome.
+
+        The migration itself already ran at `DBMod` open; this only drives the
+        import/cleanup and the user notification. A failure here never aborts
+        startup: an unrecorded failure retries on the next start by design,
+        and a recorded `failed` marker is only cleared by `retry_import`.
+        """
+
+        try:
+            result = self.ggdb.run_legacy_import()
+        except Exception as exc:
+            xbmc.log(f"UMSA gui: legacy import failed: {exc}", xbmc.LOGERROR)
+            self.dialog.notification(
+                'UMSA migration',
+                'Legacy data import failed, will retry on next start.',
+                xbmcgui.NOTIFICATION_ERROR, 5000, False)
+            return
+
+        xbmc.log(f"UMSA gui: legacy import result: {result.status}")
+        if result.status == 'completed':
+            self.dialog.notification(
+                'UMSA migration', 'History and filters migrated.',
+                xbmcgui.NOTIFICATION_INFO, 4000, False)
+        elif result.status == 'completed_discards':
+            self.dialog.notification(
+                'UMSA migration',
+                'Migrated, discarded: ' + ', '.join(result.discarded),
+                xbmcgui.NOTIFICATION_WARNING, 6000, False)
+        elif result.status == 'completed_no_source':
+            self.dialog.notification(
+                'UMSA migration', 'Nothing to migrate.',
+                xbmcgui.NOTIFICATION_INFO, 3000, False)
+        elif result.status == 'failed':
+            self.dialog.notification(
+                'UMSA migration',
+                f'Import failed: {result.error or "unknown"} '
+                f'(use retry_import).',
+                xbmcgui.NOTIFICATION_ERROR, 7000, False)
+        if result.pending_cleanup:
+            self.dialog.notification(
+                'UMSA migration',
+                f'{len(result.pending_cleanup)} legacy file(s) not removed.',
+                xbmcgui.NOTIFICATION_WARNING, 5000, False)
+
+    def _save_lastgames(self):
+        """Persist the current in-memory history without trimming it."""
+
+        if self.ggdb is not None:
+            self.ggdb.save_lastgames(self.last)
+
+    def _remember_and_select(self, software_id):
+        """Insert a display event, select it, and persist only on success.
+
+        A failed display (empty `select_software`) must not leave a phantom
+        entry: the in-memory insert is rolled back and nothing is persisted.
+        Pointer semantics match the previous insert-and-advance callers.
+        """
+
+        self.lastptr += 1
+        self.last.insert(self.lastptr, software_id)
+        if not self.select_software(software_id):
+            del self.last[self.lastptr]
+            self.lastptr -= 1
+            return False
+        self._save_lastgames()
+        return True
 
     # sequence: onFocus, onClick, onAction
 
@@ -515,9 +597,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     return
                 if len(gamelist) == 1:
                     self.searchold = None
-                    self.lastptr += 1
-                    self.last.insert(self.lastptr, gamelist[0]['id'])
-                    self.select_software(self.last[self.lastptr])
+                    self._remember_and_select(gamelist[0]['id'])
                     return
 
                 # TODO no popup, but refill
@@ -1243,9 +1323,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         else:
             xbmc.log(f"UMSA gui: gamelist_click: software id={list_id}")
             software_id = int(list_id)
-            self.lastptr += 1
-            self.last.insert(self.lastptr, software_id)
-            self.select_software(self.last[self.lastptr])
+            self._remember_and_select(software_id)
 
     def gamelist_context(self):
         """Reacts on context in gamelist"""
@@ -1307,19 +1385,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # save/load filter
         if cat in ("Load Filter", "Save Filter"):
-            files = []
-            for i in os.listdir(SETTINGS_FOLDER):
-                if i[:7] == 'filter_':
-                    files.append(i[7:-4])
+            files = self.ggdb.list_filter_names()
 
             if cat == "Load Filter":
                 ret = self.dialog.select('Load Filter', files)
                 if ret == -1:
                     return
-                self.filter_lists = load_filter(
-                    CORE_DATA_PATHS.filter_file(files[ret])
-                )
-                #c = self.ggdb.define_filter(self.filter_lists)
+                self.filter_lists = self.ggdb.load_filter_selections(files[ret])
                 self.getControl(LABEL_STATUS).setLabel(
                     "%s filtered items" % (self.ggdb.define_filter(self.filter_lists),)
                 )
@@ -1346,10 +1418,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     filter_filename = files[ret]
 
                 # save filters
-                save_filter(
-                    CORE_DATA_PATHS.filter_file(filter_filename),
-                    self.filter_lists
-                )
+                self.ggdb.save_filter_selections(filter_filename, self.filter_lists)
                 self.act_filter = filter_filename
                 self.getControl(FILTER_LABEL2).setLabel(f'Filter: {self.act_filter}')
                 #self.getControl(FILTER_LABEL).setLabel(
@@ -1431,9 +1500,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Select software requested by the screensaver, keeping history."""
 
         xbmc.log(f"UMSA gui: open software from handoff: id = {software_id}")
-        self.lastptr += 1
-        self.last.insert(self.lastptr, software_id)
-        self.select_software(self.last[self.lastptr])
+        self._remember_and_select(software_id)
 
     def read_settings(self):
         """Read settings for UMSA from Kodi and initialize."""
@@ -1801,9 +1868,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.dialog.notification('Search', 'only one hit...',
                 xbmcgui.NOTIFICATION_INFO, 2000, False)
             # TODO: check if this id is the one already shown
-            self.lastptr += 1
-            self.last.insert(self.lastptr, results[0]['id'])
-            self.select_software(self.last[self.lastptr])
+            self._remember_and_select(results[0]['id'])
             self.setFocus(self.getControl(SOFTWARE_BUTTON))
             return
 
@@ -1873,10 +1938,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.select_software(self.last[self.lastptr])
             return
         if direction == 'right':
-            self.lastptr += 1
-            if self.lastptr >= len(self.last):
-                self.last.append(self.ggdb.get_random_id())
-            self.select_software(self.last[self.lastptr])
+            if self.lastptr + 1 >= len(self.last):
+                # moving past the newest entry appends a new random one
+                self._remember_and_select(self.ggdb.get_random_id())
+            else:
+                self.lastptr += 1
+                self.select_software(self.last[self.lastptr])
 
     def set_filter_content(self, cat, update=None):
         """Set filter content"""
@@ -2013,7 +2080,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.getControl(SET_LIST).addItems(set_list_items)
 
     def select_software(self, software_id):
-        """Get all machines and sets for a software and fill skin"""
+        """Get all machines and sets for a software and fill skin.
+
+        Returns ``True`` when the software was displayed and ``False`` when
+        the display failed, so history-adding callers can avoid phantom
+        entries.
+        """
 
         time1 = time.time()
         xbmc.log(f"UMSA gui: select_software: id = {software_id}")
@@ -2040,7 +2112,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.dialog.notification('Select Software', f'id-{software_id} feels funny?!?',
                 xbmcgui.NOTIFICATION_ERROR, 4000)
             self.getControl(LABEL_STATUS).setLabel('loading software...')
-            return
+            return False
 
         no_machines = len(self.info)
         self.actset = self.info[pos_machine][pos_set]
@@ -2184,6 +2256,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         time2 = time.time()
         xbmc.log("UMSA gui: select_software: complete  %0.3f ms" % ((time2-time1)*1000.0))
+        return True
 
     def search_snaps(self, set_info):
         """Search files in MAME snapshot directory
@@ -2563,7 +2636,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         Save last ten, stop video, close database
         """
 
-        save_software_list(CORE_DATA_PATHS.lastgames_file, self.last[-10:])
+        self._save_lastgames()
         if self.emulation.playvgm:
             self.emulation.playrandomvgm = None
             self.emulation.send_vgmaction(b'exit')

@@ -1,10 +1,12 @@
 """Kodi-managed frontend entry point."""
 
 import os
+import sqlite3
 import sys
 
 import xbmc
 import xbmcaddon
+import xbmcgui
 from umsa_core_kodi import get_core_data_paths
 
 ADDON_ID = "plugin.program.umsa.mame.surfer"
@@ -33,6 +35,36 @@ elif COMMAND == "del_status":
         os.remove(CORE_DATA_PATHS.status_db)
     except FileNotFoundError:
         pass
+elif COMMAND == "retry_import":
+    # Explicit recovery from a recorded `failed` legacy-import marker: the only
+    # path that may clear it. A successful or cleanup-only marker is left alone.
+    core_addon = xbmcaddon.Addon(id="script.module.umsa.core")
+    sys.path.append(os.path.join(core_addon.getAddonInfo("path"), "lib"))
+    from umsa_core.history_import import retry_import
+    from umsa_core.sqlite import connect_sqlite
+    from umsa_core.status_migrations import apply_migrations
+    try:
+        connection = connect_sqlite(CORE_DATA_PATHS.status_db)
+        connection.row_factory = sqlite3.Row
+        try:
+            apply_migrations(connection)
+            result = retry_import(connection, CORE_DATA_PATHS)
+        finally:
+            connection.close()
+        xbmc.log(f"UMSA MAME surfer: retry_import -> {result}")
+        if result.status in ("completed", "completed_discards", "completed_no_source"):
+            xbmcgui.Dialog().notification(
+                "UMSA migration", f"Import retried: {result.status}",
+                xbmcgui.NOTIFICATION_INFO, 5000, False)
+        else:
+            xbmcgui.Dialog().notification(
+                "UMSA migration", "Import retry did not complete",
+                xbmcgui.NOTIFICATION_ERROR, 6000, False)
+    except (sqlite3.Error, OSError, RuntimeError, ValueError) as exc:
+        xbmc.log(f"UMSA MAME surfer: retry_import failed: {exc}", xbmc.LOGERROR)
+        xbmcgui.Dialog().notification(
+            "UMSA migration", f"Import retry failed: {exc}",
+            xbmcgui.NOTIFICATION_ERROR, 6000, False)
 else:
     xbmc.log(f"UMSA MAME surfer: unknown action: {COMMAND}")
 xbmc.log("UMSA MAME surfer: stopped")
