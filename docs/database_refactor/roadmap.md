@@ -946,11 +946,18 @@ guard); no behaviour change. Not urgent — schedule after 4.6.
   commit-per-call with rollback on failure; `tests/test_save_further_media.py` 6 tests
   (pre-fix `3 failed, 3 passed`). Moved into `StatusRepository.save_further_media`
   unchanged as part of the implemented step 4.5.
-- **Removal of duplicate artwork copying — agreed scope (planned, not implemented):**
-  make `artwork.db` the single source of truth, migrate all artwork readers and the
-  mixed game/artwork queries onto it, then remove the redundant copy workflow and the
-  obsolete `umsa.db.art_set` dependency. Deliberately outside step 4.4 (or any earlier
-  step); work starts only when a dedicated step is scheduled.
+- **Artwork/DAT source-of-truth refactor (completed)** — make `artwork.db` and `dat.db`
+  the authoritative sources for scanned artwork and DAT data. Removed the redundant
+  copy workflow (`add_art_to_db`, `add_dat_to_db`, and the copy operations in
+  `open_db`). The persistent `umsa.db` connection is now read-only and attaches
+  `artwork.db` as `art` and `dat.db` as `dat` schemas. Scanner workflows continue to
+  write to their respective source databases through their own writable connections.
+  Mixed game/artwork/DAT queries in `DBMod` now use schema-qualified table names
+  (`art.art_set`, `dat.dat`, `dat.dat_set`). `ArtworkRepository` and `DatRepository`
+  support schema qualification via a `schema` parameter (`"main"` for scanner
+  connections, `"art"`/`"dat"` for DBMod reads). Legacy copied tables in existing
+  `umsa.db` files remain unused but are not dropped; a fresh database download
+  naturally removes them.
 - **CHD disk-selection dialog (`emulator_launcher.py`)** — found while verifying step
   4.4: `i.get('disk')` on `sqlite3.Row` always raised `AttributeError` (swallowed), so
   the `Select CHD:` dialog never appeared and the picked row could not be promoted.
@@ -982,6 +989,9 @@ guard); no behaviour change. Not urgent — schedule after 4.6.
              record_screensaver_display/list_screensaver_history + DBMod facades +
              ui.py Saver.record_display / Player.onAVStarted hooks; no schema change;
              committed as `e7cb00a`)
+Artwork/DAT source-of-truth refactor ✅  (removed `add_art_to_db`/`add_dat_to_db`,
+             read-only umsa.db with attached `art`/`dat` schemas, schema-qualified
+             repositories; scanner writes unchanged)
 4.8                         (next planned implementation phase; not started; touches GUI)
 4.9                         (optional proposal; not implemented)
 ```

@@ -117,21 +117,57 @@ class DatRepository:
     The repository never opens or closes the supplied connection. Query
     methods leave transaction management to the caller; :meth:`publish_staged`
     manages its own short transaction and only commits one it started.
+    Connections must use ``sqlite3.Row`` (step 4.2b contract, decision Q7):
+    callers consume the returned rows with both named and positional access, so a
+    connection with any other row factory is rejected at construction.
+
+    ``dat.file`` keeps its historical meaning: the visible display category. The
+    nullable ``origin`` column is internal bookkeeping that records which import
+    produced a row (see :data:`ORIGIN_MAME_SUPPORT`, :data:`ORIGIN_EXODOS` and
+    :data:`ORIGIN_GB64`).
+
+    The repository accepts an optional ``schema`` parameter to qualify table
+    names. For scanner-owned connections where dat.db is the ``main`` database,
+    use ``schema="main"`` (the default). For the DBMod connection where dat.db
+    is attached as ``dat``, use ``schema="dat"``. The schema identifier must be
+    from the allowlist ``{"main", "dat"}``.
     """
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    _ALLOWED_SCHEMAS = frozenset({"main", "dat"})
+
+    def __init__(self, connection: sqlite3.Connection, schema: str = "main") -> None:
         """Wrap an existing connection that uses ``sqlite3.Row``.
 
+        Args:
+            connection: An existing SQLite connection to operate on.
+            schema: The database schema qualifier (``"main"`` or ``"dat"``).
+                Defaults to ``"main"`` for scanner-owned connections.
+
         Raises:
-            ValueError: If the connection does not use ``sqlite3.Row``.
+            ValueError: If the connection does not use ``sqlite3.Row`` or if
+                ``schema`` is not in the allowlist.
         """
         require_row_connection(connection, "DatRepository")
+        if schema not in self._ALLOWED_SCHEMAS:
+            raise ValueError(
+                f"DatRepository schema must be one of {sorted(self._ALLOWED_SCHEMAS)}, got {schema!r}"
+            )
         self._conn = connection
+        self._schema = schema
 
     @property
     def connection(self) -> sqlite3.Connection:
         """Return the underlying connection (read-only access)."""
         return self._conn
+
+    @property
+    def schema(self) -> str:
+        """Return the schema qualifier in use (``"main"`` or ``"dat"``)."""
+        return self._schema
+
+    def _qt(self, table: str) -> str:
+        """Return a schema-qualified table name."""
+        return f"{self._schema}.{table}"
 
     def create_tables(self, db_cursor: sqlite3.Cursor | None = None) -> None:
         """Create/upgrade the DAT tables, optionally using a supplied cursor."""
@@ -151,9 +187,9 @@ class DatRepository:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT dat.file, dat.entry FROM dat "
-                "JOIN dat_set ON dat.id = dat_set.dat_id "
-                "WHERE dat_set.id = ?",
+                f"SELECT {self._qt('dat')}.file, {self._qt('dat')}.entry FROM {self._qt('dat')} "
+                f"JOIN {self._qt('dat_set')} ON {self._qt('dat')}.id = {self._qt('dat_set')}.dat_id "
+                f"WHERE {self._qt('dat_set')}.id = ?",
                 (set_id,),
             )
             set_dats = {}
@@ -177,9 +213,9 @@ class DatRepository:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT dat_set.id, dat.file, dat.entry FROM dat "
-                "JOIN dat_set ON dat.id = dat_set.dat_id "
-                f"WHERE dat_set.id in ({placeholders})",
+                f"SELECT {self._qt('dat_set')}.id, {self._qt('dat')}.file, {self._qt('dat')}.entry FROM {self._qt('dat')} "
+                f"JOIN {self._qt('dat_set')} ON {self._qt('dat')}.id = {self._qt('dat_set')}.dat_id "
+                f"WHERE {self._qt('dat_set')}.id in ({placeholders})",
                 ids,
             )
             set_file = {}

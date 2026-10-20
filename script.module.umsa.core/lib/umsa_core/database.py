@@ -8,18 +8,23 @@ access is centralised in :mod:`umsa_core.status_repository`, emulator
 configuration (``emu``/``emu_conn``) in :mod:`umsa_core.emulator_repository`.
 ``DBMod`` remains the public facade.
 
+``umsa.db`` is the downloaded game metadata database (read-only during normal
+operation). ``artwork.db`` and ``dat.db`` are the authoritative sources for
+scanned artwork and DAT data respectively. They are attached as read-only
+schemas ``art`` and ``dat`` on the persistent ``umsa.db`` connection. Scanner
+workflows write to their respective source databases through their own
+writable connections.
+
 A few direct statements intentionally remain here:
 
-- ``open_db()``, ``add_dat_to_db()`` and ``add_art_to_db()`` copy rows between
-  the per-source databases (``dat.db``/``artwork.db``) and ``umsa.db`` through
-  ``ATTACH DATABASE``. That cross-database synchronisation owns multiple
-  connections and attached databases, so it stays in ``DBMod`` (see the
-  repository contracts).
-- ``get_random_art()`` and ``get_artwork_by_software_id()`` join ``art_set``
-  with the general UMSA game tables (``sets``/``swl``/``software``) and, for
-  ``get_random_art()``, depend on the active ``DBMod`` filter state. These are
-  mixed application queries rather than artwork-table CRUD and are left here
-  on purpose.
+- ``open_db()`` reopens the downloaded ``umsa.db`` read-only and reattaches
+  the current ``artwork.db`` and ``dat.db`` as read-only schemas. No data is
+  copied into ``umsa.db``.
+- ``get_random_art()`` and ``get_artwork_by_software_id()`` join the attached
+  ``art.art_set`` with the general UMSA game tables (``sets``/``swl``/
+  ``software``) and, for ``get_random_art()``, depend on the active ``DBMod``
+  filter state. These are mixed application queries rather than artwork-table
+  CRUD and are left here on purpose.
 
 TODO
  - remove usage of detail, use split_gamename
@@ -33,7 +38,7 @@ import zipfile
 from contextlib import contextmanager
 from io import BytesIO
 from re import findall, search
-from urllib.request import urlopen
+from urllib.request import urlopen, pathname2url
 
 from .artwork import resolve_artwork_path
 from .artwork_repository import ArtworkRepository, create_artwork_tables
@@ -307,16 +312,28 @@ class DBMod:
     def _open_persistent_databases(self, db_path, filter_lists):
         """Open the persistent umsa.db/status.db connections and prepare them."""
 
-        # connect to umsa db
         self.db_paths = _core_data_paths(db_path)
-        self.gdb = connect_sqlite(self.db_paths.umsa_db)
-        self.gdb.row_factory = sqlite3.Row
+
+        # Ensure source databases exist with authoritative schemas before attaching
+        self._ensure_source_databases()
+
+        # Run sanity DDL on a temporary writable connection (scanner compatibility tables)
+        tmp_gdb = connect_sqlite(self.db_paths.umsa_db, row_factory=sqlite3.Row)
+        tmp_gdbc = tmp_gdb.cursor()
+        try:
+            self.create_dat_tables(tmp_gdbc)
+            self.create_art_tables(tmp_gdbc)
+            tmp_gdb.commit()
+        finally:
+            tmp_gdbc.close()
+            tmp_gdb.close()
+
+        # Open persistent umsa.db read-only for normal operation
+        self.gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
         self.gdbc = self.gdb.cursor()
 
-        # sanity
-        self.create_dat_tables(self.gdbc)
-        self.create_art_tables(self.gdbc)
-        self.gdb.commit()
+        # Attach artwork.db as 'art' and dat.db as 'dat' (read-only)
+        self._attach_source_databases()
 
         # connect to status db
         self.sdb = connect_sqlite(self.db_paths.status_db)
@@ -338,78 +355,40 @@ class DBMod:
     def open_db(self, db_path):
         """Reopen umsa database, needed after update of umsa.db
 
-        Reconnect and import support and artwork databases. The persistent
+        Reconnect to the downloaded umsa.db read-only and reattach the
+        current artwork.db and dat.db as read-only schemas. The persistent
         status.db connection is left untouched. Any previous umsa.db
         connection is closed first so it can never be silently overwritten.
+        No artwork/DAT data is copied into umsa.db.
         """
 
         # Never replace an active umsa.db connection without closing it first.
         self.close_umsa_db()
 
-        # connect to umsa db
         self.db_paths = _core_data_paths(db_path)
-        gdb = connect_sqlite(self.db_paths.umsa_db)
-        gdb.row_factory = sqlite3.Row
+
+        # Ensure source databases exist with authoritative schemas
+        self._ensure_source_databases()
+
+        # Run sanity DDL on a temporary writable connection (scanner compatibility tables)
+        tmp_gdb = connect_sqlite(self.db_paths.umsa_db, row_factory=sqlite3.Row)
+        tmp_gdbc = tmp_gdb.cursor()
+        try:
+            self.create_dat_tables(tmp_gdbc)
+            self.create_art_tables(tmp_gdbc)
+            tmp_gdb.commit()
+        finally:
+            tmp_gdbc.close()
+            tmp_gdb.close()
+
+        # Open persistent umsa.db read-only
+        gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
         gdbc = gdb.cursor()
         self.gdb = gdb
         self.gdbc = gdbc
 
-        attached = set()
-        failed = False
-        try:
-            # creat additonal tables
-            self.create_dat_tables(gdbc)
-            self.create_art_tables(gdbc)
-            gdb.commit()
-
-            # make sure the attached dat.db carries the current schema too
-            self._upgrade_dat_db(self.db_paths)
-
-            # copy dat, art over via attach
-            gdbc.execute(
-                "ATTACH DATABASE ? AS dat", (os.fspath(self.db_paths.dat_db),)
-            )
-            attached.add('dat')
-            gdbc.execute(
-                "ATTACH DATABASE ? AS art", (os.fspath(self.db_paths.artwork_db),)
-            )
-            attached.add('art')
-            # Replace the DAT data atomically: the delete and the copy live in
-            # one transaction, so a failed copy never leaves the target empty.
-            gdbc.execute("DELETE FROM main.dat_set")
-            gdbc.execute("DELETE FROM main.dat")
-            gdbc.execute(
-                "INSERT INTO main.dat (id, file, entry, origin) "
-                "SELECT id, file, entry, origin FROM dat.dat"
-            )
-            gdbc.execute(
-                "INSERT INTO main.dat_set (id, dat_id) "
-                "SELECT id, dat_id FROM dat.dat_set"
-            )
-            gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
-            gdb.commit()
-        except Exception:
-            failed = True
-            # Undo any pending write; the original exception is re-raised.
-            try:
-                gdb.rollback()
-            except Exception:
-                pass
-            raise
-        finally:
-            # Drop every database that was attached, even on the error path,
-            # so the connection is never left with unexpected attachments. A
-            # failed DETACH must not mask the original exception.
-            for alias in ('art', 'dat'):
-                if alias in attached:
-                    try:
-                        gdbc.execute(f"DETACH DATABASE '{alias}'")
-                    except Exception:
-                        pass
-            if failed:
-                # Do not keep a half-copied connection around; leave a known,
-                # recoverable state that lets the caller retry open_db().
-                self.close_umsa_db()
+        # Attach source databases as read-only schemas
+        self._attach_source_databases()
 
     def create_dat_tables(self, db_cursor):
         """create dat tables
@@ -421,25 +400,6 @@ class DBMod:
         """
 
         create_dat_tables(db_cursor)
-
-    def _upgrade_dat_db(self, db_paths):
-        """Ensure the local ``dat.db`` carries the current DAT schema.
-
-        ``open_db()``/``add_dat_to_db()`` read ``origin`` from the attached
-        ``dat.db``; older databases lack that column, so it is upgraded (and
-        backfilled) before the copy.
-        """
-
-        dat_conn = connect_sqlite(db_paths.dat_db)
-        try:
-            cursor = dat_conn.cursor()
-            try:
-                create_dat_tables(cursor)
-            finally:
-                cursor.close()
-            dat_conn.commit()
-        finally:
-            dat_conn.close()
 
     def create_art_tables(self, db_cursor):
         """create art tables
@@ -504,6 +464,38 @@ class DBMod:
         """
 
         self.close_umsa_db()
+
+    def _ensure_source_databases(self):
+        """Ensure artwork.db and dat.db exist with authoritative schemas.
+
+        Creates the databases and their schemas if they don't exist.
+        Does not truncate or repopulate existing databases.
+        """
+        # Ensure artwork.db exists with schema
+        if not self.db_paths.artwork_db.exists():
+            conn = connect_sqlite(self.db_paths.artwork_db, row_factory=sqlite3.Row)
+            try:
+                create_artwork_tables(conn.cursor())
+                conn.commit()
+            finally:
+                conn.close()
+
+        # Ensure dat.db exists with schema (including origin column upgrade/backfill)
+        if not self.db_paths.dat_db.exists():
+            conn = connect_sqlite(self.db_paths.dat_db, row_factory=sqlite3.Row)
+            try:
+                create_dat_tables(conn.cursor())
+                conn.commit()
+            finally:
+                conn.close()
+
+    def _attach_source_databases(self):
+        """Attach artwork.db as 'art' and dat.db as 'dat' (read-only)."""
+        # Use URI mode=ro for read-only attachment
+        art_uri = f'file:{pathname2url(os.fspath(self.db_paths.artwork_db))}?mode=ro'
+        dat_uri = f'file:{pathname2url(os.fspath(self.db_paths.dat_db))}?mode=ro'
+        self.gdbc.execute(f"ATTACH DATABASE '{art_uri}' AS art")
+        self.gdbc.execute(f"ATTACH DATABASE '{dat_uri}' AS dat")
 
     def _run_scan_with_shared_state(self, start_what, run):
         """Run ``run`` while owning the shared scan progress/status fields.
@@ -631,66 +623,6 @@ class DBMod:
 
         return self._run_scan_with_shared_state('files', run)
 
-    def add_dat_to_db(self, db_path):
-        """add dat to database"""
-
-        import time
-        t0 = time.time()
-        db_paths = _core_data_paths(db_path)
-        # The attached dat.db must carry the current schema (including the
-        # origin column) before it is read below.
-        t = time.time()
-        self._upgrade_dat_db(db_paths)
-        log(f"UMSA add_dat_to_db: upgrade {time.time()-t:.3f}s", level="debug")
-        gdb = connect_sqlite(db_paths.umsa_db)
-        gdbc = gdb.cursor()
-        attached = False
-        try:
-            # creat additonal tables
-            t = time.time()
-            self.create_dat_tables(gdbc)
-            log(f"UMSA add_dat_to_db: create_tables {time.time()-t:.3f}s", level="debug")
-            # attach dat db and copy
-            gdbc.execute("ATTACH DATABASE ? AS dat", (os.fspath(db_paths.dat_db),))
-            attached = True
-            # Replace the DAT data atomically: the delete and the copy live in
-            # one transaction, so a failed copy never leaves the target empty
-            # or partially updated.
-            t = time.time()
-            gdbc.execute("DELETE FROM main.dat_set")
-            gdbc.execute("DELETE FROM main.dat")
-            log(f"UMSA add_dat_to_db: delete {time.time()-t:.3f}s", level="debug")
-            t = time.time()
-            gdbc.execute(
-                "INSERT INTO main.dat (id, file, entry, origin) "
-                "SELECT id, file, entry, origin FROM dat.dat"
-            )
-            log(f"UMSA add_dat_to_db: insert_dat {time.time()-t:.3f}s", level="debug")
-            t = time.time()
-            gdbc.execute(
-                "INSERT INTO main.dat_set (id, dat_id) "
-                "SELECT id, dat_id FROM dat.dat_set"
-            )
-            log(f"UMSA add_dat_to_db: insert_dat_set {time.time()-t:.3f}s", level="debug")
-            gdb.commit()
-            log(f"UMSA add_dat_to_db: total {time.time()-t0:.3f}s", level="debug")
-        except Exception:
-            # Undo any pending write; the original exception is re-raised.
-            try:
-                gdb.rollback()
-            except Exception:
-                pass
-            raise
-        finally:
-            # Detaching after the copy keeps SQLite from committing an
-            # attached database implicitly on close.
-            if attached:
-                try:
-                    gdbc.execute("DETACH DATABASE 'dat'")
-                except Exception:
-                    pass
-            gdb.close()
-
     def scan_artwork(self, paths=None, db_path=None, listdir=None, source=None,
                      cancel_event=None, only_types=None, resume=True, **kwargs):
         """Scan artwork folders, unit-based and resumable.
@@ -739,20 +671,21 @@ class DBMod:
 
         The repository is created per call rather than cached, so it can
         never hold a reference to a connection that ``open_db()`` has since
-        replaced. It never owns or closes ``self.gdb``.
+        replaced. It never owns or closes ``self.gdb``. Uses the ``art``
+        schema where artwork.db is attached.
         """
 
-        return ArtworkRepository(self.gdb)
+        return ArtworkRepository(self.gdb, schema="art")
 
     def _get_dat_repository(self):
         """Return a DAT repository bound to the current umsa.db connection.
 
         Created per call (never cached) so it can never hold a reference to a
         connection that ``open_db()`` has since replaced. It never owns or
-        closes ``self.gdb``.
+        closes ``self.gdb``. Uses the ``dat`` schema where dat.db is attached.
         """
 
-        return DatRepository(self.gdb)
+        return DatRepository(self.gdb, schema="dat")
 
     def _get_game_repository(self):
         """Return a game repository bound to the current umsa.db connection.
@@ -793,51 +726,6 @@ class DBMod:
         """
 
         return HistoryRepository(self.sdb)
-
-    def add_art_to_db(self, db_path):
-        """add artwork to database
-
-        can be threaded
-        """
-
-        # own connect to umsa.db
-        db_paths = _core_data_paths(db_path)
-        gdb = connect_sqlite(db_paths.umsa_db)
-        gdbc = gdb.cursor()
-        attached = False
-        try:
-            # sanity: create additonal tables
-            self.create_art_tables(gdbc)
-            # attach and copy over
-            gdbc.execute(
-                "ATTACH DATABASE ? AS art", (os.fspath(db_paths.artwork_db),)
-            )
-            attached = True
-            # Replace the artwork data atomically: the delete and the copy live
-            # in one transaction, so a failed copy never leaves umsa.db empty
-            # or partially updated.
-            gdbc.execute("DELETE FROM main.art_set")
-            gdbc.execute("INSERT INTO main.art_set SELECT art_id,id,source,root_key,scan_unit,type,extension,relative_path,archive_member FROM art.art_set")
-            gdb.commit()
-            gdbc.execute("SELECT COUNT(*) FROM art_set")
-            count = gdbc.fetchone()[0]
-            log(f"UMSA artwork: copied {count} records into umsa.db")
-        except Exception:
-            # Undo any pending write; the original exception is re-raised.
-            try:
-                gdb.rollback()
-            except Exception:
-                pass
-            raise
-        finally:
-            # Detaching after the copy keeps SQLite from committing an
-            # attached database implicitly on close.
-            if attached:
-                try:
-                    gdbc.execute("DETACH DATABASE 'art'")
-                except Exception:
-                    pass
-            gdb.close()
 
     def get_art_types(self):
         """get all types of artwork which contain images
@@ -910,23 +798,23 @@ class DBMod:
         Takes a list of artwork types
         Returns a dictonary with informations or None if nothing is found
 
-        Artwork locations live in the ``art_set`` schema: every row carries
-        ``source``, ``root_key``, ``relative_path`` and ``archive_member``.
-        Callers resolve them with
+        Artwork locations live in the ``art.art_set`` schema (attached artwork.db):
+        every row carries ``source``, ``root_key``, ``relative_path`` and
+        ``archive_member``. Callers resolve them with
         :func:`umsa_core.artwork.resolve_artwork_path`; the additional left
         image is resolved here for the screensaver.
 
         The random artwork selection intentionally stays in ``DBMod``: it
-        joins ``art_set`` with ``sets`` and applies the active
+        joins the attached ``art.art_set`` with ``sets`` and applies the active
         ``filter_join``/``filter_where`` state, so it is a mixed application
         query rather than artwork-table CRUD. The isolated left-image lookup
         is delegated to :class:`ArtworkRepository`.
         """
 
         art_columns = (
-            "sets.id, art_set.source, art_set.root_key, art_set.scan_unit, "
-            "art_set.type, art_set.extension, art_set.relative_path, "
-            "art_set.archive_member"
+            "sets.id, art.source, art.root_key, art.scan_unit, "
+            "art.type, art.extension, art.relative_path, "
+            "art.archive_member"
         )
         types_in = ",".join("?" * len(art_types))
 
@@ -936,8 +824,8 @@ class DBMod:
         # get with filter if on
         if self.use_filter:
             # TODO doesnt work when filter = everything but filter = on
-            statement = "SELECT {} FROM art_set JOIN sets ON sets.id = art_set.id {} \
-                         WHERE art_set.type IN ({}) AND {} \
+            statement = "SELECT {} FROM art.art_set art JOIN sets ON sets.id = art.id {} \
+                         WHERE art.type IN ({}) AND {} \
                          ORDER BY RANDOM() LIMIT 1".format(
                              art_columns,
                              " ".join(self.filter_join),
@@ -948,8 +836,8 @@ class DBMod:
             rand_art = self.gdbc.fetchone()
         # and without filter if we haven't found anything
         if not rand_art:
-            statement = f"SELECT {art_columns} FROM art_set JOIN sets ON sets.id = art_set.id \
-                        WHERE art_set.type IN ({types_in}) \
+            statement = f"SELECT {art_columns} FROM art.art_set art JOIN sets ON sets.id = art.id \
+                        WHERE art.type IN ({types_in}) \
                         ORDER BY RANDOM() LIMIT 1"
             self.gdbc.execute(statement, list(art_types))
             rand_art = self.gdbc.fetchone()
@@ -1635,9 +1523,9 @@ class DBMod:
         string when none is found) and ``machines`` is a comma separated list
         of machine abbreviations.
 
-        This remains in ``DBMod``: it joins ``art_set`` with the game tables
-        (``sets``/``swl``) and resolves the resulting path, so it is a mixed
-        application query rather than artwork-table CRUD.
+        This remains in ``DBMod``: it joins the attached ``art.art_set`` with the
+        game tables (``sets``/``swl``) and resolves the resulting path, so it is
+        a mixed application query rather than artwork-table CRUD.
 
         TODO
         - an abbreviation for machine name would make text shorter
@@ -1660,14 +1548,14 @@ class DBMod:
         # get set ids with artwork
         self.gdbc.execute(
             "SELECT sets.name, swl.name as swl_name, \
-                   art_set.source, art_set.root_key, art_set.scan_unit, \
-                   art_set.type, art_set.extension, art_set.relative_path, \
-                   art_set.archive_member \
-             FROM sets, swl, art_set \
+                   art.source, art.root_key, art.scan_unit, \
+                   art.type, art.extension, art.relative_path, \
+                   art.archive_member \
+             FROM sets, swl, art.art_set art \
              WHERE sets.softwarelink_id = ? \
              AND swl.id = sets.swllink_id \
-             AND art_set.id = sets.id \
-             AND art_set.type = ? \
+             AND art.id = sets.id \
+             AND art.type = ? \
              ORDER BY RANDOM() LIMIT 1",
             (software_id, artwork)
         )

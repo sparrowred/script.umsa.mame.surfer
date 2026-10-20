@@ -1709,41 +1709,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     xbmcgui.NOTIFICATION_ERROR, 4000)
                 return
 
-            # Run post-scan database synchronization in background to keep UI responsive
-            import threading
-
-            finalize_result = {}
-            finalize_finished = threading.Event()
-
-            def finalize_sync():
-                try:
-                    if what in ('exo', 'gb64'):
-                        self.ggdb.add_dat_to_db(SETTINGS_FOLDER)
-                        self.ggdb.add_art_to_db(SETTINGS_FOLDER)
-                    elif what == 'dat':
-                        self.ggdb.add_dat_to_db(SETTINGS_FOLDER)
-                    else:
-                        self.ggdb.add_art_to_db(SETTINGS_FOLDER)
-                    finalize_result['ok'] = True
-                except Exception as exc:
-                    xbmc.log(f"UMSA gui: finalize sync failed: {exc}", xbmc.LOGERROR)
-                    finalize_result['error'] = str(exc)
-                finally:
-                    finalize_finished.set()
-
-            finalize_thread = threading.Thread(target=finalize_sync)
-            finalize_thread.start()
-            # Keep UI responsive while finalizing
+            # Scanner workflows now write directly to the authoritative source databases
+            # (artwork.db, dat.db). No post-scan synchronization copy is needed.
             try:
-                while not finalize_finished.is_set():
-                    xbmc.sleep(500)
-                    progress(100, title, 'finalizing database...')
-            finally:
-                finalize_thread.join()
-                try:
-                    self.progress_dialog.close()
-                except Exception:
-                    pass
+                self.progress_dialog.close()
+            except Exception:
+                pass
 
     def choose_media(self):
         """Dialog to choose media for playing."""

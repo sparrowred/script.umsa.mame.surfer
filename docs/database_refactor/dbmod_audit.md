@@ -424,10 +424,19 @@ facade over `gamelist_filter` since 4.7), `get_last_played`,
 
 **Stays as documented mixed queries:** `get_random_id`, `get_random_art` (both now feed
 the bound `_filter_where_params` into the filter subselect since step 4.7),
-`get_artwork_by_software_id`, cross-database `open_db`/`add_dat_to_db`/`add_art_to_db`.
+`get_artwork_by_software_id`, cross-database `open_db` (reattaches `art`/`dat` schemas
+without copying data).
 
 **Removed (step 4.2a, Q1):** `get_status_for_software`, `write_options`, `get_swl_id`,
 `get_info_for_id`, `get_sets_for_machine` — no longer present in `database.py`.
+
+**Removed (artwork/DAT source-of-truth refactor):** `add_dat_to_db`, `add_art_to_db` —
+the cross-database copy operations are no longer needed. The persistent `umsa.db`
+connection is now read-only and attaches `artwork.db` as `art` and `dat.db` as `dat`
+schemas. All artwork/DAT reads use the attached schemas (`art.art_set`, `dat.dat`,
+`dat.dat_set`). `ArtworkRepository` and `DatRepository` support schema qualification
+via a `schema` parameter (`"main"` for scanner connections, `"art"`/`"dat"` for DBMod
+reads).
 
 **Extract candidates, in recommended order:** status.db play history (section 9 → step
 4.5 — **done**, `StatusRepository`) → emulator config (section 10 → step 4.6 —

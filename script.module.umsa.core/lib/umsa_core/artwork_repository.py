@@ -80,28 +80,59 @@ class ArtworkRepository:
 
     The repository never opens or closes the supplied connection. Query
     methods leave transaction management to the caller; the atomic
-    replacement and scan-status methods manage their own short transaction
-    and only commit one they started, so the caller's connection and any
-    unrelated pending work are left untouched.
+    operations (``replace_scan_unit`` and the ``running``/``error``/``done``
+    scan-status updates) manage their own short transactions and only
+    commit a transaction they started themselves, so they can never flush
+    unrelated caller work.
+
+    Connections must use ``sqlite3.Row`` (step 4.2b contract, decision Q7),
+    which is what the read helpers convert rows with and what callers
+    consume; a connection with any other row factory is rejected at
+    construction.
+
+    The repository accepts an optional ``schema`` parameter to qualify table
+    names. For scanner-owned connections where artwork.db is the ``main``
+    database, use ``schema="main"`` (the default). For the DBMod connection
+    where artwork.db is attached as ``art``, use ``schema="art"``. The
+    schema identifier must be from the allowlist ``{"main", "art"}``.
     """
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    _ALLOWED_SCHEMAS = frozenset({"main", "art"})
+
+    def __init__(self, connection: sqlite3.Connection, schema: str = "main") -> None:
         """Initialise the repository.
 
         Args:
             connection: An existing SQLite connection to operate on. The
                 repository does not own this connection.
+            schema: The database schema qualifier (``"main"`` or ``"art"``).
+                Defaults to ``"main"`` for scanner-owned connections.
 
         Raises:
-            ValueError: If the connection does not use ``sqlite3.Row``.
+            ValueError: If the connection does not use ``sqlite3.Row`` or if
+                ``schema`` is not in the allowlist.
         """
         require_row_connection(connection, "ArtworkRepository")
+        if schema not in self._ALLOWED_SCHEMAS:
+            raise ValueError(
+                f"ArtworkRepository schema must be one of {sorted(self._ALLOWED_SCHEMAS)}, got {schema!r}"
+            )
         self._conn = connection
+        self._schema = schema
 
     @property
     def connection(self) -> sqlite3.Connection:
         """Return the underlying connection (read-only access)."""
         return self._conn
+
+    @property
+    def schema(self) -> str:
+        """Return the schema qualifier in use (``"main"`` or ``"art"``)."""
+        return self._schema
+
+    def _qt(self, table: str) -> str:
+        """Return a schema-qualified table name."""
+        return f"{self._schema}.{table}"
 
     def get_artwork_for_set(self, set_id: int) -> list:
         """Return artwork records for a single set ID.
@@ -114,9 +145,9 @@ class ArtworkRepository:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT art_id,id,source,root_key,scan_unit,type,extension,"
-                "relative_path,archive_member "
-                "FROM art_set WHERE id = ?",
+                f"SELECT art_id,id,source,root_key,scan_unit,type,extension,"
+                f"relative_path,archive_member "
+                f"FROM {self._qt('art_set')} WHERE id = ?",
                 (set_id,),
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -135,9 +166,9 @@ class ArtworkRepository:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT source, root_key, scan_unit, type, extension, "
-                "relative_path, archive_member "
-                "FROM art_set WHERE art_set.id = ? AND type = ?",
+                f"SELECT source, root_key, scan_unit, type, extension, "
+                f"relative_path, archive_member "
+                f"FROM {self._qt('art_set')} WHERE {self._qt('art_set')}.id = ? AND type = ?",
                 (set_id, art_type),
             )
             row = cursor.fetchone()
@@ -157,9 +188,9 @@ class ArtworkRepository:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT art_id,id,source,root_key,scan_unit,type,extension,"
-                "relative_path,archive_member "
-                f"FROM art_set WHERE id in ({placeholders})",
+                f"SELECT art_id,id,source,root_key,scan_unit,type,extension,"
+                f"relative_path,archive_member "
+                f"FROM {self._qt('art_set')} WHERE id in ({placeholders})",
                 set_ids_list,
             )
             art_set = {}
@@ -181,7 +212,7 @@ class ArtworkRepository:
         excluded_set = set(excluded)
         cursor = self._conn.cursor()
         try:
-            cursor.execute("SELECT DISTINCT type FROM art_set ORDER BY type")
+            cursor.execute(f"SELECT DISTINCT type FROM {self._qt('art_set')} ORDER BY type")
             art_types = []
             for i in cursor.fetchall():
                 t = i["type"]
@@ -200,8 +231,8 @@ class ArtworkRepository:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT status FROM art_scan_unit "
-                "WHERE source=? AND root_key=? AND scan_unit=?",
+                f"SELECT status FROM {self._qt('art_scan_unit')} "
+                f"WHERE source=? AND root_key=? AND scan_unit=?",
                 (source, root_key, scan_unit),
             )
             row = cursor.fetchone()
@@ -313,13 +344,13 @@ class ArtworkRepository:
             cursor.execute("SAVEPOINT umsa_art_delete_unit")
             try:
                 cursor.execute(
-                    "DELETE FROM art_set "
+                    f"DELETE FROM {self._qt('art_set')} "
                     "WHERE source=? AND root_key=? AND scan_unit=?",
                     (source, root_key, scan_unit),
                 )
                 removed = cursor.rowcount
                 cursor.execute(
-                    "DELETE FROM art_scan_unit "
+                    f"DELETE FROM {self._qt('art_scan_unit')} "
                     "WHERE source=? AND root_key=? AND scan_unit=?",
                     (source, root_key, scan_unit),
                 )
@@ -348,10 +379,10 @@ class ArtworkRepository:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                "SELECT scan_unit FROM art_scan_unit "
-                "WHERE source=? AND root_key=? "
-                "UNION "
-                "SELECT scan_unit FROM art_set WHERE source=? AND root_key=?",
+                f"SELECT scan_unit FROM {self._qt('art_scan_unit')} "
+                f"WHERE source=? AND root_key=? "
+                f"UNION "
+                f"SELECT scan_unit FROM {self._qt('art_set')} WHERE source=? AND root_key=?",
                 (source, root_key, source, root_key),
             )
             units = [row["scan_unit"] for row in cursor.fetchall()]
@@ -386,13 +417,13 @@ class ArtworkRepository:
             try:
                 for unit in units:
                     cursor.execute(
-                        "DELETE FROM art_set "
+                        f"DELETE FROM {self._qt('art_set')} "
                         "WHERE source=? AND root_key=? AND scan_unit=?",
                         (source, root_key, unit),
                     )
                     removed += cursor.rowcount or 0
                     cursor.execute(
-                        "DELETE FROM art_scan_unit "
+                        f"DELETE FROM {self._qt('art_scan_unit')} "
                         "WHERE source=? AND root_key=? AND scan_unit=?",
                         (source, root_key, unit),
                     )
@@ -443,20 +474,20 @@ class ArtworkRepository:
             cursor.execute("SAVEPOINT umsa_art_replace_unit")
             try:
                 cursor.execute(
-                    "DELETE FROM art_set "
+                    f"DELETE FROM {self._qt('art_set')} "
                     "WHERE source=? AND root_key=? AND scan_unit=?",
                     (source, root_key, scan_unit),
                 )
                 if rows:
                     cursor.executemany(
-                        "INSERT INTO art_set "
+                        f"INSERT INTO {self._qt('art_set')} "
                         "(id,source,root_key,scan_unit,type,extension,"
                         "relative_path,archive_member) "
                         "VALUES (?,?,?,?,?,?,?,?)",
                         rows,
                     )
                 cursor.execute(
-                    "INSERT OR REPLACE INTO art_scan_unit "
+                    f"INSERT OR REPLACE INTO {self._qt('art_scan_unit')} "
                     "(source,root_key,scan_unit,status,updated_at) "
                     "VALUES (?,?,?,?,datetime('now'))",
                     (source, root_key, scan_unit, "done"),
