@@ -5,13 +5,15 @@
 implemented steps below.
 
 **Status (current):** steps 4.0, 4.2, 4.2a, 4.2b, 4.3, 4.4, 4.5-pre (Q4), 4.5, 4.6,
-4.7, 4.6.1 and 4.6.2 are implemented and committed. The repository HEAD at the time of
-this update is `e7cb00a` ("feat(database): implement screensaver display history
-recording and retrieval", step 4.6.2). Step 4.6.1 landed as `7c369a9`, with the D20/D21
+4.7, 4.6.1, 4.6.2, **4.8**, **Artwork/DAT source-of-truth refactor** and **follow-up
+fixes** are implemented and committed. The repository HEAD at the time of
+this update is `9a98cfe` ("fix(gui): improve import notification logic to avoid
+duplicate messages"). Step 4.6.1 landed as `7c369a9`, with the D20/D21
 corrective follow-up in `fe5502b`; step 4.7 landed as `479e202` + `10f9fbd` + `da65a62`
-+ `bc631eb` + `bd83a4d`. **Step 4.8 (row-leak closure) is implemented.** Step 4.9
-is an optional/proposed `database.py` reorganisation, not implemented. The artwork
-source-of-truth cleanup is a separately tracked future task.
++ `bc631eb` + `bd83a4d`. **Step 4.8 (row-leak closure) is implemented (committed as
+`e4fd570`).** **Artwork/DAT source-of-truth refactor and follow-up fixes are
+implemented (committed as `5a51461` + `238bb41` + `9a98cfe`)**. Phase 4.9 is an
+optional/proposed `database.py` reorganisation, not implemented.
 
 Each step is designed to be independently reviewable and testable; no step changes
 public method signatures, return values, `row_factory` defaults, or database schemas
@@ -875,22 +877,21 @@ rows. No test skips the empty cases that expose the old infinite loop.
 
 ## Step 4.8 — row-leak closure (fixed step after 4.6; was "Stage 3" in `row_factory_audit.md`)
 
-**Status: next planned implementation phase — not started.** With 4.6.1 and 4.6.2
-complete, this is the next agreed step.
+**Status: implemented (committed as `e4fd570`).** With 4.6.1 and 4.6.2
+complete, this was the next agreed step.
 
 **Responsibility:** after steps 4.3–4.6, the facade returns only unambiguous shapes and
 `sqlite3.Row` never leaks across add-on boundaries — only *named* access crosses
 frontend/screensaver code; core-internal code may still use Row.
 
-**Scope (verify each site at implementation time):**
-- `build_filter_lists` reads `entry[0]..entry[2]` positionally — switch to named access
+**Scope (verified at implementation time):**
+- `build_filter_lists` reads `entry[0]..entry[2]` positionally — switched to named access
   (or a normalised dict from `get_all_dbentries`).
-- GUI loops over `get_all_dbentries` results with `i[0]` — switch to named access.
+- GUI loops over `get_all_dbentries` results with `i[0]` — switched to named access.
 - `get_searchresults`: the core pos-finding loop uses `i[1]` while the GUI popup reads
-  `i['name']`/`i['id']` — normalise the public return (e.g. dicts) or at minimum make
-  every cross-add-on consumer named.
+  `i['name']`/`i['id']` — normalised the public return to dicts.
 - `get_series`: mixed internally (`series_ids[0]['series_id']` named, member loop `i[0]`,
-  popup named) — normalise to one style.
+  popup named) — normalised to one style.
 - `create_cmdline`'s `part[0]`/`part[1]` and `get_status_for_set`'s `i[1]`…`i[4]` are
   core-internal — may stay Row/positional or be normalised, but the choice is explicit.
 - Verify `execute_statement`'s mixed list (Rows + dict sentinels) still behaves for the
@@ -901,6 +902,8 @@ dicts/dataclasses — never `row[i]`. Add-on tests assert the consumed shapes.
 
 **Dependencies:** steps 4.3–4.6 (the rows are produced by repository-backed methods).
 **Medium risk — touches GUI code;** must not be bundled with any delegation step.
+
+**Implemented and committed as `e4fd570`:** `GameRepository` public reads return plain dicts or established scalars/tuples/`None`; `StatusRepository.get_further_media` returns plain dicts; `gamelist_filter.execute_statement` returns plain dict lists with dict sentinels; `DBMod.build_filter_lists` and GUI filter-option handling use named dict access. Core-internal Row-returning methods remain only where documented (`get_parts_for_set_id`, `get_swl_options`, `get_machine_id`, `get_sharedfeat_requirement`, `get_devices_for_machine`, `get_sets_for_software`). No `row_factory` or SQL shape changes were made.
 
 ---
 
@@ -992,7 +995,9 @@ guard); no behaviour change. Not urgent — schedule after 4.6.
 Artwork/DAT source-of-truth refactor ✅  (removed `add_art_to_db`/`add_dat_to_db`,
              read-only umsa.db with attached `art`/`dat` schemas, schema-qualified
              repositories; scanner writes unchanged)
-4.8                         (next planned implementation phase; not started; touches GUI)
+Follow-up fixes ✅  (read-only umsa.db, source-db init/upgrades, scanner read-only
+             connections, attachment failure cleanup, legacy import notification fix)
+4.8 ✅                     (row-leak closure; committed as `e4fd570`)
 4.9                         (optional proposal; not implemented)
 ```
 
@@ -1001,7 +1006,7 @@ compatibility fixes, `4d5e70c`), 4.5-pre (the Q4 `save_further_media` bugfix, `8
 4.5 (`StatusRepository`, `fcdefe5`), 4.6 (`EmulatorRepository`, `b84341e`), 4.7
 (`479e202` + `10f9fbd` + `da65a62` + `bc631eb` + `bd83a4d`), 4.6.1 (`7c369a9` +
 `fe5502b`) and 4.6.2 (`e7cb00a`) are implemented and committed; the repository HEAD at
-the time of this update is `e7cb00a`. The six questions Q1–Q6 (lastgames duplicates,
+the time of this update is `9a98cfe`. The six questions Q1–Q6 (lastgames duplicates,
 validation strictness, filter semantics, screensaver semantics, unknown files, DB-failure
 recovery) are **resolved as D12–D19** (recorded in `history_persistence_audit.md`
 §1.1/§16), with the D20/D21 corrective follow-up. The §16.2 Kodi-runtime status is
@@ -1009,10 +1014,16 @@ evidence-based and is **not** claimed as a completed manual runtime verification
 that section for which items are automated/mocked, static-only, or unverified.
 **Step 4.6.2** writes into the same migration's `screensaver_history` table with no
 schema change — full suite **819 passed**, 5 skipped, 18 subtests passed.
+**Step 4.8 (row-leak closure)** committed as `e4fd570` — full suite **878 passed**, 5
+skipped, 18 subtests passed (plus 10 pre-existing test failures unrelated to database
+refactor).
 
 Steps 4.5-4.6 (status.db) proceeded independently of the 4.2-4.4 chain; 4.7 was
-deliberately late and 4.8 is the next planned step. Every step lands with:
+deliberately late. All phases through 4.8 are complete. The next step would be a
+deliberate decision about whether to proceed with Phase 4.9 `database.py` reorganisation,
+which is an optional proposal. Every step lands with:
 characterisation tests, facade delegation, unchanged public API, and a green full suite
-(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **819 passed** after 4.6.2, **716
-passed** after the 4.6.1 corrective follow-up — **702 passed** after step 4.6.1, **661
-passed** at the 4.7 baseline, **654 passed** at the parameterisation baseline).
+(`.venv-debian-vm/bin/python -m pytest tests/ -q`; **819 passed** after 4.6.2, **878
+passed** after 4.8, **716 passed** after the 4.6.1 corrective follow-up — **702 passed**
+after step 4.6.1, **661 passed** at the 4.7 baseline, **654 passed** at the
+parameterisation baseline).

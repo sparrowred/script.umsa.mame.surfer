@@ -22,15 +22,15 @@ status.db status methods (`get_status_for_set`, `get_further_media`,
 to `StatusRepository`, which requires `sqlite3.Row` at construction and returns rows
 transparently (raw `Row` for the two reads — positional `i[1]`…`i[4]` and named
 `row['marp']` access both preserved); no public row shape changed. **updated again** for
-implemented step 4.8 — **row-leak closure:** `sqlite3.Row` no longer escapes the
-Core-to-add-on boundary. `GameRepository` public reads return plain dicts or the
-established scalars/tuples/`None`; `StatusRepository.get_further_media` returns plain
-dicts; `gamelist_filter.execute_statement` returns plain dict lists with dict sentinels;
-`DBMod.build_filter_lists` and GUI filter-option handling use named dict access.
-Core-internal Row-returning methods remain only where documented
-(`get_parts_for_set_id`, `get_swl_options`, `get_machine_id`,
-`get_sharedfeat_requirement`, `get_devices_for_machine`, `get_sets_for_software`).
-No `row_factory` or SQL shape changes were made. **Scope of the audit itself:** read-only
+implemented step 4.8 — **row-leak closure (implemented, committed as `e4fd570`):** 
+`sqlite3.Row` no longer escapes the Core-to-add-on boundary. `GameRepository` public reads 
+return plain dicts or the established scalars/tuples/`None`; `StatusRepository.get_further_media` 
+returns plain dicts; `gamelist_filter.execute_statement` returns plain dict lists with dict 
+sentinels; `DBMod.build_filter_lists` and GUI filter-option handling use named dict access. 
+Core-internal Row-returning methods remain only where documented 
+(`get_parts_for_set_id`, `get_swl_options`, `get_machine_id`, 
+`get_sharedfeat_requirement`, `get_devices_for_machine`, `get_sets_for_software`). 
+No `row_factory` or SQL shape changes were made. **Scope of the audit itself:** read-only 
 — no `row_factory` was changed and no query was converted by the audit.
 
 This document is the compatibility reference for any future result-shape change. The
@@ -237,14 +237,23 @@ styles on every extracted method's rows (`row[0]` and `row['col']` where the col
 fixed), so a later conversion is detectable. This is test-only work accompanying each
 extraction, not a separate big-bang step.
 
-**Stage 3 — row-leak closure (roadmap step 4.8, fixed — no longer an optional
-"separate decision"):** after steps 4.3-4.6, the façade returns only unambiguous shapes
+**Stage 3 — row-leak closure (roadmap step 4.8, fixed — implemented, committed as
+`e4fd570`):** after steps 4.3-4.6, the façade returns only unambiguous shapes
 and `sqlite3.Row` never crosses into frontend/screensaver code — all cross-add-on
 consumers use named access or plain dicts; positional consumers are adapted
 (`build_filter_lists`, the GUI `i[0]` loops, the search pos loop, `get_series`' member
 loop; core-internal `create_cmdline`/`get_status_for_set` choices made explicitly;
 `execute_statement`'s mixed Row/dict list verified). Touches GUI code; must not be bundled
 with any delegation step (see `roadmap.md` step 4.8).
+
+**Implemented and committed as `e4fd570`:** `GameRepository` public reads return plain 
+dicts or the established scalars/tuples/`None`; `StatusRepository.get_further_media` 
+returns plain dicts; `gamelist_filter.execute_statement` returns plain dict lists with dict 
+sentinels; `DBMod.build_filter_lists` and GUI filter-option handling use named dict access. 
+Core-internal Row-returning methods remain only where documented 
+(`get_parts_for_set_id`, `get_swl_options`, `get_machine_id`, 
+`get_sharedfeat_requirement`, `get_devices_for_machine`, `get_sets_for_software`). 
+No `row_factory` or SQL shape changes were made.
 
 **Do not, in any stage:** change `connect_sqlite`'s default, set `row_factory` globally, or
 convert a method's return type in the same commit that moves its SQL into a repository.

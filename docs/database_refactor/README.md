@@ -23,16 +23,30 @@ Recorded here because they constrain this refactor directly (source:
    connections or reaches into `DBMod`'s `gdb`/`gdbc`/`sdb`/`sdbc`/`ggdb` internals.
 4. **Reuse Core services** in frontend/screensaver instead of re-implementing them.
 
-## Current status (all phases through 4.6.2 implemented; 4.8 next; 4.9 proposal)
+## Current status (all phases through 4.8 implemented; 4.9 proposal)
 
 **Phase status:** Phase 4.0 complete. Phases 4.2, 4.2a, 4.2b, 4.3, 4.4 and 4.5
 complete. Phase 4.6 — `EmulatorRepository` work complete. Phase 4.7 — filter/query
 refactor complete. Phase 4.6.1 — `status.db` history/filter migration complete,
 including the corrective follow-up (D20/D21). Phase 4.6.2 — screensaver history
-implementation complete (committed as `e7cb00a`). **Next planned implementation
-phase: 4.8 (row-leak closure).** Phase 4.9 is an optional/proposed `database.py`
-reorganisation, not implemented. The artwork source-of-truth cleanup remains a
-separately tracked future task.
+implementation complete (committed as `e7cb00a`). **Phase 4.8 (row-leak closure)
+implemented (committed as `e4fd570`).** **Artwork/DAT source-of-truth refactor
+implemented (committed as `5a51461` + `238bb41` + `9a98cfe`).** Phase 4.9 is an
+optional/proposed `database.py` reorganisation, not implemented.
+
+The current database ownership model is:
+
+| Database | Authoritative data | Normal write owners |
+|---|---|---|
+| `umsa.db` | Downloaded game metadata | Database download/update workflow |
+| `artwork.db` | Scanned artwork inventory and scan-unit state | Artwork, GB64 and ExoDOS scanner workflows |
+| `dat.db` | Published DAT entries, set associations and DAT scan staging/bookkeeping | DAT, GB64 and ExoDOS scanner workflows |
+| `status.db` | Runtime history, filters, emulator configuration and play status | GUI, screensaver and the existing Core services |
+
+`DBMod` opens `umsa.db` read-only and attaches `artwork.db` as `art` and `dat.db` as `dat`
+schemas. Scanner workflows write to their respective source databases through their own
+writable connections. The `add_art_to_db()` and `add_dat_to_db()` copy operations have
+been removed.
 
 Refactor decisions Q1–Q9 are settled; phase 4.6.1a questions Q1–Q6 are resolved as
 D12–D19, with the D20/D21 corrective follow-up recorded in the audit. The current
@@ -356,24 +370,18 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
   revision — it is **not** an import source, and a stray `lastsaver.txt` would be an
   *unknown* file: preserved and listed, never auto-deleted.
 
+### Implemented (all phases through 4.8)
+
+- [x] Step 4.8 — row-leak closure: facade returns only unambiguous shapes; named access only across add-on boundaries. **Implemented (committed as `e4fd570`)**.
+- [x] **Artwork/DAT source-of-truth refactor** — make `artwork.db` and `dat.db` the authoritative sources for scanned artwork and DAT data. Remove the redundant copy workflow (`add_art_to_db`, `add_dat_to_db`, and the copy operations in `open_db`). The persistent `umsa.db` connection is now read-only and attaches `artwork.db` as `art` and `dat.db` as `dat` schemas. Scanner workflows continue to write to their respective source databases through their own writable connections. Mixed game/artwork/DAT queries in `DBMod` now use schema-qualified table names (`art.art_set`, `dat.dat`, `dat.dat_set`). `ArtworkRepository` and `DatRepository` support schema qualification via a `schema` parameter (`"main"` for scanner connections, `"art"`/`"dat"` for DBMod reads). Legacy copied tables in existing `umsa.db` files remain unused but are not dropped; a fresh database download naturally removes them. **Implemented (committed as `5a51461` + `238bb41` + `9a98cfe`)**.
+
 ### Planned / not yet implemented (see roadmap)
 
-- [ ] Step 4.8 — row-leak closure: facade returns only unambiguous shapes; named access only across add-on boundaries. **Next planned implementation phase.**
 - [ ] Step 4.9 (proposal) — move non-DB code out of `database.py` (download, scan progress, labels/selection helpers, cmdline helpers). Optional/planned, not implemented.
-- [x] **Artwork/DAT source-of-truth refactor** — make `artwork.db` and `dat.db` the authoritative sources for scanned artwork and DAT data. Remove the redundant copy workflow (`add_art_to_db`, `add_dat_to_db`, and the copy operations in `open_db`). The persistent `umsa.db` connection is now read-only and attaches `artwork.db` as `art` and `dat.db` as `dat` schemas. Scanner workflows continue to write to their respective source databases through their own writable connections. Mixed game/artwork/DAT queries in `DBMod` now use schema-qualified table names (`art.art_set`, `dat.dat`, `dat.dat_set`). Legacy copied tables in existing `umsa.db` files remain unused but are not dropped; a fresh database download naturally removes them.
 
 ### Next planned step
 
-**Phase 4.8 (row-leak closure) is the next planned implementation phase.** Steps 4.5,
-4.6, 4.7, 4.6.1, 4.6.2 and the **artwork/DAT source-of-truth refactor** are complete;
-the agreed order was 4.7 → 4.6.1 → 4.6.2, and 4.6.2 is now committed (`e7cb00a`). The
-4.6.1 design questions **Q1–Q6 are resolved as D12–D19** (`history_persistence_audit.md`
-§1.1/§16, including `gui_lastgames` retention of **100**), with the D20/D21 corrective
-follow-up included. The §16.2 Kodi-runtime verification items are **not** claimed as
-runtime-verified: the repository documents automated/mocked coverage and static
-inspection only, and records the remaining items as unverified (see the audit document).
-Steps 4.0, 4.2, 4.2a, 4.2b, 4.3, 4.4, 4.5-pre, 4.5, 4.6, 4.7, 4.6.1 and 4.6.2 are done.
-See [`roadmap.md`](roadmap.md) for the full contracts.
+**Phase 4.9 (optional `database.py` reorganisation) is the next possible implementation phase.** All phases through 4.8 are complete, including the artwork/DAT source-of-truth refactor and its follow-up fixes (read-only `umsa.db`, source-database initialization/upgrades, scanner mapping connections, attachment failure cleanup, legacy migration notification fix). The next step would be a deliberate decision about whether to proceed with Phase 4.9 `database.py` reorganisation, which is an optional proposal. See [`roadmap.md`](roadmap.md) for the full contracts.
 
 ## Boundary guards (step 4.0 implemented)
 

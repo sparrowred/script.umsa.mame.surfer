@@ -442,7 +442,7 @@ reads).
 4.5 — **done**, `StatusRepository`) → emulator config (section 10 → step 4.6 —
 **done**, `EmulatorRepository`) → filter/query
 composition (section 8 → step 4.7 — **done**, `gamelist_filter`). Row-leak closure (step
-4.8) and
+4.8 — **done**, committed as `e4fd570`) and
 the non-DB reorganisation (step 4.9) follow. See `roadmap.md`. (Steps 4.3 — sections
 7.2–7.4 plus the `get_all_for_software` direct reads — and 4.4 — the section 7.4
 command-line input reads and `get_cmd_line_options`' four inline SELECTs — are
@@ -450,3 +450,68 @@ implemented; section 7 carries no direct SQL in `DBMod` any more; section 9 carr
 none either since 4.5, section 10 none since 4.6, and section 8's filter/query SQL now
 lives in `gamelist_filter` since 4.7 — only the
 presentation/orchestration facades remain.)
+
+---
+
+## 14. Post-Refactor Status (After Phase 4.8 and Source-Database Refactor)
+
+**Audited code state:** git HEAD `9a98cfe` ("fix(gui): improve import notification logic
+to avoid duplicate messages"). This section summarises the architecture after the
+completed Phase 4.8 (row-leak closure) and the artwork/DAT source-of-truth refactor.
+
+### Database Ownership and Connections
+
+| Database | Role | Connection mode | Notes |
+|---|---|---|---|
+| `umsa.db` | Downloaded game metadata | Read-only (`connect_sqlite_readonly`) | Attaches `artwork.db` as `art`, `dat.db` as `dat` |
+| `artwork.db` | Authoritative artwork inventory + scan state | Scanner: writable; DBMod: read-only attached | Schema qualification via `ArtworkRepository(schema="art"\|"main")` |
+| `dat.db` | Authoritative DAT entries + scan staging | Scanner: writable; DBMod: read-only attached | Schema qualification via `DatRepository(schema="dat"\|"main")` |
+| `status.db` | Runtime state (history, filters, emulator config) | Read-write (`connect_sqlite`) | Owned by `DBMod`; migrations via `status_migrations.py` |
+
+### Removed Operations
+
+- `add_art_to_db()` — removed (was cross-database copy `art.art_set` → `main.art_set`)
+- `add_dat_to_db()` — removed (was cross-database copy `dat.dat`/`dat.dat_set` → `main.dat`/`main.dat_set`)
+- `open_db()` copy operations — removed; now only reattaches source schemas
+- Temporary writable connection for sanity DDL in `_open_persistent_databases()` and `open_db()` — removed
+
+### Row-Factory / Result Shape Status (Post-Phase 4.8)
+
+- **Repository inputs:** All repositories require `sqlite3.Row` (enforced via `require_row_connection`).
+- **Repository outputs:** Public reads return plain dicts or established scalars/tuples/`None`. No `sqlite3.Row` leaks across Core-to-add-on boundary.
+- **Core-internal Row returns (documented):** `get_parts_for_set_id`, `get_swl_options`, `get_machine_id`, `get_sharedfeat_requirement`, `get_devices_for_machine`, `get_sets_for_software` — these remain Row-transparent as Core-internal.
+- **Facade outputs:** `DBMod` methods return plain dicts or established types; `gamelist_filter.execute_statement` returns plain dict lists with dict sentinels.
+- **GUI consumers:** Use named access (`row['col']`) or plain dicts; no positional `row[i]` across add-on boundary.
+
+### Scanner Connections
+
+| Scanner | umsa.db connection | artwork.db / dat.db connections |
+|---|---|---|
+| `DatScanner` | Read-only (`connect_sqlite_readonly`) | Writable (`connect_sqlite`, Row) |
+| `GB64Scanner` | Read-only (`connect_sqlite_readonly`) | Writable (`connect_sqlite`, Row) |
+| `ExodosScanner` | Read-only (`connect_sqlite_readonly`) | Writable (`connect_sqlite`, Row) |
+| `ArtworkScanner` | Read-only (`connect_sqlite_readonly`) | Writable (`connect_sqlite`, Row) |
+
+All scanner mapping lookups against `umsa.db` now use read-only connections.
+
+### Failure-Safe `open_db()`
+
+`DBMod.open_db()` now:
+1. Closes previous `umsa.db` connection
+2. Ensures source databases exist with valid schemas
+2. Opens new `umsa.db` read-only
+3. Attaches source schemas
+4. On attachment failure: closes cursor, closes connection, resets instance state, propagates original error
+
+### Legacy Import Notification Fix
+
+`UMSA.run_startup_import()` now checks the durable import marker **before** calling
+`run_legacy_import()`. Success/discard notifications are shown **only** when the import
+is newly performed (no prior completed marker). Pending-cleanup and failure notifications
+are always shown. Explicit `retry_import` reports a newly successful retry.
+
+### Test Status
+
+- Full suite: **878 passed**, 5 skipped, 18 subtests passed (plus 10 pre-existing test failures unrelated to database refactor).
+- Architecture boundary tests: 7 passed.
+- All core database/repository/scanner tests pass.

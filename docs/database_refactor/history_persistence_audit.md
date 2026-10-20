@@ -990,3 +990,34 @@ skipped, 18 subtests passed, with the new files adding no ruff findings. The
 `setUniqueID` argument order is documented correctly (value first, type second) in
 sections 5 and 16.2. Section 16.2 now records the evidence status per item (no
 documented manual Kodi test run).
+
+---
+
+## 18. Maintainer's Kodi Smoke Test Report (2026-10-20)
+
+The maintainer has completed a manual Kodi smoke test for the source-database refactor
+(Phase 4.8 and artwork/DAT source-of-truth refactor, including follow-up fixes). The
+tested flows behaved as expected, with no negative observations.
+
+**Tested flows:**
+- Artwork lookup and visibility after scanning (cross/slide/wall modes)
+- DAT lookup and visibility after scanning
+- Database download and `open_db()` reopening
+- Continued separation and persistence of runtime history in `status.db`
+- Screensaver-history persistence (to the extent covered by the smoke test)
+
+**Test environment:** Kodi 21.3 (Omega) on Linux, with the real user profile and
+downloaded `umsa_db.zip`.
+
+**Result:** All tested flows behaved as expected. No regressions or negative
+observations. The source-database ownership model (read-only `umsa.db` with attached
+`art`/`dat` schemas, scanners writing to authoritative source databases) functioned
+correctly in the Kodi runtime.
+
+**Note:** This is a maintainer-reported manual Kodi smoke test. It is not an exhaustive
+automated test suite result. The §16.2 items remain as previously documented (Items
+1–7 and 9 still require a dedicated manual Kodi test run for the screensaver history
+specifically). This smoke test covers the database-layer changes (read-only `umsa.db`,
+attached schemas, scanner write paths, `open_db()` reattachment) but does not
+exhaustively cover all §16.2 edge cases.
+
