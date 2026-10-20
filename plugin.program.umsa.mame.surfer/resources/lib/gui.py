@@ -1043,7 +1043,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
         list_items.append(xbmcgui.ListItem('Show all', str(M_ALL)))
 
         # series
-        series = self.ggdb.check_series(self.last[self.lastptr])
+        last_val = self.last[self.lastptr] if self.last else None
+        xbmc.log(f"UMSA gui: build_sublist_menu: last={self.last}, lastptr={self.lastptr}, last_val={last_val}")
+        series = self.ggdb.check_series(last_val) if last_val is not None else 0
+        xbmc.log(f"UMSA gui: build_sublist_menu: series={series}")
         if series:
             list_items.append(xbmcgui.ListItem(f"Series ({series})", str(M_SERIES)))
         else:
