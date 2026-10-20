@@ -406,6 +406,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
         and a recorded `failed` marker is only cleared by `retry_import`.
         """
 
+        # Check if the import was already completed before this startup.
+        # We only show the success notification if the import is newly performed.
+        marker = self.ggdb.get_import_marker()
+        already_completed = marker is not None and marker.get("status") in (
+            "completed", "completed_discards", "completed_no_source"
+        )
+
         try:
             result = self.ggdb.run_legacy_import()
         except Exception as exc:
@@ -417,20 +424,29 @@ class UMSA(xbmcgui.WindowXMLDialog):
             return
 
         xbmc.log(f"UMSA gui: legacy import result: {result.status}")
-        if result.status == 'completed':
-            self.dialog.notification(
-                'UMSA migration', 'History and filters migrated.',
-                xbmcgui.NOTIFICATION_INFO, 4000, False)
+        # Only show success/discard notifications if the import was newly performed.
+        if not already_completed:
+            if result.status == 'completed':
+                self.dialog.notification(
+                    'UMSA migration', 'History and filters migrated.',
+                    xbmcgui.NOTIFICATION_INFO, 4000, False)
+            elif result.status == 'completed_discards':
+                self.dialog.notification(
+                    'UMSA migration',
+                    'Migrated, discarded: ' + ', '.join(result.discarded),
+                    xbmcgui.NOTIFICATION_WARNING, 6000, False)
+            elif result.status == 'completed_no_source':
+                self.dialog.notification(
+                    'UMSA migration', 'Nothing to migrate.',
+                    xbmcgui.NOTIFICATION_INFO, 3000, False)
         elif result.status == 'completed_discards':
+            # Previously completed but with new discards - still show the discard notification
             self.dialog.notification(
                 'UMSA migration',
                 'Migrated, discarded: ' + ', '.join(result.discarded),
                 xbmcgui.NOTIFICATION_WARNING, 6000, False)
-        elif result.status == 'completed_no_source':
-            self.dialog.notification(
-                'UMSA migration', 'Nothing to migrate.',
-                xbmcgui.NOTIFICATION_INFO, 3000, False)
-        elif result.status == 'failed':
+
+        if result.status == 'failed':
             detail = result.error or 'unknown'
             if result.discarded:
                 detail += ' (discarded: ' + ', '.join(result.discarded) + ')'
