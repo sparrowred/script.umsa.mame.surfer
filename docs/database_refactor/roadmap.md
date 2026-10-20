@@ -961,6 +961,12 @@ guard); no behaviour change. Not urgent — schedule after 4.6.
   connections, `"art"`/`"dat"` for DBMod reads). Legacy copied tables in existing
   `umsa.db` files remain unused but are not dropped; a fresh database download
   naturally removes them.
+- **Phase 4.9a: Extract `download_and_update_umsa_db()` (completed)** — moved the
+  standalone database download helper from `umsa_core/database.py` to
+  `umsa_core/umsa_db_download.py`. The function retains its exact public signature
+  and behavior. `DBMod` re-exports the name for backward compatibility. New module
+  is Kodi-free and passes architecture boundary tests. New regression tests added in
+  `tests/test_umsa_db_download.py` (7 tests). **Implemented (committed as `...`)**.
 - **CHD disk-selection dialog (`emulator_launcher.py`)** — found while verifying step
   4.4: `i.get('disk')` on `sqlite3.Row` always raised `AttributeError` (swallowed), so
   the `Select CHD:` dialog never appeared and the picked row could not be promoted.

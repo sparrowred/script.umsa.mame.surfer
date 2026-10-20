@@ -374,10 +374,11 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 
 - [x] Step 4.8 — row-leak closure: facade returns only unambiguous shapes; named access only across add-on boundaries. **Implemented (committed as `e4fd570`)**.
 - [x] **Artwork/DAT source-of-truth refactor** — make `artwork.db` and `dat.db` the authoritative sources for scanned artwork and DAT data. Remove the redundant copy workflow (`add_art_to_db`, `add_dat_to_db`, and the copy operations in `open_db`). The persistent `umsa.db` connection is now read-only and attaches `artwork.db` as `art` and `dat.db` as `dat` schemas. Scanner workflows continue to write to their respective source databases through their own writable connections. Mixed game/artwork/DAT queries in `DBMod` now use schema-qualified table names (`art.art_set`, `dat.dat`, `dat.dat_set`). `ArtworkRepository` and `DatRepository` support schema qualification via a `schema` parameter (`"main"` for scanner connections, `"art"`/`"dat"` for DBMod reads). Legacy copied tables in existing `umsa.db` files remain unused but are not dropped; a fresh database download naturally removes them. **Implemented (committed as `5a51461` + `238bb41` + `9a98cfe`)**.
+- [x] **Phase 4.9a: Extract `download_and_update_umsa_db()`** — moved the standalone database download helper from `umsa_core/database.py` to `umsa_core/umsa_db_download.py`. The function retains its exact public signature and behavior. `DBMod` re-exports the name for backward compatibility. New module is Kodi-free and passes architecture boundary tests. New regression tests added in `tests/test_umsa_db_download.py` (7 tests). **Implemented (committed as `...`)**.
 
 ### Planned / not yet implemented (see roadmap)
 
-- [ ] Step 4.9 (proposal) — move non-DB code out of `database.py` (download, scan progress, labels/selection helpers, cmdline helpers). Optional/planned, not implemented.
+- [ ] Step 4.9 (proposal) — move remaining non-DB code out of `database.py` (scan progress, labels/selection helpers, cmdline helpers). Optional/planned, not implemented.
 
 ### Next planned step
 

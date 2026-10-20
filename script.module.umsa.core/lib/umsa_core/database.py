@@ -34,11 +34,9 @@ import os
 import sqlite3  # connect, Row, OperationalError
 import threading
 import time
-import zipfile
 from contextlib import contextmanager
-from io import BytesIO
 from re import findall, search
-from urllib.request import urlopen, pathname2url
+from urllib.request import pathname2url
 
 from .artwork import resolve_artwork_path
 from .artwork_repository import ArtworkRepository, create_artwork_tables
@@ -64,6 +62,7 @@ from .history_import import retry_import as _retry_import
 from .history_import import run_legacy_import as _run_legacy_import
 from .history_repository import HistoryRepository
 from .logging import log
+from .umsa_db_download import download_and_update_umsa_db
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
@@ -117,27 +116,6 @@ def build_filter_lists(filter_lists, category, db):
         item = {'id': str(entry['id']), 'name': entry['name'], 'count': entry['count']}
         (active if item['id'] in active_ids else inactive).append(item)
     return {'active': active, 'inactive': inactive}
-
-
-def download_and_update_umsa_db(data_dir, progress, title='Updating UMSA database'):
-    """Download and extract the UMSA database archive into ``data_dir``.
-
-    ``progress`` is called as ``progress(percent, title, message)``; ``message``
-    is ``None`` for the plain percentage updates during download.
-    """
-
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    db_zip = bytearray()
-    url = urlopen("http://umsa.info/umsa_db.zip", timeout=20)
-    # float with *1.0 for percentage
-    db_zip_size = int(url.info()['Content-Length']) * 1.0
-    while len(db_zip) < db_zip_size:
-        db_zip.extend(url.read(102400))
-        progress(int((len(db_zip) / db_zip_size) * 80), title, None)
-
-    progress(80, title, 'unzip file...')
-    zipfile.ZipFile(BytesIO(db_zip)).extractall(data_dir)
 
 
 @contextmanager
