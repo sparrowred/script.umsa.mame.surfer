@@ -4,7 +4,12 @@ import xbmc
 import xbmcgui
 from umsa_core import set_log
 from umsa_core.database import DBMod
-from umsa_core_kodi import get_core_data_paths, get_core_settings, send_software_open
+from umsa_core_kodi import (
+    get_core_data_paths,
+    get_core_settings,
+    send_software_open,
+    set_screensaver_manual,
+)
 
 from .arguments import decode_request
 from .ui import Monitor
@@ -84,6 +89,11 @@ class ScreensaverRuntime:
             xbmc.log("UMSA saver: emulator running, not starting", xbmc.LOGINFO)
             return
 
+        # Activate manual inhibition for explicit (script) invocations only
+        manual = request is not None
+        if manual:
+            set_screensaver_manual(True)
+
         window.setProperty(_RUNNING_PROPERTY, "true")
         window.setProperty(_MODE_PROPERTY, "starting")
         try:
@@ -126,6 +136,9 @@ class ScreensaverRuntime:
                 window.setProperty(_MODE_PROPERTY, saver.running)
                 saver.doModal()
         finally:
+            # Clear manual inhibition for explicit invocations
+            if manual:
+                set_screensaver_manual(False)
             try:
                 if self.ggdb is not None:
                     self.ggdb.close()

@@ -18,6 +18,10 @@ VGM_ACTION_METHOD = "UMSA.VGM.Action"
 
 SOFTWARE_OPEN_METHOD = "UMSA.Software.Open"
 
+SHARED_WINDOW_ID = 10000
+EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"
+SCREENSAVER_MANUAL_PROPERTY = "UMSA.Screensaver.Manual"
+
 _SHARED_SETTING_IDS = (
     "mame",
     "mameini",
@@ -32,6 +36,60 @@ _SHARED_SETTING_IDS = (
     "aspectratio",
     "ssaver_musicinfo",
 )
+
+
+def _recompute_screensaver_inhibition() -> None:
+    """Recompute global screensaver inhibition from active reasons.
+
+    Calls Kodi's InhibitScreensaver(true) if any reason is active,
+    InhibitScreensaver(false) only when no reasons remain.
+    """
+    window = xbmcgui.Window(SHARED_WINDOW_ID)
+    emulator_active = window.getProperty(EMULATOR_RUNNING_PROPERTY) == "true"
+    screensaver_manual_active = window.getProperty(SCREENSAVER_MANUAL_PROPERTY) == "true"
+
+    if emulator_active or screensaver_manual_active:
+        xbmc.executebuiltin("InhibitScreensaver(true)")
+    else:
+        xbmc.executebuiltin("InhibitScreensaver(false)")
+
+
+def set_emulator_running(running: bool) -> None:
+    """Set/clear the external emulator running state and recompute inhibition.
+
+    This property is shared with screensaver.umsa.mame.surfer; both add-ons
+    must use the identical property name.
+    """
+    window = xbmcgui.Window(SHARED_WINDOW_ID)
+    if running:
+        window.setProperty(EMULATOR_RUNNING_PROPERTY, "true")
+    else:
+        window.clearProperty(EMULATOR_RUNNING_PROPERTY)
+    _recompute_screensaver_inhibition()
+
+
+def is_emulator_running() -> bool:
+    """Return True if an external emulator is currently running."""
+    return xbmcgui.Window(SHARED_WINDOW_ID).getProperty(EMULATOR_RUNNING_PROPERTY) == "true"
+
+
+def set_screensaver_manual(manual: bool) -> None:
+    """Set/clear the manually started UMSA screensaver state and recompute inhibition.
+
+    This property indicates an explicit user-initiated screensaver invocation
+    (via RunScript with a request token), not Kodi's automatic idle screensaver.
+    """
+    window = xbmcgui.Window(SHARED_WINDOW_ID)
+    if manual:
+        window.setProperty(SCREENSAVER_MANUAL_PROPERTY, "true")
+    else:
+        window.clearProperty(SCREENSAVER_MANUAL_PROPERTY)
+    _recompute_screensaver_inhibition()
+
+
+def is_screensaver_manual() -> bool:
+    """Return True if a manually started UMSA screensaver is currently active."""
+    return xbmcgui.Window(SHARED_WINDOW_ID).getProperty(SCREENSAVER_MANUAL_PROPERTY) == "true"
 
 
 def get_core_data_paths(create: bool = True) -> CoreDataPaths:

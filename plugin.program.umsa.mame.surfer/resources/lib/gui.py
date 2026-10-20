@@ -51,6 +51,9 @@ from umsa_core_kodi import (
     parse_software_open_method,
     parse_vgm_action_method,
     publish_vgm_info,
+    set_emulator_running,
+    is_emulator_running,
+    set_screensaver_manual,
 )
 from umsa_screensaver.arguments import encode_request
 
@@ -538,17 +541,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Set/clear the property indicating an external emulator is running.
 
         This property is shared with screensaver.umsa.mame.surfer; both add-ons
-        must use the identical property name.
+        must use the identical property name. Also recomputes global
+        screensaver inhibition state.
         """
-        w = xbmcgui.Window(10000)
-        if running:
-            w.setProperty(EMULATOR_RUNNING_PROPERTY, "true")
-        else:
-            w.clearProperty(EMULATOR_RUNNING_PROPERTY)
+        set_emulator_running(running)
 
     def is_emulator_running(self):
         """Return True if an external emulator is currently running."""
-        return xbmcgui.Window(10000).getProperty(EMULATOR_RUNNING_PROPERTY) == "true"
+        return is_emulator_running()
 
     def get_screensaver_mode(self):
         """Return the active standalone screensaver mode, if any."""
@@ -557,18 +557,26 @@ class UMSA(xbmcgui.WindowXMLDialog):
         return mode or "no"
 
     def start_screensaver(self, mode, art_types=None):
-        """Launch the standalone screensaver with a validated request token."""
+        """Launch the standalone screensaver with a validated request token.
 
+        Also activates the manual-screensaver inhibition reason so that Kodi's
+        idle screensaver does not compete with the explicitly started instance.
+        """
         token = encode_request(mode, art_types)
         xbmc.executebuiltin(
             f"RunScript(screensaver.umsa.mame.surfer,{token})"
         )
+        set_screensaver_manual(True)
 
     def stop_screensaver(self):
-        """Close an active standalone screensaver dialog."""
+        """Close an active standalone screensaver dialog.
 
+        Also clears the manual-screensaver inhibition reason when the instance
+        is stopped from the GUI.
+        """
         if self.get_screensaver_mode() != "no":
             xbmc.executebuiltin("Action(Close)")
+        set_screensaver_manual(False)
 
     def get_machine_pic(self, use_set):
         """Return the machine artwork path for the current game set."""
