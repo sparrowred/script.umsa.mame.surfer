@@ -177,7 +177,7 @@
 
 ## Proposed Future Changes (Not Yet Implemented)
 
-1. **Remove dead code in `run_emulator`** (lines 2545–2636) — trivial, no behavior change
+1. **Remove dead code in `run_emulator` (lines 2545–2636) — trivial, no behavior change** ✅ **COMPLETED** (2026-10-20)
 2. **Split `UMSA` into coordinator + workflow modules**:
    - `gui/menu.py` — `build_main_menu`, `build_sublist_menu`, menu constants
    - `gui/gamelist.py` — `popup_gamelist`, `gamelist_click`, `gamelist_context`, `gamelist_move`, `gamelist_switch_filter`

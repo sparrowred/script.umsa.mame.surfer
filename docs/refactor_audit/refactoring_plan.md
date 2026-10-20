@@ -5,7 +5,7 @@
 
 ---
 
-## Step 1: Remove Dead Code in `UMSA.run_emulator()` (Trivial, Zero Risk)
+## Step 1: Remove Dead Code in `UMSA.run_emulator()` (Trivial, Zero Risk) ✅ **COMPLETED**
 
 | Aspect | Detail |
 |--------|--------|
@@ -13,10 +13,11 @@
 | **Files** | `plugin.program.umsa.mame.surfer/resources/lib/gui.py` |
 | **Responsibility moved** | None — code is dead duplicate of `emulator_launcher.py` |
 | **Contracts unchanged** | `UMSA.run_emulator(emu_infos)` signature, `LaunchCtx`/`RetroplayerCtx`, `launch_emulator`, `run_retroplayer` |
-| **Tests** | `tests/test_frontend_entrypoint.py`, `tests/test_emulator_launcher.py` — verify `launch_emulator` called, no legacy path |
+| **Tests** | `tests/test_frontend_entrypoint.py` (7 passed), `tests/test_emulator_launcher.py` (5 passed), `tests/test_architecture_boundaries.py` (7 passed) |
 | **Risk** | None — code is provably unreachable (two `return` statements before it) |
 | **Dependencies** | None — can be done immediately |
-| **Acceptance** | `gui.py` lines 2545–2636 removed; full test suite passes (878 passed); `run_emulator` ends at line 2543 |
+| **Acceptance** | ✅ `gui.py` lines 2545–2636 removed; `run_emulator` now ends at line 2542; 19 relevant tests pass |
+| **Completed** | 2026-10-20 — dead block (92 lines) removed; no imports removed (all used elsewhere in `gui.py`); no behavior change |
 
 ---
 

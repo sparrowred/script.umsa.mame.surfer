@@ -23,7 +23,7 @@ The codebase implements a three-add-on architecture (Frontend, Core, Screensaver
 | Area | Risk | Evidence |
 |------|------|----------|
 | `gui.py` `UMSA` class | ~2700 lines, god-class patterns: mixes Kodi window lifecycle, input handling, database orchestration, emulator launch prep, artwork/media management, scan coordination, screensaver/VGM communication | Single class owns 60+ instance attributes, 100+ methods |
-| Emulator launch path | Split across `UMSA.run_emulator()` (legacy body after `launch_emulator()` return), `emulator_launcher.py`, `retroplayer_cache.py`, `Emulation.prepare_mame_run()`, `DBMod.get_cmd_line_options()`/`create_cmdline()` — ownership of command-line assembly vs. DB lookup vs. process execution is diffuse | `run_emulator()` has 130 lines of dead code after `launch_emulator(ctx)` return (lines 2545–2636) |
+| Emulator launch path | Split across `UMSA.run_emulator()`, `emulator_launcher.py`, `retroplayer_cache.py`, `Emulation.prepare_mame_run()`, `DBMod.get_cmd_line_options()`/`create_cmdline()` — ownership of command-line assembly vs. DB lookup vs. process execution is diffuse | **Dead code removed (Step 1):** 92 lines after `launch_emulator(ctx)` return deleted |
 | `emulation.py` `Emulation` class | ~1200 lines, handles MAME, VGM, CHD, eXoDOS, GB64, WHDLoad, Demul, FS-UAE, Flycast, MARP, Retroplayer — each with custom prep/extract logic | 20+ `prepare_*`/`find_*`/`extract_*` methods, emulator-specific logic mixed with process management |
 | Screensaver `ui.py` | `Saver` (887 lines), `Player` (170 lines), `Monitor` (70 lines) in one file; `Saver.get_art_and_call_saver()` is a 400-line loop mixing rendering, artwork resolution, bad-image checking, history recording, wait loops | No separation between rendering, playback, lifecycle, history |
 | `DBMod` | Still holds 69k lines; retains mixed queries (`get_random_id`, `get_random_art`, `get_artwork_by_software_id`), cross-db sync (`open_db`), orchestration (`get_all_for_software`, `get_cmd_line_options`, `get_last_played`) | Phase 4.9 reorganisation proposed but not implemented |
@@ -44,7 +44,7 @@ The codebase implements a three-add-on architecture (Frontend, Core, Screensaver
 
 ## Verified Architectural Findings
 
-1. **`UMSA.run_emulator()` has a dead code block** (lines 2545–2636) after the `launch_emulator(ctx)` call returns. The legacy body duplicates `emulator_launcher.py` logic and should be removed.
+1. **`UMSA.run_emulator()` dead code block removed (Step 1 complete).** The legacy body (92 lines, formerly lines 2545–2636) after the `launch_emulator(ctx)` call was deleted. The method now cleanly dispatches to `run_retroplayer()` (Retroplayer) or `launch_emulator()` (external emulators).
 
 2. **Command-line assembly is split**: `DBMod.get_cmd_line_options()` reads from `GameRepository` (Phase 4.4) but assembles the final argument list; `DBMod.create_cmdline()` is pure assembly. `Emulation.prepare_mame_run()` calls `get_cmd_line_options()`. The boundary between "database-backed reads" and "deterministic assembly" is clean at the repository layer but `DBMod` still owns assembly.
 
@@ -62,13 +62,13 @@ The codebase implements a three-add-on architecture (Frontend, Core, Screensaver
 
 ## Recommended Implementation Order
 
-| Step | Area | Rationale |
-|------|------|-----------|
-| 1 | Remove dead code in `UMSA.run_emulator()` (lines 2545–2636) | Trivial, no behavior change, unblocks cleaner audit of launch path |
-| 2 | Extract `Emulation` emulator-specific prep (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `find_roms`, `extract_rom`, `extract_chd`) into a `LaunchPreparer` or per-emulator modules | Isolates deterministic command-line/ROM discovery from process execution; enables unit testing without Kodi |
-| 3 | Split `gui.py` `UMSA` into focused GUI workflow modules (menu handling, gamelist strategies already extracted, filter UI, artwork/media display, scan orchestration) | Reduces god-class; retains `UMSA` as Kodi dialog coordinator |
-| 4 | Separate `Saver` rendering loop from `Player` playback callbacks and `Monitor` lifecycle — consider `screensaver/rendering.py`, `screensaver/playback.py`, `screensaver/history.py` | Improves testability of artwork selection/validation and history recording |
-| 5 | Reassess `umsa_core` module layout after boundaries settle (Phase 4.9 `database.py` reorganisation: `umsa_db_download.py`, `scan_progress.py`, `game_labels.py`, `cmdline.py`) | Only meaningful once launch-path and GUI extractions clarify what stays in `DBMod` |
+| Step | Area | Rationale | Status |
+|------|------|-----------|--------|
+| 1 | Remove dead code in `UMSA.run_emulator()` (lines 2545–2636) | Trivial, no behavior change, unblocks cleaner audit of launch path | ✅ **Done** |
+| 2 | Extract `Emulation` emulator-specific prep (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `find_roms`, `extract_rom`, `extract_chd`) into a `LaunchPreparer` or per-emulator modules | Isolates deterministic command-line/ROM discovery from process execution; enables unit testing without Kodi | Pending |
+| 3 | Split `gui.py` `UMSA` into focused GUI workflow modules (menu handling, gamelist strategies already extracted, filter UI, artwork/media display, scan orchestration) | Reduces god-class; retains `UMSA` as Kodi dialog coordinator | Pending |
+| 4 | Separate `Saver` rendering loop from `Player` playback callbacks and `Monitor` lifecycle — consider `screensaver/rendering.py`, `screensaver/playback.py`, `screensaver/history.py` | Improves testability of artwork selection/validation and history recording | Pending |
+| 5 | Reassess `umsa_core` module layout after boundaries settle (Phase 4.9 `database.py` reorganisation: `umsa_db_download.py`, `scan_progress.py`, `game_labels.py`, `cmdline.py`) | Only meaningful once launch-path and GUI extractions clarify what stays in `DBMod` | Pending |
 
 ---
 

@@ -230,9 +230,9 @@ def prepare_mame_run(self, ggdb, actset, dialog=None):
 
 ---
 
-### `UMSA.run_emulator()` (GUI) — **Dead Code Present**
+### `UMSA.run_emulator()` (GUI) — **Dead Code Removed (Step 1 Complete)**
 
-**Location:** `gui.py:2504–2636`
+**Location:** `gui.py:2504–2542` (formerly `gui.py:2504–2636`)
 
 ```python
 def run_emulator(self, emu_infos):
@@ -245,23 +245,9 @@ def run_emulator(self, emu_infos):
     ctx = LaunchCtx(...)
     launch_emulator(ctx)
     return  # ← RETURNS HERE
-
-    # DEAD CODE BELOW (lines 2545–2636) — 92 lines duplicating emulator_launcher.py:
-    # - stop video/pause audio
-    # - emu_dialog.update(50)
-    # - sleep(100)
-    # - uses_process_runner check
-    # - set_emulator_running(True)
-    # - start_managed_process / run
-    # - wait_for_completion
-    # - finally: set_emulator_running(False)
-    # - speed parse, exit code, TEXTLIST output
-    # - write_status_after_play
-    # - local snaps refresh
-    # - notify_final
 ```
 
-**Verdict:** Lines 2545–2636 are **unreachable** and should be removed. `launch_emulator` and `run_retroplayer` handle all paths.
+**Verdict:** The 92-line legacy body (formerly lines 2545–2636) that duplicated `emulator_launcher.py` logic was **removed on 2026-10-20**. `launch_emulator` and `run_retroplayer` handle all paths.
 
 ---
 
