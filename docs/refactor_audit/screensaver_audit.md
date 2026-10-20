@@ -1,0 +1,139 @@
+# Screensaver Audit — `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py`
+
+**Audited at:** git HEAD `9a98cfe`  
+**File size:** ~1231 lines, three classes: `Saver` (~887 lines), `Player` (~170 lines), `Monitor` (~70 lines) + module-level helpers
+
+---
+
+## Responsibility Map
+
+| Class | Responsibility | Key Methods | Kodi APIs Used |
+|-------|----------------|-------------|----------------|
+| `Saver` (`xbmcgui.WindowXMLDialog`) | Artwork rendering loop (cross, slide, wall), video playlist management, bad-image filtering, artwork path resolution, temporary video extraction/cleanup, screensaver history recording, settings interpretation | `__init__`, `onInit`, `onAction`, `remember_art`, `record_display`, `open_software`, `read_settings`, `check_snapshot`, `get_machine_pic`, `resolve_art_path`, `_extract_exodos_video`, `_cleanup_temp_videos`, `add_video_to_playlist`, `get_art_and_call_saver`, `create_wall` | `xbmcgui.WindowXMLDialog`, `xbmc.PlayList`, `xbmcgui.ListItem`, `xbmcgui.ControlImage`, `xbmcvfs`, `xbmcaddon`, `xbmc.sleep`, `xbmc.log`, `xbmc.executebuiltin`, window properties |
+| `Player` (`xbmc.Player`) | Video playback callbacks (`onAVStarted`, `onPlayBackStarted`, `onPlayBackEnded`), label fading, playlist advancement, history recording for videos | `__init__`, `_av_instance_token`, `onAVStarted`, `onPlayBackStarted`, `onPlayBackEnded` | `xbmc.Player`, `getVideoInfoTag`, `getTotalTime`, `getPlayingFile`, `isPlayingVideo`, `playnext` |
+| `Monitor` (`xbmc.Monitor`) | Screensaver lifecycle (activation/deactivation/DPMS), mode selection, `Saver`/`Player` instantiation, frontend communication (window properties, `NotifyAll` via `vgm_active`/`send_vgm_action`) | `__init__`, `startme`, `onScreensaverActivated`, `onScreensaverDeactivated`, `reallyDeactivateScreensaver`, `onDPMSActivated` | `xbmc.Monitor`, `xbmcgui.Window(10000)`, `xbmcaddon`, `xbmc.log`, `vgm_active`, `send_vgm_action` |
+
+---
+
+## Boundary Analysis
+
+### 1. Kodi Window & Lifecycle Management
+- **`Monitor.startme`** (lines 1166–1189): Entry point from Kodi screensaver activation. Checks `UMSA.Emulator.Running` property, audio playback, selects mode from settings, sets `UMSA.Screensaver.Mode` property, calls `Saver.doModal()`.
+- **`Monitor.onScreensaverDeactivated`** (lines 1191–1212): Handles deactivation — special cases for `emu` mode, `videos` mode (stays active), VGM commands. Calls `reallyDeactivateScreensaver`.
+- **`Monitor.reallyDeactivateScreensaver`** (lines 1214–1227): Sets `Saver.running = 'no'` (breaks render loop), cleans up temp videos, clears `UMSA.Screensaver.Mode`.
+- **`Saver.doModal()`** → `get_art_and_call_saver()` → render loop (lines 647–885): **Main loop** runs until `self.running == 'no'`.
+
+### 2. Context-Key Handoff to Frontend
+- **`Saver.open_software`** (lines 317–337): Called on context-menu action (`ACTION_CONTEXT`) in cross/slide/wall/video modes. Reads software id from `Votes` (video) or `current_software_id` (images). Calls `self.parent.umsa.open_software(int(software_id))` → frontend `UMSA.open_software` → `_remember_and_select`.
+- **`Saver.onAction`** (lines 214–278): Routes context action; video mode also stops player.
+
+### 3. Artwork Selection & Rendering (cross, slide, wall)
+- **`get_art_and_call_saver`** (lines 647–885): **400-line method** — the render loop.
+  - Determines `art_types` by mode: videos=`['videosnaps']`, cross=`['covers','flyers']`, slide=`['covers','flyers','cabinets','cpanel','marquees']`, wall=`['snap']` + `create_wall()`
+  - Loop: `ggdb.get_random_art(art_types)` → `remember_art(art)` → `resolve_art_path` → `check_snapshot` (bad-image filter) → aspect calc → set control images → info labels → **mode-specific rendering** (cross: random pos `ControlImage`; slide: flip `IMAGE[0/1]` + `BACKG[0/1]`; wall: grid `mesh` + free slots) → **`record_display(art)`** (display-success boundary) → wait loop (`xbmc.sleep(1000)`)
+- **`create_wall`** (lines 887–963): Calculates grid layout (rows/cols/spacing), creates `ControlImage` mesh, shuffles positions, handles free-slot logic.
+
+### 4. Artwork Path Resolution & Image Validation
+- **`resolve_art_path`** (lines 454–472): Wrapper around Core `resolve_artwork_path`. Handles alternate art types (flyer/cover/snap) for left-image display.
+- **`_extract_exodos_video`** (lines 474–573): Extracts eXoDOS videosnap from ZIP to `special://temp/umsa_screensaver_videos/`. Caches by `set_id:archive_member`. Validates path containment, member safety.
+- **`_cleanup_temp_videos`** (lines 575–596): Deletes tracked temp files on shutdown or mode change.
+- **`check_snapshot`** (lines 372–411): MD5 against hardcoded bad-image lists (PIL and non-PIL variants); variance check for solid-color images (PIL only).
+
+### 5. Video Playlist Management & Playback Callbacks
+- **`add_video_to_playlist`** (lines 598–645): `get_random_art(['videosnaps'])` → `_extract_exodos_video` or `resolve_art_path` → `ListItem` with info (title, genre, trailer=machine_pic, director=left_pic, `Votes`=software_id) → **`attach_set_id(video_item, set_id)`** (Kodi 20+ unique ID) → `playlist.add()`.
+- **`Player.onPlayBackStarted`** (lines 1077–1139): Increments `_playback_instance`, clears label, waits for `getTotalTime() > 0`, calculates fade timings, sets info labels/images from `VideoInfoTag`, runs fade loop.
+- **`Player.onAVStarted`** (lines 1012–1075): **History recording point for videos**. Deduplicates by `_av_instance_token` (instance + playlist pos + file). Reads `umsa_set_id` via `read_set_id(video_tag)` (Kodi 20+), `software_id` via `read_software_id` (`Votes`). Calls `ggdb.record_screensaver_display(set_id, software_id)`. Capability-guarded for Kodi < 20.
+- **`Player.onPlayBackEnded`** (lines 1141–1152): Adds next video to playlist if in video mode.
+
+### 6. Screensaver-History Recording
+- **`Saver.record_display`** (lines 285–315): Called **once per completed cross/slide/wall render** (line 835), after bad-image check, before wait loop. Normalizes `set_id` via `normalize_set_id` (Core), calls `ggdb.record_screensaver_display(normalized_set_id, software_id)`. Failures logged, never break rendering.
+- **`Player.onAVStarted`**: Records video history (see above).
+- **Core side**: `HistoryRepository.record_screensaver_display` (delete-reinsert-prune in one savepoint, 100-set limit), `DBMod.record_screensaver_display` facade.
+
+### 7. Temporary Video Extraction & Cleanup
+- **`_extract_exodos_video`**: On-demand extraction for eXoDOS videosnaps stored in ZIP. Atomic write (`.part` → rename). Cache keyed by `set_id:member`. Validates archive path inside eXoDOS root, member path safety.
+- **`_cleanup_temp_videos`**: Called from `get_art_and_call_saver` exit (line 881) and `reallyDeactivateScreensaver` (line 1226). `keep_keys` parameter preserves current playback cache.
+
+### 8. Settings Interpretation
+- **`Saver.read_settings`** (lines 338–370): Core settings (`own_artwork`, `progettosnaps`, `aspect_ratio_factor`) + screensaver-specific settings (`ssaver_time`, `ssaver_info`, `ssaver_videos/slide/wall/cross`, `ssaver_trows/trows_b/srows/srows_b/free/titles`).
+- **`Monitor.startme`**: Reads `ssaver_*` settings to build `settings['type']` list for mode selection.
+
+### 9. VGM Control Notifications
+- **`Saver.onAction`** (lines 255–270): When `vgm_active()` (Core adapter), handles volume up/down (88/89), next (play_nextitem/right), stop (13) via `send_vgm_action`. Sets `parent.vgmaction = True` to prevent screensaver deactivation.
+- **`Monitor.onScreensaverDeactivated`** (lines 1205–1209): Checks `vgm_active()` and `self.vgmaction` to avoid stopping screensaver during VGM commands.
+
+---
+
+## Smallest Cohesive Extractions for Testability
+
+| Extraction | Current Location | Proposed Module | Rationale |
+|------------|------------------|-----------------|-----------|
+| **Artwork selection + validation** | `get_art_and_call_saver` (lines 685–746) | `screensaver/artwork_selector.py` | Pure logic: `get_random_art` → `resolve_art_path` → `check_snapshot` → aspect. No Kodi controls. |
+| **Mode-specific rendering** | `get_art_and_call_saver` cross/slide/wall blocks (lines 753–828) | `screensaver/rendering.py` | Each mode has distinct control manipulation. Could be strategy classes. |
+| **Wall layout calculation** | `create_wall` (lines 887–963) | `screensaver/wall_layout.py` | Pure geometry — no Kodi calls until `addControl`. |
+| **Video playlist management** | `add_video_to_playlist` (lines 598–645) + `Player.onPlayBackEnded` | `screensaver/video_playlist.py` | Encapsulates `xbmc.PlayList`, `ListItem` creation, `attach_set_id`. |
+| **History recording** | `Saver.record_display` + `Player.onAVStarted` | `screensaver/history.py` | Both call `ggdb.record_screensaver_display`; unify deduplication logic. |
+| **Temp video extraction** | `_extract_exodos_video` + `_cleanup_temp_videos` | `screensaver/temp_video.py` | Self-contained extraction + cache + cleanup. |
+| **Bad-image detection** | `check_snapshot` (lines 372–411) | `screensaver/image_validator.py` | Pure function (path → bool); PIL/non-PIL variants. |
+| **Settings model** | `Saver.read_settings` + `Monitor.startme` | `screensaver/settings.py` | Dataclass for screensaver settings; single parse point. |
+
+**Keep in `ui.py` (Kodi callbacks):**
+- `Saver.__init__`, `onInit`, `onAction` (dispatch only)
+- `Player.__init__`, `onPlayBackStarted`, `onAVStarted`, `onPlayBackEnded` (callbacks)
+- `Monitor.__init__`, `startme`, `onScreensaverActivated`, `onScreensaverDeactivated`, `reallyDeactivateScreensaver`, `onDPMSActivated`
+- Window property management (`UMSA.Screensaver.Mode`, `UMSA.Emulator.Running`)
+
+---
+
+## Core Database APIs & Cross-Addon Contracts (Explicit)
+
+| Contract | Core API | Screensaver Usage | GUI Usage |
+|----------|----------|-------------------|-----------|
+| Random artwork | `DBMod.get_random_art(art_types)` | `Saver.get_art_and_call_saver` (per loop) | `gui.py` (media chooser) |
+| Artwork path resolution | `resolve_artwork_path(art, set_info, source_roots)` | `Saver.resolve_art_path` (wrapper) | `gui.create_artworklist` |
+| Screensaver history write | `DBMod.record_screensaver_display(set_id, software_id)` | `Saver.record_display`, `Player.onAVStarted` | `gui.py` (not used) |
+| Screensaver history read | `DBMod.get_screensaver_history()` | Not used | `gamelist_strategies.last_saver` |
+| Core settings | `get_core_settings()` (adapter) | `Saver.read_settings`, `Monitor.startme` | `gui.read_settings` |
+| VGM active check | `vgm_active()` (adapter) | `Saver.onAction`, `Monitor.onScreensaverDeactivated` | `gui._handle_vgm_action` |
+| VGM action send | `send_vgm_action(action)` (adapter) | `Saver.onAction` | `gui._handle_vgm_action` |
+| Frontend software open | `UMSA.open_software(software_id)` (GUI) | `Saver.open_software` → `parent.umsa.open_software` | `gui.open_software` |
+
+---
+
+## Proposed Changes (Not Implemented)
+
+1. **Split `ui.py` into multiple modules** under `lib/umsa_screensaver/`:
+   - `ui.py` → `Saver` (dispatch), `Player`, `Monitor` only
+   - `artwork_selector.py` — selection + validation
+   - `rendering.py` — cross/slide/wall render strategies
+   - `wall_layout.py` — grid geometry
+   - `video_playlist.py` — playlist + `ListItem` creation
+   - `history.py` — `record_display` + `onAVStarted` deduplication
+   - `temp_video.py` — eXoDOS extraction + cache
+   - `image_validator.py` — `check_snapshot`
+   - `settings.py` — settings dataclass
+
+2. **Extract `Player` history logic** into shared `history.py` — both `Saver.record_display` and `Player.onAVStarted` call same Core method; deduplication token logic could be shared.
+
+3. **Make `check_snapshot` configurable** — bad-image MD5 lists hardcoded; could be loaded from file or Core.
+
+4. **Capability-guard all Kodi 20+ APIs** — `attach_set_id`/`read_set_id` already do this; ensure any new unique-ID usage follows pattern.
+
+5. **Do not move Kodi window callbacks into `umsa_core`** — `Monitor.startme`, `onScreensaverActivated`, `Player.onAVStarted` are Kodi lifecycle hooks; must stay in screensaver add-on.
+
+---
+
+## Behavior That Must Remain Compatible
+
+- `Saver.running` values: `'no' | 'videos' | 'cross' | 'slide' | 'wall' | 'emu'` — frontend reads `UMSA.Screensaver.Mode` property
+- `UMSA.Screensaver.Mode` window property on window 10000 — bidirectional (Monitor sets, GUI reads)
+- `UMSA.Emulator.Running` property — shared with GUI
+- `Votes` on video `ListItem` = software id (context handoff)
+- `umsa_set_id` unique ID on video `ListItem` (Kodi 20+) = set id (history)
+- `attach_set_id`/`read_set_id`/`read_software_id` signatures — used by `Saver` and `Player`
+- `record_display` called once per completed image render (post-render, pre-wait)
+- `onAVStarted` called once per video playback (stream available)
+- Temp video cache key format: `f"{set_id}:{archive_member}"`
+- `special://temp/umsa_screensaver_videos/` directory for extractions
+- Settings keys: `ssaver_time`, `ssaver_info`, `ssaver_videos`, `ssaver_slide`, `ssaver_wall`, `ssaver_cross`, `ssaver_trows`, `ssaver_trows_b`, `ssaver_srows`, `ssaver_srows_b`, `ssaver_free`, `ssaver_titles`
+- `vgm_active()` / `send_vgm_action()` protocol for VGM control
