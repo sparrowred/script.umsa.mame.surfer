@@ -22,7 +22,7 @@ from .artwork import root_key_for_path
 from .artwork_repository import ArtworkRepository
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
-from .sqlite import connect_sqlite
+from .sqlite import connect_sqlite, connect_sqlite_readonly
 
 # --- Artwork scan filesystem retry policy -------------------------------------
 # Bounded retry for transient filesystem/network errors while listing artwork
@@ -430,7 +430,7 @@ class ArtworkScanner:
             db_conn = connect_sqlite(
                 db_paths.artwork_db, row_factory=sqlite3.Row)
             dbc = db_conn.cursor()
-            gdb = connect_sqlite(db_paths.umsa_db)
+            gdb = connect_sqlite_readonly(db_paths.umsa_db)
             gdbc = gdb.cursor()
 
             self._initialize_tables(dbc)

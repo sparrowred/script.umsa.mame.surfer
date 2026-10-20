@@ -26,7 +26,7 @@ from .dat_repository import (
 )
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
-from .sqlite import connect_sqlite
+from .sqlite import connect_sqlite, connect_sqlite_readonly
 
 
 class DatScanner:
@@ -76,7 +76,7 @@ class DatScanner:
         if not os.path.isfile(umsa_db):
             raise FileNotFoundError(f"UMSA database not found: {umsa_db}")
 
-        gdb = connect_sqlite(umsa_db, row_factory=sqlite3.Row)
+        gdb = connect_sqlite_readonly(umsa_db, row_factory=sqlite3.Row)
         try:
             gdbc = gdb.cursor()
             try:

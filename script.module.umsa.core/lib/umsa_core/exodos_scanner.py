@@ -27,7 +27,7 @@ from .exodos_artwork import scan_exodos_artwork
 from .exodos_parser import parse_exodos_metadata
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
-from .sqlite import connect_sqlite
+from .sqlite import connect_sqlite, connect_sqlite_readonly
 
 SOURCE = "exodos"
 DAT_FILE = "eXoDOS"
@@ -111,7 +111,7 @@ class ExodosScanner:
         set name to the set id.
         """
 
-        uconn = connect_sqlite(self._db_paths.umsa_db)
+        uconn = connect_sqlite_readonly(self._db_paths.umsa_db)
         try:
             uc = uconn.cursor()
             uc.execute(

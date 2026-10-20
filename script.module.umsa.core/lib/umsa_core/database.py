@@ -317,17 +317,6 @@ class DBMod:
         # Ensure source databases exist with authoritative schemas before attaching
         self._ensure_source_databases()
 
-        # Run sanity DDL on a temporary writable connection (scanner compatibility tables)
-        tmp_gdb = connect_sqlite(self.db_paths.umsa_db, row_factory=sqlite3.Row)
-        tmp_gdbc = tmp_gdb.cursor()
-        try:
-            self.create_dat_tables(tmp_gdbc)
-            self.create_art_tables(tmp_gdbc)
-            tmp_gdb.commit()
-        finally:
-            tmp_gdbc.close()
-            tmp_gdb.close()
-
         # Open persistent umsa.db read-only for normal operation
         self.gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
         self.gdbc = self.gdb.cursor()
@@ -370,25 +359,38 @@ class DBMod:
         # Ensure source databases exist with authoritative schemas
         self._ensure_source_databases()
 
-        # Run sanity DDL on a temporary writable connection (scanner compatibility tables)
-        tmp_gdb = connect_sqlite(self.db_paths.umsa_db, row_factory=sqlite3.Row)
-        tmp_gdbc = tmp_gdb.cursor()
+        # Open new umsa.db read-only
+        gdb = None
+        gdbc = None
+        attached = set()
         try:
-            self.create_dat_tables(tmp_gdbc)
-            self.create_art_tables(tmp_gdbc)
-            tmp_gdb.commit()
-        finally:
-            tmp_gdbc.close()
-            tmp_gdb.close()
+            gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
+            gdbc = gdb.cursor()
 
-        # Open persistent umsa.db read-only
-        gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
-        gdbc = gdb.cursor()
-        self.gdb = gdb
-        self.gdbc = gdbc
+            # Attach source databases as read-only schemas
+            art_uri = f'file:{pathname2url(os.fspath(self.db_paths.artwork_db))}?mode=ro'
+            dat_uri = f'file:{pathname2url(os.fspath(self.db_paths.dat_db))}?mode=ro'
+            gdbc.execute(f"ATTACH DATABASE '{art_uri}' AS art")
+            attached.add('art')
+            gdbc.execute(f"ATTACH DATABASE '{dat_uri}' AS dat")
+            attached.add('dat')
 
-        # Attach source databases as read-only schemas
-        self._attach_source_databases()
+            # Assign to instance only after successful attachment
+            self.gdb = gdb
+            self.gdbc = gdbc
+        except Exception:
+            # Clean up on failure
+            if gdbc is not None:
+                try:
+                    for alias in ('art', 'dat'):
+                        if alias in attached:
+                            gdbc.execute(f"DETACH DATABASE '{alias}'")
+                except Exception:
+                    pass
+                gdbc.close()
+            if gdb is not None:
+                gdb.close()
+            raise
 
     def create_dat_tables(self, db_cursor):
         """create dat tables
@@ -469,10 +471,19 @@ class DBMod:
         """Ensure artwork.db and dat.db exist with authoritative schemas.
 
         Creates the databases and their schemas if they don't exist.
+        Validates and upgrades existing databases to the current schema.
         Does not truncate or repopulate existing databases.
         """
-        # Ensure artwork.db exists with schema
+        # Ensure artwork.db exists with schema, upgrade if needed
         if not self.db_paths.artwork_db.exists():
+            conn = connect_sqlite(self.db_paths.artwork_db, row_factory=sqlite3.Row)
+            try:
+                create_artwork_tables(conn.cursor())
+                conn.commit()
+            finally:
+                conn.close()
+        else:
+            # Validate and upgrade existing artwork.db
             conn = connect_sqlite(self.db_paths.artwork_db, row_factory=sqlite3.Row)
             try:
                 create_artwork_tables(conn.cursor())
@@ -482,6 +493,14 @@ class DBMod:
 
         # Ensure dat.db exists with schema (including origin column upgrade/backfill)
         if not self.db_paths.dat_db.exists():
+            conn = connect_sqlite(self.db_paths.dat_db, row_factory=sqlite3.Row)
+            try:
+                create_dat_tables(conn.cursor())
+                conn.commit()
+            finally:
+                conn.close()
+        else:
+            # Validate and upgrade existing dat.db (origin column migration/backfill)
             conn = connect_sqlite(self.db_paths.dat_db, row_factory=sqlite3.Row)
             try:
                 create_dat_tables(conn.cursor())

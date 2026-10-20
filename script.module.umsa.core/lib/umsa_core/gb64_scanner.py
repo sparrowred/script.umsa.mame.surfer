@@ -31,7 +31,7 @@ from .dat_repository import ORIGIN_GB64, DatRepository, create_dat_tables
 from .gb64_parser import parse_cover_filename, parse_version_nfo
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
-from .sqlite import connect_sqlite
+from .sqlite import connect_sqlite, connect_sqlite_readonly
 
 SOURCE = "gb64"
 DAT_FILE = "GameBase64"
@@ -158,7 +158,7 @@ class GB64Scanner:
         if not os.path.isfile(umsa_db):
             raise FileNotFoundError(f"UMSA database not found: {umsa_db}")
 
-        gdb = connect_sqlite(umsa_db)
+        gdb = connect_sqlite_readonly(umsa_db)
         try:
             cursor = gdb.cursor()
             try:
