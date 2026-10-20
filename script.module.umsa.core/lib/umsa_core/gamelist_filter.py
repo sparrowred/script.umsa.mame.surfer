@@ -168,10 +168,12 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                       set_id=None, software_id=None, prevnext=None):
     """Compose and run one gamelist query from explicit ``state``.
 
-    Returns the historical ``(slist, pos, result_count)`` tuple. The list mixes
-    ``sqlite3.Row`` entries with plain-dictionary ``prev``/``next`` sentinel
-    entries. When ``state.order`` is not a known order name it is reset in place
-    to the safe fallback so the facade can mirror the historical reset.
+    Returns the historical ``(slist, pos, result_count)`` tuple. Every entry is
+    a plain dict: query results carry ``id``/``name``/``year``/``maker`` and the
+    ``prev``/``next`` sentinels are plain dictionaries too, so no
+    ``sqlite3.Row`` escapes this function. When ``state.order`` is not a known
+    order name it is reset in place to the safe fallback so the facade can
+    mirror the historical reset.
     """
 
     time_start = time.time()
@@ -302,7 +304,7 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                     JOIN maker ON maker.id = software.developer_id \
                 {i_where} ORDER BY {order} {limit}"
             cursor.execute(select_statement, i_params)
-            slist = cursor.fetchall()
+            slist = [dict(row) for row in cursor.fetchall()]
             if slist:
                 break
             if attempt == 1 and filters_applied:

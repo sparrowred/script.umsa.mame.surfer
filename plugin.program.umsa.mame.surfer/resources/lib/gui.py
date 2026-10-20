@@ -645,12 +645,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
             elif item == 'all':
                 self.filter_lists[filter_category_name] = []
                 for i in self.ggdb.get_all_dbentries(filter_category_name):
-                    self.filter_lists[filter_category_name].append(str(i[0]))
+                    self.filter_lists[filter_category_name].append(str(i['id']))
             elif item == 'invert':
                 templist = []
                 for i in self.ggdb.get_all_dbentries(filter_category_name):
-                    if str(i[0]) not in self.filter_lists[filter_category_name]:
-                        templist.append(str(i[0]))
+                    if str(i['id']) not in self.filter_lists[filter_category_name]:
+                        templist.append(str(i['id']))
                 self.filter_lists[filter_category_name] = templist
             self.set_filter_content(filter_category_name)
 

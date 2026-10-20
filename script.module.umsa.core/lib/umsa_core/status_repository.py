@@ -112,11 +112,12 @@ class StatusRepository:
         finally:
             cursor.close()
 
-    def get_further_media(self, set_id) -> sqlite3.Row | None:
-        """Return a ``marp``/``youtube`` row for ``set_id``, or ``None``.
+    def get_further_media(self, set_id) -> dict | None:
+        """Return a ``marp``/``youtube`` dict for ``set_id``, or ``None``.
 
-        Row-transparent and *not* converted to a dict or tuple: consumers use
-        named-column access such as ``row['marp']``.
+        Returns a plain dict with the ``marp`` and ``youtube`` keys (consumers
+        use named access such as ``media['marp']``); no ``sqlite3.Row`` leaves
+        this method.
         """
 
         cursor = self._conn.cursor()
@@ -124,7 +125,8 @@ class StatusRepository:
             cursor.execute(
                 "SELECT marp, youtube FROM sets WHERE sets.id = ?", (set_id,)
             )
-            return cursor.fetchone()
+            row = cursor.fetchone()
+            return None if row is None else dict(row)
         finally:
             cursor.close()
 

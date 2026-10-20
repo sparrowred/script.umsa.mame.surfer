@@ -9,10 +9,9 @@ implemented steps below.
 this update is `e7cb00a` ("feat(database): implement screensaver display history
 recording and retrieval", step 4.6.2). Step 4.6.1 landed as `7c369a9`, with the D20/D21
 corrective follow-up in `fe5502b`; step 4.7 landed as `479e202` + `10f9fbd` + `da65a62`
-+ `bc631eb` + `bd83a4d`. **Step 4.8 (row-leak closure) is the next planned
-implementation phase.** Step 4.9 is an optional/proposed `database.py` reorganisation,
-not implemented. The artwork source-of-truth cleanup is a separately tracked future
-task.
++ `bc631eb` + `bd83a4d`. **Step 4.8 (row-leak closure) is implemented.** Step 4.9
+is an optional/proposed `database.py` reorganisation, not implemented. The artwork
+source-of-truth cleanup is a separately tracked future task.
 
 Each step is designed to be independently reviewable and testable; no step changes
 public method signatures, return values, `row_factory` defaults, or database schemas

@@ -14,17 +14,24 @@ caller; it never opens or closes that connection. All methods are read-only:
 they manage no transactions, never commit, and own only short-lived cursors
 that are closed in a ``finally`` block.
 
-Row shapes are transparent: query methods return the connection's native rows
-untouched — a ``sqlite3.Row`` keeps both ``row['col']`` and ``row[i]`` access,
-exactly what the historical ``DBMod`` methods returned. Connections that do not
-use ``sqlite3.Row`` are rejected at construction (step 4.2b contract,
-decision Q7). Methods whose public
-shape was never a row (``get_machine_name``'s plain tuple, the scalar counts,
-``get_set_name``'s bare name, ``get_set_ids_for_software``'s list of ids,
+No ``sqlite3.Row`` escapes this repository. Public query methods return plain
+dicts (or the established scalars/tuples/``None``) so the Core-to-add-on
+boundary never leaks SQLite row objects. Connections that do not use
+``sqlite3.Row`` are still rejected at construction (step 4.2b contract,
+decision Q7): the repository reads columns *by name* internally, which only a
+row connection provides. Methods whose public shape was never a row
+(``get_machine_name``'s plain tuple, the scalar counts, ``get_set_name``'s
+bare name, ``get_set_ids_for_software``'s list of ids,
 ``get_software_ids_for_name``'s id list, ``get_searchresults``'s
-``(rows, pos, count)`` bundle, ``get_machines``'s list of plain dicts and
-``get_info_by_set_and_swl``'s dict) normalise at the boundary and keep that
-shape.
+``(entries, pos, count)`` bundle, ``get_machines``'s list of plain dicts and
+``get_info_by_set_and_swl``'s dict) keep that shape.
+
+Row-returning behaviour that is intentionally kept *inside* Core and is
+documented as such: ``get_parts_for_set_id``, ``get_swl_options``,
+``get_machine_id``, ``get_sharedfeat_requirement``, ``get_devices_for_machine``
+and ``get_sets_for_software``. Those are consumed by other Core modules only
+(never by the GUI or screensaver) and keep the native rows for cheap internal
+use.
 """
 
 from __future__ import annotations
@@ -32,6 +39,15 @@ from __future__ import annotations
 import sqlite3
 
 from .sqlite import require_row_connection
+
+
+def _dict_or_none(row):
+    """Return ``row`` as a plain dict, or ``None`` when the row is missing.
+
+    Preserves the historical "append whatever ``fetchone()`` gave us" shape for
+    queries whose match is optional, without letting a ``sqlite3.Row`` escape.
+    """
+    return None if row is None else dict(row)
 
 
 class GameRepository:
@@ -59,83 +75,73 @@ class GameRepository:
         """Return the underlying connection (read-only access)."""
         return self._conn
 
+    @staticmethod
+    def _as_dicts(rows) -> list:
+        """Return the given rows as plain dicts, never ``sqlite3.Row``.
+
+        Single conversion point for every read that crosses the Core-to-add-on
+        boundary (step 4.8).
+        """
+        return [dict(row) for row in rows]
+
+    def _fetch_dicts(self, sql: str, params: tuple = ()) -> list:
+        """Execute a read and return its rows as plain dicts."""
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(sql, params)
+            return self._as_dicts(cursor.fetchall())
+        finally:
+            cursor.close()
+
     def get_maker(self) -> list:
         """Return the list of makers (clones excluded), ordered by name.
 
-        Row-transparent: each row carries ``name as id, name`` and supports
-        both named and positional access on a ``sqlite3.Row`` connection.
+        Each entry is a plain dict ``{'id', 'name'}`` (``name as id, name``).
         """
-        cursor = self._conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT name as id, name FROM maker "
-                "WHERE cloneof_id IS NULL ORDER BY name"
-            )
-            return cursor.fetchall()
-        finally:
-            cursor.close()
+        return self._fetch_dicts(
+            "SELECT name as id, name FROM maker "
+            "WHERE cloneof_id IS NULL ORDER BY name"
+        )
 
     def get_swl(self) -> list:
         """Return the list of software lists, ordered by name.
 
-        Row-transparent: each row carries ``name as id, description as name``.
+        Each entry is a plain dict ``{'id', 'name'}``
+        (``name as id, description as name``).
         """
-        cursor = self._conn.cursor()
-        try:
-            cursor.execute(
-                "SELECT name as id, description as name FROM swl ORDER BY name"
-            )
-            return cursor.fetchall()
-        finally:
-            cursor.close()
+        return self._fetch_dicts(
+            "SELECT name as id, description as name FROM swl ORDER BY name"
+        )
 
     def get_source(self) -> list:
         """Return the distinct source files of the sets, ordered by source.
 
-        Row-transparent: each row carries a single ``source`` column.
+        Each entry is a plain dict with the single ``source`` key.
         """
-        cursor = self._conn.cursor()
-        try:
-            cursor.execute("SELECT DISTINCT source FROM sets ORDER BY source")
-            return cursor.fetchall()
-        finally:
-            cursor.close()
+        return self._fetch_dicts("SELECT DISTINCT source FROM sets ORDER BY source")
 
     def get_year(self) -> list:
         """Return the list of years, ordered by name.
 
-        Row-transparent: each row carries ``name as id, name``.
+        Each entry is a plain dict ``{'id', 'name'}``.
         """
-        cursor = self._conn.cursor()
-        try:
-            cursor.execute("SELECT name as id, name FROM year ORDER BY name")
-            return cursor.fetchall()
-        finally:
-            cursor.close()
+        return self._fetch_dicts("SELECT name as id, name FROM year ORDER BY name")
 
     def get_players(self) -> list:
         """Return the list of player counts, ordered by name.
 
-        Row-transparent: each row carries ``name as id, name``.
+        Each entry is a plain dict ``{'id', 'name'}``.
         """
-        cursor = self._conn.cursor()
-        try:
-            cursor.execute("SELECT name as id, name FROM nplayers ORDER BY name")
-            return cursor.fetchall()
-        finally:
-            cursor.close()
+        return self._fetch_dicts(
+            "SELECT name as id, name FROM nplayers ORDER BY name"
+        )
 
     def get_categories(self) -> list:
         """Return the list of categories, ordered by name.
 
-        Row-transparent: each row carries ``name as id, name``.
+        Each entry is a plain dict ``{'id', 'name'}``.
         """
-        cursor = self._conn.cursor()
-        try:
-            cursor.execute("SELECT name as id, name FROM category ORDER BY name")
-            return cursor.fetchall()
-        finally:
-            cursor.close()
+        return self._fetch_dicts("SELECT name as id, name FROM category ORDER BY name")
 
     def get_set_name(self, set_id) -> str | None:
         """Return the set name for a set id, or ``None`` for a falsy id.
@@ -246,9 +252,8 @@ class GameRepository:
     def search_single(self, my_search):
         """Return the first software whose set name starts with a prefix.
 
-        Row-transparent: the single row carries ``software.id``,
-        ``software.name``, ``year.name as year`` and ``maker.name as maker``;
-        ``None`` is returned when nothing matches.
+        Returns a plain dict with ``id``, ``name``, ``year`` and ``maker``, or
+        ``None`` when nothing matches.
         """
         cursor = self._conn.cursor()
         try:
@@ -263,14 +268,15 @@ class GameRepository:
                 "ORDER BY software.name LIMIT 1",
                 (my_search + "%",),
             )
-            return cursor.fetchone()
+            row = cursor.fetchone()
+            return None if row is None else dict(row)
         finally:
             cursor.close()
 
     def get_series(self, software_id):
-        """Return the software rows of the series a software id belongs to.
+        """Return the software entries of the series an id belongs to.
 
-        Row-transparent: each row carries ``s.id, s.name, year, maker``.
+        Each entry is a plain dict ``{'id', 'name', 'year', 'maker'}``.
         Returns ``None`` when the software has no series at all. The current
         N+1 query pattern and the first-series-wins behaviour (a software in
         several series is resolved against the first one only) are preserved
@@ -303,9 +309,9 @@ class GameRepository:
                     "FROM software s, sets v, "
                     "     year y, maker m "
                     "WHERE s.id = v.softwarelink_id AND y.id = s.year_id "
-                    "AND m.id = s.developer_id AND s.id = ?", (i[0],)
+                    "AND m.id = s.developer_id AND s.id = ?", (i['software_id'],)
                 )
-                all_series.append(cursor.fetchone())
+                all_series.append(_dict_or_none(cursor.fetchone()))
             return all_series
         finally:
             cursor.close()
@@ -363,13 +369,18 @@ class GameRepository:
             cursor.close()
 
     def get_all_dbentries(self, cat):
-        """Return count rows per filter category (dynamic dispatch).
+        """Return count entries per filter category (dynamic dispatch).
 
-        Row-transparent: each row carries ``t.id``, the category column
-        (``description``/``name``) and ``count(distinct s.id)``; ``None`` is
+        Each entry is a plain dict ``{'id', 'name', 'count'}`` where ``name``
+        is the category label (``description``/``name``, depending on the
+        category) and ``count`` is ``count(distinct s.id)``; ``None`` is
         returned for an unknown category. The category column name, the join
         column and the extra ``flag`` predicate are chosen exactly as the
         historical ``DBMod`` selection did.
+
+        The SQL is deliberately left un-aliased, so the aggregate has no
+        column name and is read positionally (``row[2]``) inside Core only —
+        the caller only ever sees the ``count`` key of the returned dict.
         """
         if cat == "Softwarelists":
             select_placeholders = (
@@ -396,6 +407,7 @@ class GameRepository:
         else:
             return None
 
+        label_column = select_placeholders[0]
         select_statement = "SELECT t.id, t.{}, count(distinct s.id) \
                             FROM {} t, software s, sets v \
                             WHERE t.id = v.{}_id and s.id = v.softwarelink_id {} \
@@ -403,17 +415,21 @@ class GameRepository:
         cursor = self._conn.cursor()
         try:
             cursor.execute(select_statement)
-            return cursor.fetchall()
+            return [
+                {'id': row['id'], 'name': row[label_column], 'count': row[2]}
+                for row in cursor.fetchall()
+            ]
         finally:
             cursor.close()
 
     def get_searchresults(self, my_search):
-        """Return ``(rows, pos, count)`` for a substring search.
+        """Return ``(entries, pos, count)`` for a substring search.
 
-        Rows are Row-transparent and name-ordered (LIMIT 100); ``count`` is
-        the total number of distinct matching software; ``pos`` is the index
-        of the first row whose software name starts with the search term
-        (case-insensitively), or 0 when no row starts with it.
+        Entries are plain dicts (``id``, ``name``, ``year``, ``maker``) in
+        name order (LIMIT 100); ``count`` is the total number of distinct
+        matching software; ``pos`` is the index of the first entry whose
+        software name starts with the search term (case-insensitively), or 0
+        when no entry starts with it.
 
         TODO:
         - single word search: split by " ": v.gamename IN ('test', 'wrum')
@@ -423,7 +439,8 @@ class GameRepository:
         """
         cursor = self._conn.cursor()
         try:
-            # count
+            # count: the aggregate column is unnamed, so it is read by
+            # position here inside Core and never returned to a caller.
             cursor.execute(
                 "SELECT COUNT(DISTINCT software.id) "
                 "FROM sets "
@@ -439,11 +456,11 @@ class GameRepository:
                 "JOIN sets ON sets.softwarelink_id = software.id "
                 "WHERE sets.gamename LIKE ? "
                 "ORDER BY software.name LIMIT 100", ("%"+my_search+"%",))
-            results = cursor.fetchall()
+            results = self._as_dicts(cursor.fetchall())
             pos = 0
             for count, i in enumerate(results):
                 # check if search is in beginning of s.name and set pos
-                if my_search.lower() == i[1][:len(my_search)].lower():
+                if my_search.lower() == i['name'][:len(my_search)].lower():
                     pos = count
                     break
 
@@ -544,9 +561,11 @@ class GameRepository:
     def get_sets_for_software(self, software_id):
         """Return every set of a software id with its joined display columns.
 
-        Row-transparent: the multi-join row shape ``get_all_for_software``
-        iterates (``sets`` + ``year``/``maker``/``swl``/``category``/
-        ``nplayers``), ordered by year, clone parent and gamename.
+        Intentionally Row-returning (Core-internal contract): the multi-join
+        row shape ``get_all_for_software`` iterates (``sets`` +
+        ``year``/``maker``/``swl``/``category``/``nplayers``), ordered by year,
+        clone parent and gamename. Only Core consumes this; nothing here
+        crosses the add-on boundary.
         """
         cursor = self._conn.cursor()
         try:
@@ -602,11 +621,13 @@ class GameRepository:
     def get_parts_for_set_id(self, set_id) -> list:
         """Return the parts (media) attached to a set, ordered by part name.
 
-        Row-transparent: each row is ``p.name, pv.name, pv.disk`` (media name,
-        interface, optional disk value). A set can have more than one media
-        (two floppies, floppy + cd-rom, ...). Returns an empty list when no
-        parts match — including unknown set ids. Consumers index positionally
-        (``part[0]``/``part[1]`` in ``DBMod.create_cmdline``).
+        Intentionally Row-returning (Core-internal contract): each row is
+        ``p.name, pv.name, pv.disk`` (media name, interface, optional disk
+        value). A set can have more than one media (two floppies, floppy +
+        cd-rom, ...). Returns an empty list when no parts match — including
+        unknown set ids. The only consumer is ``DBMod.create_cmdline``, which
+        indexes positionally (``part[0]``/``part[1]``); the rows never leave
+        Core.
         """
         cursor = self._conn.cursor()
         try:
@@ -626,12 +647,10 @@ class GameRepository:
         software-list name and set name must match; a missing set, a missing
         software list, or a set without ``part_set`` rows all return ``None``.
 
-        Row-transparent: each row carries the single ``disk`` column —
-        positional ``row[0]``, named ``row['disk']`` and ``row.keys()`` all
-        work, which is what ``emulation.py`` and ``emulator_launcher.py``
-        rely on. Nothing is filtered and there is no ``ORDER BY``: every
-        ``part_set`` row of the set comes back in rowid order, including rows
-        whose disk value is ``NULL``.
+        Each entry is a plain dict with the single ``disk`` key (consumers use
+        ``entry['disk']``). Nothing is filtered and there is no ``ORDER BY``:
+        every ``part_set`` row of the set comes back in rowid order, including
+        rows whose disk value is ``NULL``.
         """
         cursor = self._conn.cursor()
         try:
@@ -643,8 +662,8 @@ class GameRepository:
             set_id = cursor.fetchone()
             if set_id:
                 cursor.execute(
-                    "SELECT disk FROM part_set WHERE variant_id = ?", (set_id[0],))
-                disks = cursor.fetchall()
+                    "SELECT disk FROM part_set WHERE variant_id = ?", (set_id['id'],))
+                disks = self._as_dicts(cursor.fetchall())
                 if disks:
                     return disks
             return None
@@ -654,11 +673,12 @@ class GameRepository:
     def get_swl_options(self, swl_name):
         """Return the raw options row of a software list, or ``None``.
 
-        Row-transparent: the row carries the single ``options`` column. A
-        ``NULL`` options value stays ``None`` inside the row (the facade
-        branches on ``row[0]`` truthiness); an unknown software list returns
-        ``None`` — the facade then raises ``TypeError`` on ``row[0]``, the
-        historical valid-input assumption.
+        Intentionally Row-returning (Core-internal contract): the row carries
+        the single ``options`` column. A ``NULL`` options value stays ``None``
+        inside the row (the facade branches on ``row[0]`` truthiness); an
+        unknown software list returns ``None`` — the facade then raises
+        ``TypeError`` on ``row[0]``, the historical valid-input assumption.
+        Only Core consumes this; it never crosses the add-on boundary.
         """
         cursor = self._conn.cursor()
         try:
@@ -671,12 +691,13 @@ class GameRepository:
     def get_machine_id(self, machine_name):
         """Return the machine's set row under the ``mame`` software list.
 
-        Row-transparent: the row carries the single ``id`` column (the sets id
-        used as the device variant id). Machine rows resolve only under the
-        software list ``mame`` — that name is hardcoded in the query, as it
-        always was inside ``DBMod.get_cmd_line_options``. An unknown machine
-        returns ``None``; the facade then raises ``TypeError`` on ``row[0]``
-        (the historical valid-input assumption).
+        Intentionally Row-returning (Core-internal contract): the row carries
+        the single ``id`` column (the sets id used as the device variant id).
+        Machine rows resolve only under the software list ``mame`` — that name
+        is hardcoded in the query, as it always was inside
+        ``DBMod.get_cmd_line_options``. An unknown machine returns ``None``;
+        the facade then raises ``TypeError`` on ``row[0]`` (the historical
+        valid-input assumption). Only Core consumes this.
         """
         cursor = self._conn.cursor()
         try:
@@ -693,11 +714,12 @@ class GameRepository:
     def get_devices_for_machine(self, machine_id) -> list:
         """Return the devices of a machine, ordered by device name.
 
-        Row-transparent: each row is ``d.name, dv.name`` (device, interface
-        list). The interface may hold a comma-separated list (e.g.
-        ``cart64,c128_cart``) which ``DBMod.create_cmdline`` splits. Returns
-        an empty list for a machine without devices. Consumers index
-        positionally (``device[0]``/``device[1]``).
+        Intentionally Row-returning (Core-internal contract): each row is
+        ``d.name, dv.name`` (device, interface list). The interface may hold a
+        comma-separated list (e.g. ``cart64,c128_cart``) which
+        ``DBMod.create_cmdline`` splits. Returns an empty list for a machine
+        without devices. The only consumer indexes positionally
+        (``device[0]``/``device[1]``); the rows never leave Core.
         """
         cursor = self._conn.cursor()
         try:
@@ -713,10 +735,11 @@ class GameRepository:
     def get_sharedfeat_requirement(self, set_id):
         """Return the raw ``requirement`` shared-feature row of a set, or ``None``.
 
-        Row-transparent: the row carries the single ``sfv.name`` column —
-        normally an ``swl:set`` string that ``DBMod.get_cmd_line_options``
-        expands into a chained command line. Sets without a requirement (or
-        unknown ids) return ``None``.
+        Intentionally Row-returning (Core-internal contract): the row carries
+        the single ``sfv.name`` column — normally an ``swl:set`` string that
+        ``DBMod.get_cmd_line_options`` expands into a chained command line.
+        Sets without a requirement (or unknown ids) return ``None``. Only Core
+        consumes this; it never crosses the add-on boundary.
         """
         cursor = self._conn.cursor()
         try:

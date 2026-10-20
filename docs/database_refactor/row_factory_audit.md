@@ -21,9 +21,17 @@ status.db status methods (`get_status_for_set`, `get_further_media`,
 `write_status_after_play`, `save_further_media`, `get_latest_by_software`) now delegate
 to `StatusRepository`, which requires `sqlite3.Row` at construction and returns rows
 transparently (raw `Row` for the two reads — positional `i[1]`…`i[4]` and named
-`row['marp']` access both preserved); no public row shape changed. **Scope of the audit
-itself:** read-only — no `row_factory` was changed and no query was converted by the
-audit.
+`row['marp']` access both preserved); no public row shape changed. **updated again** for
+implemented step 4.8 — **row-leak closure:** `sqlite3.Row` no longer escapes the
+Core-to-add-on boundary. `GameRepository` public reads return plain dicts or the
+established scalars/tuples/`None`; `StatusRepository.get_further_media` returns plain
+dicts; `gamelist_filter.execute_statement` returns plain dict lists with dict sentinels;
+`DBMod.build_filter_lists` and GUI filter-option handling use named dict access.
+Core-internal Row-returning methods remain only where documented
+(`get_parts_for_set_id`, `get_swl_options`, `get_machine_id`,
+`get_sharedfeat_requirement`, `get_devices_for_machine`, `get_sets_for_software`).
+No `row_factory` or SQL shape changes were made. **Scope of the audit itself:** read-only
+— no `row_factory` was changed and no query was converted by the audit.
 
 This document is the compatibility reference for any future result-shape change. The
 golden rule it establishes: **`sqlite3.Row` rows support both `row[i]` and `row['col']`;

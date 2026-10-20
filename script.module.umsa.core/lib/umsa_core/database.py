@@ -109,7 +109,7 @@ def build_filter_lists(filter_lists, category, db):
     active = []
     inactive = []
     for entry in (db.get_all_dbentries(category) or []):
-        item = {'id': str(entry[0]), 'name': entry[1], 'count': entry[2]}
+        item = {'id': str(entry['id']), 'name': entry['name'], 'count': entry['count']}
         (active if item['id'] in active_ids else inactive).append(item)
     return {'active': active, 'inactive': inactive}
 
