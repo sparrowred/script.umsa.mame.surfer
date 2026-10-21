@@ -358,7 +358,7 @@ GUI (gui.py)
 
 ## Extraction Completed (2026-10-21)
 
-The following modules have been extracted from `Emulation` (originally 1221 lines, now 766 lines):
+The following modules have been extracted from `Emulation` (originally 1221 lines, now 583 lines):
 
 ### New Modules Created
 
@@ -368,9 +368,9 @@ The following modules have been extracted from `Emulation` (originally 1221 line
 | `rom_extractor.py` | 67 | ZIP extraction and ROM-specific post-processing (`extract_rom`) |
 | `chd_extractor.py` | 123 | CHD extraction, cancellation and cleanup (`extract_chd`, `CHDExtractionCancelled`, `CHDExtractionError`) |
 | `launch_preparer.py` | 263 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`) |
-| `vgm_player.py` | 266 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
+| `vgm_player.py` | 313 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
 
-### Emulation Facade (766 lines)
+### Emulation Facade (583 lines)
 
 The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 
@@ -378,21 +378,22 @@ The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 - **VGM state properties**: `playvgm`, `playintrovgm`, `playrandomvgm`, `vgm_info_callback`, `vgm_stopped_callback` (delegated to `VgmPlayer`)
 - **Socket state & management**: `lua_socket`, `lua_server`, `lua_log_thread`, `lua_log_stop`, `vgm_port_env`, `_start_vgm_server`, `_accept_vgm_conn`, `_close_vgm_sockets`, `_close_accepted_conn`, `_stop_lua_log_reader`, `_start_lua_log_reader`, `_lua_log_reader`, `_drain_lua_log`, `_log_lua_line`, `send_vgmaction`, `_vgm_process_env`
 - **Process lifecycle**: `run`, `_process_args`, `start_managed_process`, `managed_process_status`, `terminate_managed_process`, `kill_managed_process`, `read_managed_process_output`, `wait_for_completion`, `terminate`, `kill`, `after_run`
-- **Delegated methods**: `prepare_exodos_run`, `prepare_marp_run`, `prepare_mame_run`, `find_nonmame_roms`, `find_roms`, `extract_chd`, `extract_rom`, `demul`, `fsuae`, `flycast`, `other_emulator`, `play_vgm_thread`, `play_random_vgm_thread`, `play_random_vgm`, `play_vgm` (all delegate to `LaunchPreparer` or `VgmPlayer`)
-- **VGM playback**: `play_vgm`, `play_random_vgm` (thread management)
+- **Delegated methods**: `prepare_exodos_run`, `prepare_marp_run`, `prepare_mame_run`, `find_nonmame_roms`, `find_roms`, `extract_chd`, `extract_rom`, `demul`, `fsuae`, `flycast`, `other_emulator` (delegate to `LaunchPreparer`)
+- **VGM playback**: `play_vgm`, `play_vgm_thread`, `play_random_vgm`, `play_random_vgm_thread` (thread management and socket lifecycle stay in `Emulation`; the candidate loop and the run preparation are delegated to `VgmPlayer`)
 
 ### Verification Results
 
-All 887 tests pass (5 skipped for real-MAME integration):
+All 910 tests pass (5 skipped for real-MAME integration):
 
 ```
-887 passed, 5 skipped, 18 subtests passed in 14.19s
+910 passed, 5 skipped, 18 subtests passed in 14.16s
 ```
 
 Key test categories verified:
 - CHD extraction: `test_emulation_chd.py` (10 tests)
 - Process management: `test_emulation_process.py` (2 tests)
 - VGM callbacks: `test_emulation_vgm_callback.py` (4 tests)
+- VGM playback entry points: `test_vgm_player_entrypoints.py` (20 tests)
 - VGM Lua socket protocol: `test_lua_socket_log.py` (18 tests)
 - VGM pre-exit logic: `test_vgmplay_preexit.py` (17 tests)
 - VGM port handling: `test_vgmplay_port.py` (10 tests)
@@ -441,3 +442,98 @@ All 887 tests pass (5 skipped for real-MAME integration).
 - No duplicate process lifecycle
 - Public contracts preserved
 - `emulator_launcher.py` and `retroplayer_cache.py` work without modification
+
+---
+
+## VGM Playback Entry Point Verification (2026-10-21)
+
+Follow-up to Step 2e: every VGM playback entry point was traced, the argument
+forwarding was verified and the broken thread path was fixed.
+
+### Entry Point Map
+
+| Entry point | Owner | Call sites | Status |
+|-------------|-------|------------|--------|
+| `Emulation.play_vgm(vgm, sec2run, sleep, intro, info, plan)` | `Emulation` (thread + socket) | `gui.py:1340` (track selection), `gui.py:2247` (random intro) | Supported, used by the GUI |
+| `Emulation.play_vgm_thread(vgm, sec2run, sleep, intro, close_server, plan, info)` | `Emulation` (blocking playback) | `Emulation.play_vgm`, `Emulation.play_random_vgm_thread` | Supported, used by the GUI |
+| `Emulation.play_random_vgm(ggdb, textinfo, db_path, sleep)` | `Emulation` (thread owner) | `gui.py:852` ("Play random Video Game Music") | Supported, **was missing** — restored (see below) |
+| `Emulation.play_random_vgm_thread(ggdb, textinfo, db_path, sleep)` | `Emulation` (socket lifecycle) | `Emulation.play_random_vgm` | Supported |
+| `VgmPlayer.play_vgm(vgm, sec2run, sleep, intro, info, plan, emurun, run_func, vgm_port_env)` | `VgmPlayer` (thread owner) | no in-repo caller | Compatibility surface, kept and fixed |
+| `VgmPlayer.play_random_vgm(ggdb, textinfo, db_path, sleep, emurun, find_roms_func, run_func)` | `VgmPlayer` (thread owner) | no in-repo caller | Compatibility surface, kept and verified |
+| `VgmPlayer._play_vgm_thread_impl(...)` | `VgmPlayer` (thread target) | `VgmPlayer.play_vgm` only | Compatibility surface, kept and fixed |
+
+### Findings
+
+1. **Broken thread argument forwarding (fixed)** — `VgmPlayer.play_vgm()` passed
+   8 positional values to `_play_vgm_thread_impl()`, which takes 9
+   (`sleep` was dropped and the remaining values shifted). Every call raised
+   `TypeError: missing 1 required positional argument: 'run_func'` inside the
+   worker thread. The regression was introduced by commit `eaaffe1`, which
+   repaired the `prepare_vgm_run()` call but rewrote the thread argument
+   tuple. The forwarding now uses explicit keywords, so the mapping can no
+   longer drift from the implementation signature.
+
+2. **Missing `Emulation.play_random_vgm()` (restored)** — the extraction in
+   commit `c8f43c0` moved the random playback thread wrapper to `VgmPlayer`
+   but did not keep a facade method on `Emulation`. The GUI calls
+   `self.emulation.play_random_vgm(self.ggdb, None, SETTINGS_FOLDER, xbmc.sleep)`
+   (`gui.py:852`), which raised `AttributeError`. The facade method is
+   restored and owns the worker thread, while the socket lifecycle stays in
+   `Emulation.play_random_vgm_thread()`.
+
+3. **Playback state reset on failure (fixed)** — `_play_vgm_thread_impl()`
+   reset `playvgm` and notified the stopped callback only after a successful
+   `run_func` call. A failing playback left `playvgm` stuck at `True` and the
+   stopped callback unraised. The reset now happens in a `finally` block, which
+   matches the semantics of `Emulation.play_vgm_thread()`.
+
+4. **Duplicate `parse_lua_log_line` import (cleaned)** — `emulation.py`
+   imported `parse_lua_log_line` twice from `umsa_core.vgm_socket` (ruff
+   `F811`). The name is now imported once, in the documented compatibility
+   re-export block.
+
+5. **Mutable argument default (cleaned)** — `Emulation.__init__` used
+   `nonmame={}` as default, so all instances without an explicit value shared
+   one dict. The default is now `None` and a fresh dict is created per
+   instance; an explicitly passed dict is still used as-is.
+
+### Evidence for the "no in-repo caller" entries
+
+`VgmPlayer.play_vgm()` and `VgmPlayer.play_random_vgm()` have no production
+caller (`rg -n "play_vgm|play_random_vgm"` over `plugin.program.umsa.mame.surfer`,
+`screensaver.umsa.mame.surfer` and `script.module.umsa.core` only matches the
+facade methods and the local variable names) and no test referenced them
+before `tests/test_vgm_player_entrypoints.py`. They are the extracted
+counterparts of the pre-refactor `Emulation` methods and are part of the
+documented `VgmPlayer` surface, so they are kept, fixed and covered by tests
+rather than removed.
+
+### Verification Results
+
+Commands and results (all executed in this working tree):
+
+```
+.venv-debian-vm/bin/python -m pytest tests/test_vgm_player_entrypoints.py -q
+  20 passed
+
+.venv-debian-vm/bin/python -m pytest tests/test_vgm_player_entrypoints.py \
+  tests/test_emulation_vgm_callback.py tests/test_random_vgm_player.py \
+  tests/test_vgmplay_port.py tests/test_lua_socket_log.py \
+  tests/test_vgmplay_preexit.py tests/test_vgm_random_batch.py \
+  tests/test_vgm_header.py tests/test_core_vgm_header.py \
+  tests/test_vgm_header_core_integration.py -q
+  133 passed, 18 subtests passed
+
+.venv-debian-vm/bin/python -m pytest tests/ -q
+  910 passed, 5 skipped, 18 subtests passed in 14.16s
+
+VGM_MAME_TESTS=1 .venv-debian-vm/bin/python -m pytest tests/test_vgm_preexit_mame.py -q
+  4 passed, 1 skipped, 3 subtests passed
+
+lua5.4 tests/test_vgmplay_preexit.lua script.module.umsa.core/resources/vgmplay.lua trigger_exact
+  PASS trigger_exact
+```
+
+The skipped real-MAME case is the 90 s long track; it needs
+`VGM_MAME_TESTS_FULL=1`.
+

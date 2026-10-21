@@ -247,23 +247,63 @@ class VgmPlayer:
 
     def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None,
                  emurun=None, run_func=None, vgm_port_env=None):
-        """Start VGM playback in a thread."""
+        """Start VGM playback in a thread.
+
+        The worker is ``_play_vgm_thread_impl``. Every argument is handed
+        over as a keyword so the forwarding stays correct when the
+        implementation signature changes.
+
+        Args:
+            vgm: VGM identifier string
+            sec2run: Seconds to run (fallback if plan not provided)
+            sleep: Optional sleep callback
+            intro: Whether this is an intro VGM
+            info: Optional info message for callback
+            plan: Optional PlaybackPlan object
+            emurun: Emulation run state dict
+            run_func: Function running the track
+                (vgm, sleep, close_server, plan, info, vgm_port_env)
+            vgm_port_env: VGMPLAY_PORT value for the process environment
+        """
         if self.playvgm:
             return
         port_str = str(vgm_port_env) if vgm_port_env is not None else None
+        self.playvgm = True
         self.pvgm_thread = Thread(target=self._play_vgm_thread_impl,
-            args=(emurun, vgm, sec2run, intro, info, plan, port_str, run_func))
-        self.pvgm_thread.start()
+            kwargs={
+                'emurun': emurun,
+                'vgm': vgm,
+                'sec2run': sec2run,
+                'sleep': sleep,
+                'intro': intro,
+                'info': info,
+                'plan': plan,
+                'vgm_port_env': port_str,
+                'run_func': run_func,
+            })
+        try:
+            self.pvgm_thread.start()
+        except Exception:
+            self.playvgm = False
+            raise
 
     def _play_vgm_thread_impl(self, emurun, vgm, sec2run, sleep, intro, info, plan, vgm_port_env, run_func):
-        """Internal implementation of VGM playback thread."""
+        """Internal implementation of VGM playback thread.
+
+        Prepares the run, hands the track over to ``run_func`` and always
+        resets the playback state afterwards, also when the playback fails.
+        """
         port_str = str(vgm_port_env) if vgm_port_env is not None else None
-        self.prepare_vgm_run(emurun, vgm, sec2run, intro, plan, info, port_str)
-        if run_func:
-            run_func(vgm, sleep=sleep, close_server=True, plan=plan, info=info, vgm_port_env=vgm_port_env)
-        self.playvgm = False
-        if info:
-            self._notify_vgm_stopped()
+        try:
+            self.prepare_vgm_run(emurun, vgm, sec2run, intro=intro, plan=plan,
+                                 info=info, vgm_port_env=port_str)
+            if run_func:
+                run_func(vgm, sleep=sleep, close_server=True, plan=plan, info=info,
+                         vgm_port_env=port_str)
+        finally:
+            self.playvgm = False
+            if info:
+                self._notify_vgm_stopped()
 
     def get_state(self):
         """Return current VGM playback state for compatibility."""

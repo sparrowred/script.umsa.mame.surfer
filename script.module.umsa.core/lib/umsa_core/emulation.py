@@ -24,7 +24,7 @@ from umsa_core.launch_preparer import LaunchPreparer
 from umsa_core.rom_extractor import extract_rom
 from umsa_core.rom_finder import NONMAME, find_nonmame_roms, find_roms
 from umsa_core.vgm_player import VgmPlayer
-from umsa_core.vgm_socket import VgmSocketServer, parse_lua_log_line
+from umsa_core.vgm_socket import VgmSocketServer
 
 # Compatibility re-exports for existing code that imports from emulation
 from umsa_core.vgm_socket import (
@@ -112,7 +112,7 @@ class Emulation:
     """Emulation handling class."""
 
     def __init__(self, temp_dir='.', mame_ini_file=None, mame_dir='.', mame_exe=None,
-                    chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame={},
+                    chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame=None,
                     terminal='', vgmplay_exe='', vgm_stopped_callback=None):
         self.percent = 0 # chd convert
         self.mame_exe = mame_exe
@@ -125,7 +125,8 @@ class Emulation:
         self.lua_script = vgmlua_script
         self.vgm_info_callback = vgm_info_callback
         self.vgm_stopped_callback = vgm_stopped_callback
-        self.nonmame = nonmame
+        # A fresh dict per instance, so instances never share one default
+        self.nonmame = nonmame if nonmame is not None else {}
         self.terminal = terminal
         self.vgmplay_exe = vgmplay_exe
 
@@ -137,7 +138,7 @@ class Emulation:
         self.launch_preparer = LaunchPreparer(
             mame_exe=mame_exe,
             mame_dir=mame_dir,
-            nonmame=nonmame,
+            nonmame=self.nonmame,
             mame_ini=self.mame_ini,
             temp_dir=temp_dir,
             terminal=terminal,
@@ -475,11 +476,21 @@ class Emulation:
             self.vgm_player.play_random_vgm_thread(
                 self.emurun, ggdb, textinfo, db_path, sleep,
                 find_roms_func=lambda emurun, rom_paths: self.find_roms(),
-                run_func=lambda vgm, sleep=None, close_server=True, plan=None, info=None, vgm_port_env=None: 
-                    self.play_vgm_thread(vgm, sec2run=90, sleep=sleep, intro=False,
-                                         close_server=close_server, plan=plan, info=info))
+                run_func=run_func)
         finally:
             self._close_vgm_sockets()
+
+    def play_random_vgm(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
+        """Start random vgm playback in a thread.
+
+        The socket server lifecycle stays with ``play_random_vgm_thread``,
+        this wrapper only owns the worker thread.
+        """
+        if self.playvgm:
+            return
+        self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
+            args=(ggdb, textinfo, db_path, sleep))
+        self.rvgm_thread.start()
 
     def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):
         if self.playvgm:
