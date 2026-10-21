@@ -358,7 +358,7 @@ GUI (gui.py)
 
 ## Extraction Completed (2026-10-21)
 
-The following modules have been extracted from `Emulation` (originally 1221 lines, now 583 lines):
+The following modules have been extracted from `Emulation` (originally 1221 lines, now 586 lines):
 
 ### New Modules Created
 
@@ -368,9 +368,9 @@ The following modules have been extracted from `Emulation` (originally 1221 line
 | `rom_extractor.py` | 67 | ZIP extraction and ROM-specific post-processing (`extract_rom`) |
 | `chd_extractor.py` | 123 | CHD extraction, cancellation and cleanup (`extract_chd`, `CHDExtractionCancelled`, `CHDExtractionError`) |
 | `launch_preparer.py` | 263 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`) |
-| `vgm_player.py` | 313 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
+| `vgm_player.py` | 333 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
 
-### Emulation Facade (583 lines)
+### Emulation Facade (586 lines)
 
 The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 
@@ -383,17 +383,17 @@ The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 
 ### Verification Results
 
-All 910 tests pass (5 skipped for real-MAME integration):
+All 914 tests pass (5 skipped for real-MAME integration):
 
 ```
-910 passed, 5 skipped, 18 subtests passed in 14.16s
+914 passed, 5 skipped, 18 subtests passed in 14.18s
 ```
 
 Key test categories verified:
 - CHD extraction: `test_emulation_chd.py` (10 tests)
 - Process management: `test_emulation_process.py` (2 tests)
 - VGM callbacks: `test_emulation_vgm_callback.py` (4 tests)
-- VGM playback entry points: `test_vgm_player_entrypoints.py` (20 tests)
+- VGM playback entry points: `test_vgm_player_entrypoints.py` (24 tests)
 - VGM Lua socket protocol: `test_lua_socket_log.py` (18 tests)
 - VGM pre-exit logic: `test_vgmplay_preexit.py` (17 tests)
 - VGM port handling: `test_vgmplay_port.py` (10 tests)
@@ -497,6 +497,18 @@ forwarding was verified and the broken thread path was fixed.
    one dict. The default is now `None` and a fresh dict is created per
    instance; an explicitly passed dict is still used as-is.
 
+6. **Duplicate stopped notification (fixed)** — the playback owner
+   (`Emulation.play_vgm_thread()`) and the playback worker
+   (`VgmPlayer._play_vgm_thread_impl()`) can both reach the end of the same
+   track. Each of them notified the Kodi layer, so a wiring that routes the
+   owner as `run_func` reported "VGM stopped" twice. `VgmPlayer` now delivers
+   the stopped callback at most once per playback: the one-shot guard is
+   cleared by `VgmPlayer.begin_vgm_playback()` at the start of a playback
+   (`prepare_vgm_run()`, `VgmPlayer.play_vgm()`,
+   `VgmPlayer.play_random_vgm()`, `Emulation.play_vgm()`,
+   `Emulation.play_random_vgm()`, `Emulation.play_random_vgm_thread()`), so
+   every playback still reports its end exactly once.
+
 ### Evidence for the "no in-repo caller" entries
 
 `VgmPlayer.play_vgm()` and `VgmPlayer.play_random_vgm()` have no production
@@ -508,13 +520,28 @@ counterparts of the pre-refactor `Emulation` methods and are part of the
 documented `VgmPlayer` surface, so they are kept, fixed and covered by tests
 rather than removed.
 
+### Regression Proof
+
+The new tests were run against the unfixed code in a scratch worktree to
+prove that they cover the defects:
+
+| Source revision | Command | Result |
+|-----------------|---------|--------|
+| `eaaffe1` (before the fix) | `pytest tests/test_vgm_player_entrypoints.py -q` | **13 failed**, 7 passed — `TypeError: VgmPlayer._play_vgm_thread_impl() missing 1 required positional argument: 'run_func'` |
+| `dc122c9` (fix committed, before the one-shot guard) | `pytest tests/test_vgm_player_entrypoints.py -q` | **1 failed**, 23 passed — `test_stopped_callback_is_not_duplicated_when_the_run_callback_notifies` |
+| working tree (fix + one-shot guard) | `pytest tests/test_vgm_player_entrypoints.py -q` | 24 passed |
+
+The 7 tests that also pass on `eaaffe1` are guard tests for behavior that
+must not change (skip-while-playing, state reset after a successful
+playback, no notification without `info`, `nonmame` argument kept).
+
 ### Verification Results
 
 Commands and results (all executed in this working tree):
 
 ```
 .venv-debian-vm/bin/python -m pytest tests/test_vgm_player_entrypoints.py -q
-  20 passed
+  24 passed in 0.06s
 
 .venv-debian-vm/bin/python -m pytest tests/test_vgm_player_entrypoints.py \
   tests/test_emulation_vgm_callback.py tests/test_random_vgm_player.py \
@@ -522,18 +549,40 @@ Commands and results (all executed in this working tree):
   tests/test_vgmplay_preexit.py tests/test_vgm_random_batch.py \
   tests/test_vgm_header.py tests/test_core_vgm_header.py \
   tests/test_vgm_header_core_integration.py -q
-  133 passed, 18 subtests passed
+  137 passed, 18 subtests passed in 10.09s
 
 .venv-debian-vm/bin/python -m pytest tests/ -q
-  910 passed, 5 skipped, 18 subtests passed in 14.16s
+  914 passed, 5 skipped, 18 subtests passed in 14.18s
 
 VGM_MAME_TESTS=1 .venv-debian-vm/bin/python -m pytest tests/test_vgm_preexit_mame.py -q
-  4 passed, 1 skipped, 3 subtests passed
+  4 passed, 1 skipped, 3 subtests passed in 32.59s
 
 lua5.4 tests/test_vgmplay_preexit.lua script.module.umsa.core/resources/vgmplay.lua trigger_exact
   PASS trigger_exact
+
+.venv-debian-vm/bin/python -m ruff check \
+  script.module.umsa.core/lib/umsa_core/vgm_player.py \
+  script.module.umsa.core/lib/umsa_core/emulation.py
+  only pre-existing findings (F401 compatibility re-exports, I001, BLE001, PLW1510, S110)
+  F811 and B006 are gone
+
+.venv-debian-vm/bin/python -m mypy \
+  script.module.umsa.core/lib/umsa_core/vgm_player.py \
+  script.module.umsa.core/lib/umsa_core/emulation.py --follow-imports=skip
+  Success: no issues found in 2 source files
 ```
 
 The skipped real-MAME case is the 90 s long track; it needs
 `VGM_MAME_TESTS_FULL=1`.
+
+### State
+
+- The argument-forwarding fix, the restored `Emulation.play_random_vgm()`, the
+  import cleanup and the `nonmame` default are committed in `dc122c9`.
+- The one-shot guard for the stopped callback (finding 6) and the four
+  additional tests are in the working tree and are **not** committed, because
+  this task forbids committing.
+- `tests/` is gitignored (`.gitignore:15`), so
+  `tests/test_vgm_player_entrypoints.py` is a local-only file by repository
+  convention and is not part of any commit. It must be kept in sync by hand.
 

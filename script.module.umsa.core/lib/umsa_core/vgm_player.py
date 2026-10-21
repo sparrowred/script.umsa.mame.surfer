@@ -46,6 +46,7 @@ class VgmPlayer:
         self.playvgm = False
         self.playintrovgm = False
         self.playrandomvgm = False
+        self._vgm_stopped_notified = False
 
     @property
     def vgm_info_callback(self):
@@ -82,12 +83,28 @@ class VgmPlayer:
                 log(f'UMSA Emu: VGM info callback failed: {error}', level='warning')
 
     def _notify_vgm_stopped(self):
-        """Forward the end of a VGM playback to the Kodi integration layer."""
+        """Forward the end of a VGM playback to the Kodi integration layer.
+
+        The callback is delivered at most once per playback: the playback
+        owner and the playback worker can both reach the end of a track, and
+        the Kodi layer must only be told once that the VGM stopped.
+        """
+        if self._vgm_stopped_notified:
+            return
+        self._vgm_stopped_notified = True
         if self.vgm_stopped_callback:
             try:
                 self.vgm_stopped_callback()
             except Exception as error:
                 log(f'UMSA Emu: VGM stopped callback failed: {error}', level='warning')
+
+    def begin_vgm_playback(self):
+        """Mark the start of a new playback.
+
+        Clears the one-shot guard of the stopped callback so the next
+        playback reports its end again.
+        """
+        self._vgm_stopped_notified = False
 
     def prepare_vgm_run(self, emurun, vgm, sec2run=90, intro=False, plan=None, info=None, vgm_port_env=None):
         """Prepare emurun dict for VGM playback.
@@ -104,6 +121,7 @@ class VgmPlayer:
         Returns:
             Tuple of (vgm_args, env_dict) for process execution
         """
+        self.begin_vgm_playback()
         self.playvgm = True
         self.playintrovgm = intro
         if info:
@@ -240,6 +258,7 @@ class VgmPlayer:
         """Start random VGM playback in a thread."""
         if self.playvgm:
             return
+        self.begin_vgm_playback()
         self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
             args=(emurun, ggdb, textinfo, db_path, sleep),
             kwargs={'find_roms_func': find_roms_func, 'run_func': run_func})
@@ -268,6 +287,7 @@ class VgmPlayer:
         if self.playvgm:
             return
         port_str = str(vgm_port_env) if vgm_port_env is not None else None
+        self.begin_vgm_playback()
         self.playvgm = True
         self.pvgm_thread = Thread(target=self._play_vgm_thread_impl,
             kwargs={

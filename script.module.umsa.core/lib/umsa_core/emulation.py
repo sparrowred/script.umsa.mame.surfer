@@ -464,6 +464,7 @@ class Emulation:
 
     def play_random_vgm_thread(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
         """Play random vgm until ordered to stop playing."""
+        self.vgm_player.begin_vgm_playback()
         if not self._start_vgm_server():
             self.playrandomvgm = False
             self.vgm_player._notify_vgm_stopped()
@@ -488,6 +489,7 @@ class Emulation:
         """
         if self.playvgm:
             return
+        self.vgm_player.begin_vgm_playback()
         self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
             args=(ggdb, textinfo, db_path, sleep))
         self.rvgm_thread.start()
@@ -495,6 +497,7 @@ class Emulation:
     def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):
         if self.playvgm:
             return
+        self.vgm_player.begin_vgm_playback()
         if not self._start_vgm_server():
             self.playvgm = False
             if info:
