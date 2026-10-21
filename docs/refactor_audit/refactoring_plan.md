@@ -37,6 +37,47 @@
 
 ---
 
+## Step 2b: Callback Signature Fix (2026-10-21) ✅ **COMPLETED**
+
+Following the extraction in Step 2, a correctness issue was identified and fixed:
+
+### Problem
+The `Emulation` class injected lambdas that forwarded calls to facade methods (`Emulation.find_roms`, `Emulation.extract_chd`, etc.) which had incompatible signatures with what `LaunchPreparer` expected:
+
+| Callback | `LaunchPreparer` Expected | Emulation Facade Provided |
+|----------|--------------------------|---------------------------|
+| `find_roms` | `(emurun, rom_paths)` | `(swl_name=None, set_name=None)` |
+| `find_nonmame_roms` | `(emurun, nonmame, exodos_shell)` | `(exodos_shell='')` |
+| `extract_rom` | `(emurun)` | `()` |
+| `extract_chd` | `(emurun, chdman_exe, sleep, dialog)` | `(sleep=None, dialog=None)` |
+
+The lambdas passed arbitrary arguments to facade methods that ignored them and operated on `self.emurun` internally. A `try/except TypeError` block in `LaunchPreparer.other_emulator()` silently swallowed signature mismatches, masking the bug.
+
+### Fix Applied
+1. **`Emulation.__init__`**: Replaced lambdas with direct references to core-level functions (`find_roms`, `find_nonmame_roms`, `extract_rom`, `extract_chd`) that have the correct signatures expected by `LaunchPreparer`.
+
+2. **`LaunchPreparer.other_emulator()`**: Removed the `try/except TypeError` block that was hiding callback signature mismatches.
+
+3. **`vgm_player.py`**: Fixed import of `parse_vgm_header` and `calculate_playback_plan` to come from `umsa_core.vgm_header` directly instead of through `umsa_core.emulation`, eliminating an unnecessary runtime dependency on the `Emulation` module.
+
+### Tests Updated
+- `tests/test_emulation_chd.py::test_other_emulator_propagates_chd_cancellation_before_preparing_launch` — Now injects mock into `LaunchPreparer._extract_chd` and `LaunchPreparer._find_roms` directly
+- `tests/test_emulation_vgm_callback.py::test_random_vgm_info_is_forwarded_through_injected_callback` — Now patches `umsa_core.vgm_header.parse_vgm_header` instead of `umsa_core.emulation.parse_vgm_header`
+
+### Verification Results
+- **All 887 tests pass** (5 skipped for real-MAME integration)
+- Architecture boundary tests pass (7/7)
+- Command-line options tests pass (23/23)
+- Emulator launcher tests pass (5/5)
+- Random VGM player tests pass (8/8)
+- Lua socket log tests pass (30/30)
+- CHD extraction tests pass (10/10)
+- VGM callback tests pass (4/4)
+
+---
+
+## Step 3: Split `gui.py` `UMSA` into Focused Workflow Modules (High Value, High Risk)
+
 ## Step 3: Split `gui.py` `UMSA` into Focused Workflow Modules (High Value, High Risk)
 
 | Aspect | Detail |

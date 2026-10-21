@@ -2,8 +2,8 @@
 
 import os
 import subprocess
+from collections.abc import Callable
 from platform import platform
-from typing import Callable, Optional
 
 from umsa_core import log
 from umsa_core.rom_finder import NONMAME
@@ -31,10 +31,10 @@ class LaunchPreparer:
         temp_dir,
         terminal,
         chdman_exe,
-        find_roms: Optional[Callable] = None,
-        find_nonmame_roms: Optional[Callable] = None,
-        extract_rom: Optional[Callable] = None,
-        extract_chd: Optional[Callable] = None,
+        find_roms: Callable | None = None,
+        find_nonmame_roms: Callable | None = None,
+        extract_rom: Callable | None = None,
+        extract_chd: Callable | None = None,
     ):
         self.mame_exe = mame_exe
         self.mame_dir = mame_dir
@@ -201,14 +201,10 @@ class LaunchPreparer:
         if find_roms_func is None:
             from umsa_core.rom_finder import find_roms
             find_roms_func = find_roms
-        try:
-            if emurun['swl_name'] in NONMAME:
-                find_nonmame(emurun, self.nonmame)
-            else:
-                find_roms_func(emurun, self.mame_ini.get('rompath', []))
-        except TypeError:
-            # Handle mocks with incompatible signatures (e.g., test mocks)
-            pass
+        if emurun['swl_name'] in NONMAME:
+            find_nonmame(emurun, self.nonmame)
+        else:
+            find_roms_func(emurun, self.mame_ini.get('rompath', []))
 
         if not emurun['zips'] + emurun['chds']:
             log('UMSA Emu err: rom/chd not found', level='warning')
@@ -232,7 +228,7 @@ class LaunchPreparer:
                     extract_chd_func = extract_chd
                 extract_chd_func(emurun, self.chdman_exe, sleep, dialog)
             # set args
-            if 'extract_files' in emurun and emurun['extract_files']:
+            if emurun.get('extract_files'):
                 emurun['args'] = os.path.join(
                     emurun['folder'], emurun['extract_files'][0])
             elif 'extractcd' in emurun:

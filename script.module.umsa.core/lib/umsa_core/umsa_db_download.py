@@ -4,10 +4,10 @@ This module provides the UMSA database download and extraction functionality.
 It is Kodi-free and uses only standard library dependencies.
 """
 
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from urllib.request import urlopen
-import zipfile
 
 
 def download_and_update_umsa_db(data_dir, progress, title='Updating UMSA database'):

@@ -48,11 +48,11 @@ from umsa_core_kodi import (
     get_core_data_paths,
     get_core_settings,
     get_core_vgmplay_script,
+    is_emulator_running,
     parse_software_open_method,
     parse_vgm_action_method,
     publish_vgm_info,
     set_emulator_running,
-    is_emulator_running,
     set_screensaver_manual,
 )
 from umsa_screensaver.arguments import encode_request

@@ -1,16 +1,12 @@
 """Module for general emulation handling."""
 
 import os
-import shutil
 import socket
 import subprocess
-from collections import deque
 from platform import platform
-from random import randint
 from select import select as select_wait
 from threading import Event, Thread
 from time import sleep as time_sleep
-from zipfile import BadZipfile, ZipFile
 
 from umsa_core import (
     ProcessRunner,
@@ -20,15 +16,14 @@ from umsa_core import (
     log,
     parse_vgm_header,
 )
-from umsa_core.support import marp_download
-from umsa_core.rom_finder import NONMAME, find_nonmame_roms, find_roms
-from umsa_core.rom_extractor import extract_rom
 from umsa_core.chd_extractor import (
     CHDExtractionCancelled,
     CHDExtractionError,
     extract_chd,
 )
 from umsa_core.launch_preparer import LaunchPreparer
+from umsa_core.rom_extractor import extract_rom
+from umsa_core.rom_finder import NONMAME, find_nonmame_roms, find_roms
 from umsa_core.vgm_player import VgmPlayer
 
 PLATFORM = platform()
@@ -227,10 +222,10 @@ class Emulation:
             temp_dir=temp_dir,
             terminal=terminal,
             chdman_exe=chdman_exe,
-            find_roms=lambda *a, **kw: self.find_roms(*a, **kw) if callable(self.find_roms) else None,
-            find_nonmame_roms=lambda *a, **kw: self.find_nonmame_roms(*a, **kw) if callable(self.find_nonmame_roms) else None,
-            extract_rom=lambda *a, **kw: self.extract_rom(*a, **kw) if callable(self.extract_rom) else None,
-            extract_chd=lambda *a, **kw: self.extract_chd(*a, **kw) if callable(self.extract_chd) else None,
+            find_roms=find_roms,
+            find_nonmame_roms=find_nonmame_roms,
+            extract_rom=extract_rom,
+            extract_chd=extract_chd,
         )
 
         self.vgm_player = VgmPlayer(
@@ -629,22 +624,6 @@ class Emulation:
         except Exception:
             log("UMSA Emu: lua send failed", level='warning')
             return False
-
-    def _accept_vgm_conn(self):
-        """Accept connection from vgmplay.lua client. Closes old accepted conn if any."""
-        if not self.lua_server:
-            return False
-        try:
-            conn, _ = self.lua_server.accept()
-        except Exception:
-            return False
-        if self.lua_socket:
-            self._close_accepted_conn()
-        self.lua_socket = conn
-        # start reading Lua log frames right away, process.wait() below blocks
-        # for the whole track, so nothing else would drain the connection
-        self._start_lua_log_reader(conn)
-        return True
 
     def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True,
                     plan=None, info=None):

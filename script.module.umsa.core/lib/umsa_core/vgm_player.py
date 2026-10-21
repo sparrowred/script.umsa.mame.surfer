@@ -202,7 +202,10 @@ class VgmPlayer:
                 random_track = randint(1, len(vgm_tracklist))
                 play_vgm = f'{random_vgm["name"]}:{random_track:03d}'
                 # Parse header and calculate playback plan
-                from umsa_core.emulation import parse_vgm_header, calculate_playback_plan
+                from umsa_core.vgm_header import (
+                    calculate_playback_plan,
+                    parse_vgm_header,
+                )
                 header = parse_vgm_header(
                     vgm_zipfile,
                     vgm_tracklist[random_track - 1],
