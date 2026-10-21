@@ -104,6 +104,21 @@ Following the callback signature fix (Step 2b), the VGM socket transport and Lua
 
 ---
 
+## Step 2e: VGM Follow-up Fixes (2026-10-21) ✅ **COMPLETED**
+
+Following the VGM socket extraction (Step 2c), several correctness issues were identified and fixed:
+
+| Aspect | Detail |
+|--------|--------|
+| **Goal** | Fix remaining VGM integration issues: port type handling, socket startup failure handling, exception-safe playback cleanup, shutdown-safe connection acceptance, and argument order bug in `_play_vgm_thread_impl` |
+| **Files** | `script.module.umsa.core/lib/umsa_core/emulation.py`, `script.module.umsa.core/lib/umsa_core/vgm_player.py`, `script.module.umsa.core/lib/umsa_core/vgm_socket.py`, `tests/vgmplayer/vgmplayer/mame.py` |
+| **Issues Fixed** | <ul><li><strong>Port type handling</strong>: `bound_port` (int) was passed to subprocess environment without string conversion. Fixed by converting to string at the boundary in `Emulation.play_vgm_thread()` and `VgmPlayer._play_vgm_thread_impl()`. Added validation in `VgmPlayer._vgm_process_env()` to reject invalid ports.</li><li><strong>Socket startup failure</strong>: `_start_vgm_server()` now checks `start_server()` return value and returns `False` on failure, preventing connection wait on non-existent listener. `play_vgm()` and `play_random_vgm_thread()` handle startup failure gracefully.</li><li><strong>Exception-safe playback cleanup</strong>: `play_vgm_thread()` wrapped in try/finally to ensure `playvgm` flag reset and socket cleanup. `play_random_vgm_thread()` already had finally block; verified correct.</li><li><strong>Shutdown-safe connection acceptance</strong>: `wait_for_connection()` now uses stable local reference to listener, avoiding `AttributeError` if listener is closed concurrently.</li><li><strong>Argument order fix</strong>: Fixed `_play_vgm_thread_impl()` call to `prepare_vgm_run()` - removed erroneous `sleep` argument and corrected parameter order.</li></ul> |
+| **Tests Updated** | <ul><li>`tests/test_vgmplay_port.py` - Added 4 new tests for port type handling, invalid port propagation, missing port propagation, and environment value types</li><li>`tests/test_random_vgm_player.py` - Updated mock to return `True` for `_start_vgm_server`</li><li>`tests/test_emulation_vgm_callback.py` - Updated mock to return `True` for `_start_vgm_server`</li></ul> |
+| **Tests Added** | <ul><li>4 new tests in `test_vgmplay_port.py`: `test_environment_values_are_strings`, `test_invalid_port_does_not_propagate_none`, `test_missing_port_does_not_propagate`</li></ul> |
+| **Verification** | ✅ All 890 tests pass (5 skipped)<br>✅ Architecture boundary tests pass (7/7)<br>✅ Core modules remain Kodi-free |
+
+---
+
 ## Step 3: Split `gui.py` `UMSA` into Focused Workflow Modules (High Value, High Risk)
 
 ## Step 3: Split `gui.py` `UMSA` into Focused Workflow Modules (High Value, High Risk)

@@ -31,9 +31,9 @@ VGMPLAY_DEFAULT_PORT = 1234
 
 
 def _parse_vgmplay_port(value: Optional[str]) -> Optional[int]:
-    """Return a valid VGMPlay port, or None for a set invalid value."""
+    """Return a valid VGMPlay port, or None for a set invalid value or unset."""
     if value is None:
-        return VGMPLAY_DEFAULT_PORT
+        return None
     if not value.isascii() or not value.isdigit():
         return None
     significant_value = value.lstrip('0') or '0'
@@ -42,6 +42,14 @@ def _parse_vgmplay_port(value: Optional[str]) -> Optional[int]:
     port = int(significant_value)
     if not 1 <= port <= 65535:
         return None
+    return port
+
+
+def _get_vgmplay_port(value: Optional[str]) -> int:
+    """Return a valid VGMPlay port, using default if unset or invalid."""
+    port = _parse_vgmplay_port(value)
+    if port is None:
+        return VGMPLAY_DEFAULT_PORT
     return port
 
 
@@ -113,10 +121,15 @@ class VgmSocketServer:
         with self._lock:
             self._close_all()
             self._port_env = port_env
-            port = _parse_vgmplay_port(port_env)
-            if port is None:
-                self._logger("UMSA VGM: socket disabled (invalid port)", level='debug')
-                return False
+            if port_env is None:
+                # Use default port when not explicitly configured
+                port = VGMPLAY_DEFAULT_PORT
+            else:
+                # Explicit port configuration - must be valid
+                port = _parse_vgmplay_port(port_env)
+                if port is None:
+                    self._logger("UMSA VGM: socket disabled (invalid port)", level='debug')
+                    return False
 
             try:
                 self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -146,8 +159,9 @@ class VgmSocketServer:
         if not self._listener:
             return False
 
+        listener = self._listener
         deadline = time.monotonic() + timeout
-        self._listener.settimeout(0.5)
+        listener.settimeout(0.5)
 
         try:
             while time.monotonic() < deadline:
@@ -155,7 +169,7 @@ class VgmSocketServer:
                     self._logger("UMSA VGM: process exited before Lua connection", level='debug')
                     return False
                 try:
-                    conn, _ = self._listener.accept()
+                    conn, _ = listener.accept()
                 except socket.timeout:
                     continue
                 except Exception as err:
@@ -169,7 +183,10 @@ class VgmSocketServer:
                     self._start_reader(conn)
                 return True
         finally:
-            self._listener.settimeout(None)
+            try:
+                listener.settimeout(None)
+            except Exception:
+                pass
 
         return False
 

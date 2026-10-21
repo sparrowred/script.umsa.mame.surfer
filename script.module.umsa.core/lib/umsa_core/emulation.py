@@ -404,7 +404,11 @@ class Emulation:
     def _start_vgm_server(self):
         """Create and start listening socket for vgmplay.lua (client)."""
         port_env = os.environ.get('VGMPLAY_PORT')
-        self.vgm_socket.start_server(port_env)
+        if not self.vgm_socket.start_server(port_env):
+            log("UMSA VGM: failed to start socket server, VGM playback disabled", level='warning')
+            self.vgm_socket.close_server()
+            return False
+        return True
 
     def _accept_vgm_conn(self):
         """Accept connection from vgmplay.lua client with bounded waiting."""
@@ -437,25 +441,32 @@ class Emulation:
                     plan=None, info=None):
         """Play vgm."""
         port = self.vgm_socket.bound_port
-        self.vgm_player.prepare_vgm_run(self.emurun, vgm, sec2run, intro, plan, info, port)
-        self.run()
-        self._accept_vgm_conn()
-        # wait until emu is finished
-        if self.process:
-            my_rc = self.process.wait()
-            log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
-        else:
-            log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
-        self.playvgm = False
-        if close_server:
-            self._close_vgm_sockets()
-        else:
-            self.vgm_socket.close_client()
-        if info:
-            self.vgm_player._notify_vgm_stopped()
+        port_str = str(port) if port is not None else None
+        self.vgm_player.prepare_vgm_run(self.emurun, vgm, sec2run, intro, plan, info, port_str)
+        try:
+            self.run()
+            self._accept_vgm_conn()
+            # wait until emu is finished
+            if self.process:
+                my_rc = self.process.wait()
+                log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
+            else:
+                log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
+        finally:
+            self.playvgm = False
+            if close_server:
+                self._close_vgm_sockets()
+            else:
+                self.vgm_socket.close_client()
+            if info:
+                self.vgm_player._notify_vgm_stopped()
 
     def play_random_vgm_thread(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
         """Play random vgm until ordered to stop playing."""
+        if not self._start_vgm_server():
+            self.playrandomvgm = False
+            self.vgm_player._notify_vgm_stopped()
+            return
         def run_func(vgm, sleep=None, close_server=True, plan=None, info=None, vgm_port_env=None):
             self.play_vgm_thread(vgm, sec2run=90, sleep=sleep, intro=False,
                                  close_server=close_server, plan=plan, info=info)
@@ -473,7 +484,11 @@ class Emulation:
     def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):
         if self.playvgm:
             return
-        self._start_vgm_server()
+        if not self._start_vgm_server():
+            self.playvgm = False
+            if info:
+                self.vgm_player._notify_vgm_stopped()
+            return
         self.pvgm_thread = Thread(target=self.play_vgm_thread,
             args=(vgm, sec2run, sleep, intro), kwargs={'info': info, 'plan': plan})
         self.pvgm_thread.start()

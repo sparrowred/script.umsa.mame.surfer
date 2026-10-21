@@ -13,6 +13,7 @@ from zipfile import BadZipFile, ZipFile
 
 from umsa_core import log
 from umsa_core.vgm_header import format_vgm_info
+from umsa_core.vgm_socket import _parse_vgmplay_port
 
 VGM_RANDOM_BATCH_SIZE = 100
 VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
@@ -65,10 +66,11 @@ class VgmPlayer:
     def _vgm_process_env(self, vgm_port_env):
         """Pass the port captured for this listener only to the MAME process."""
         env = os.environ.copy()
-        if vgm_port_env is None:
+        port = _parse_vgmplay_port(vgm_port_env)
+        if port is None:
             env.pop('VGMPLAY_PORT', None)
         else:
-            env['VGMPLAY_PORT'] = vgm_port_env
+            env['VGMPLAY_PORT'] = str(port)
         return env
 
     def _notify_vgm_info(self, message):
@@ -248,13 +250,15 @@ class VgmPlayer:
         """Start VGM playback in a thread."""
         if self.playvgm:
             return
+        port_str = str(vgm_port_env) if vgm_port_env is not None else None
         self.pvgm_thread = Thread(target=self._play_vgm_thread_impl,
-            args=(emurun, vgm, sec2run, sleep, intro, info, plan, vgm_port_env, run_func))
+            args=(emurun, vgm, sec2run, intro, info, plan, port_str, run_func))
         self.pvgm_thread.start()
 
     def _play_vgm_thread_impl(self, emurun, vgm, sec2run, sleep, intro, info, plan, vgm_port_env, run_func):
         """Internal implementation of VGM playback thread."""
-        self.prepare_vgm_run(emurun, vgm, sec2run, sleep, intro, plan, info, vgm_port_env)
+        port_str = str(vgm_port_env) if vgm_port_env is not None else None
+        self.prepare_vgm_run(emurun, vgm, sec2run, intro, plan, info, port_str)
         if run_func:
             run_func(vgm, sleep=sleep, close_server=True, plan=plan, info=info, vgm_port_env=vgm_port_env)
         self.playvgm = False
