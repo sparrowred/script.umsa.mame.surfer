@@ -259,8 +259,28 @@ shadow `gui.py`.
 
 - `tests/test_umsa_gui_workflows.py` (47 tests) — new, local-only (`tests/` is
   gitignored): covers every workflow module with a fake `UMSA` instance.
+- `tests/test_gui_oninit_first_start.py` (5 tests) — new, local-only: pins the
+  first-start branch of `UMSA.onInit` (database download in the foreground,
+  DAT scan in a worker thread).
 - `tests/test_gui_history_navigation.py` — unchanged, still binds the same
   `UMSA` methods.
 - `tests/test_scan_artwork.py` — the AST check for the artwork scan roots now
   points at `umsa_gui/scan_orchestrator.py` (the dict moved with the code).
-- Full suite: 961 passed, 5 skipped.
+- Full suite: 966 passed, 5 skipped, 18 subtests.
+
+### Fixes found during the final verification (2026-10-21)
+
+- **First-start DAT scan ran in the foreground.** `UMSA.onInit` started the
+  background scan with `Thread(target=self.update('dat'))`: the call was
+  evaluated while the thread was being built, so the DAT scan ran
+  synchronously on the calling thread and the thread itself had no target.
+  The bug existed since commit `9750a44` and survived the extraction.
+  Fixed to `Thread(target=self.update, args=('dat',))` — the same pattern the
+  `M_UPD` branches of `onAction` already used — and pinned by
+  `tests/test_gui_oninit_first_start.py`.
+
+### Still open (maintainer, requires a real Kodi runtime)
+
+- First-run database download and the background DAT scan.
+- Menu navigation, gamelist/filter handling, software selection, artwork.
+- Emulator launch, Retroplayer handoff, screensaver handoff, VGM controls.

@@ -403,7 +403,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         else:
             # DB download in foreground, dat+art scan in background
             self.update('db')
-            self.scan_thread = Thread(target=self.update('dat'))
+            self.scan_thread = Thread(target=self.update, args=('dat',))
             self.scan_thread.start()
 
         # one-time legacy import + load persisted filter selections and history
