@@ -273,3 +273,13 @@ def calculate_playback_plan(header: VGMHeader, max_seconds: int = MAX_PLAYBACK_S
         fallback_used=False,
         header=header
     )
+
+
+def format_vgm_info(track_filename, gamename, header, plan):
+    """Build the human readable VGM info string shared by all play modes."""
+
+    minutes, seconds = divmod(int(header.total_seconds), 60)
+    return (
+        f'Song "{track_filename[:-4].title()}" from "{gamename}" '
+        f'{minutes}:{seconds:02d} ({plan.reason})'
+    )

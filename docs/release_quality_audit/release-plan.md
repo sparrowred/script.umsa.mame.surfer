@@ -42,7 +42,7 @@
 | B4 | Fix 1 `B006` (mutable default arg) | `OPEN` | P0 | Shared mutable state across calls | Change to `arg=None` pattern | `static_analysis_audit.md` |
 | B5 | Fix 1 `PLW1510` (`subprocess.run` without `check=True`) | `OPEN` | P0 | Failures not raised | Add `check=True` or explicit error handling | `static_analysis_audit.md` |
 | B6 | Convert 24 `UP031` (`%` formatting → f-strings) | `OPEN` | P1 | Consistency, readability | All clear candidates converted; SQL/MAME/logging exceptions preserved | `python_style_audit.md` |
-| B6a | — `gamelist_strategies.py` (8) | `OPEN` | P1 | | | `python_style_audit.md` |
+| B6a | — `gamelist_strategies.py` (8) | ✅ **CODE-VERIFIED** | P1 | | | `python_style_audit.md` |
 | B6b | — `gui.py` (6) | `OPEN` | P1 | | | `python_style_audit.md` |
 | B6c | — `emulator_launcher.py` (4) | `OPEN` | P1 | | | `python_style_audit.md` |
 | B6d | — `ui.py` (3) | `OPEN` | P1 | | | `python_style_audit.md` |

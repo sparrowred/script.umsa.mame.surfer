@@ -12,7 +12,7 @@ def all_games(ctx):
     import xbmc
     xbmc.log("UMSA gui: update_gamelist: get_by_software")
     results, pos, count = ctx.db.get_by_software(ctx.actset['id'])
-    gl_label = "Complete list (%d)" % (count,)
+    gl_label = f"Complete list ({count})"
     gl_options = ('name', 'year', 'publisher')
 
     return results, pos, gl_label, gl_options
@@ -25,9 +25,7 @@ def software_list(ctx):
         ctx.actset['swl_name'],
         ctx.actset['id'],
     )
-    gl_label = "swl: %s (%d)" % (
-        ctx.actset['swl_name'], count
-    )
+    gl_label = f"swl: {ctx.actset['swl_name']} ({count})"
     gl_options = ("all swls", "get connected swls")
 
     return results, pos, gl_label, gl_options
@@ -37,9 +35,7 @@ def category(ctx):
     results, pos, count = ctx.db.get_by_cat(
         ctx.actset['category'], ctx.actset['id']
     )
-    gl_label = "Category: %s (%d)" % (
-        ctx.actset['category'], count
-    )
+    gl_label = f"Category: {ctx.actset['category']} ({count})"
     gl_options = ('name', 'year', 'publisher')
 
     return results, pos, gl_label, gl_options
@@ -50,7 +46,7 @@ def year(ctx):
         ctx.actset['year'],
         ctx.actset['id']
     )
-    gl_label = "Year: %s (%d)" % (ctx.actset['year'], count)
+    gl_label = f"Year: {ctx.actset['year']} ({count})"
     gl_options = ('±0', '±1', '±2')
 
     return results, pos, gl_label, gl_options
@@ -61,7 +57,7 @@ def players(ctx):
         ctx.actset['nplayers'],
         ctx.actset['id']
     )
-    gl_label = "Players: {} ({})".format(ctx.actset['nplayers'], count)
+    gl_label = f"Players: {ctx.actset['nplayers']} ({count})"
     gl_options = ('name', 'year', 'publisher')
 
     return results, pos, gl_label, gl_options
@@ -72,7 +68,7 @@ def maker(ctx):
         ctx.actset['publisher'],
         ctx.actset['id']
     )
-    gl_label = "Publisher: %s (%d)" % (ctx.actset['publisher'], count)
+    gl_label = f"Publisher: {ctx.actset['publisher']} ({count})"
     gl_options = ('name', 'year', 'publisher')
 
     return results, pos, gl_label, gl_options
@@ -139,7 +135,7 @@ def source(ctx):
     results, pos, result_count = ctx.db.get_software_for_source(
         ctx.actset['id'], ctx.actset['source']
     )
-    gl_label = "source: %s (%d)" % (ctx.actset['source'], result_count)
+    gl_label = f"source: {ctx.actset['source']} ({result_count})"
     gl_options = ('name', 'year', 'publisher')
 
     return results, pos, gl_label, gl_options
@@ -204,7 +200,7 @@ def search_new(ctx):
     else:
         return EARLY_RETURN
     results, pos, result_count = ctx.db.get_searchresults(ctx.searchold)
-    gl_label = '%d results for %s' % (result_count, ctx.searchold)
+    gl_label = f"{result_count} results for {ctx.searchold}"
     gl_options = ('new search',)
 
     return results, pos, gl_label, gl_options
@@ -220,7 +216,7 @@ def search(ctx):
         else:
             return EARLY_RETURN
     results, pos, result_count = ctx.db.get_searchresults(ctx.searchold)
-    gl_label = '%d results for %s' % (result_count, ctx.searchold)
+    gl_label = f"{result_count} results for {ctx.searchold}"
     gl_options = ('new search',)
 
     return results, pos, gl_label, gl_options

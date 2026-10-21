@@ -354,3 +354,67 @@ GUI (gui.py)
 3. **Move `emurun` dict construction** from `emulator_launcher` into `LaunchPreparer` — `emulator_launcher` becomes pure callback/execution orchestration
 4. **Phase 4.9**: Move `get_cmd_line_options`/`create_cmdline` assembly to `umsa_core/cmdline.py` (after launch prep extraction clarifies ownership)
 5. **Keep `retroplayer_cache.py` in GUI** — correctly separated, uses Core only for ROM discovery
+---
+
+## Extraction Completed (2026-10-21)
+
+The following modules have been extracted from `Emulation` (originally 1221 lines, now 766 lines):
+
+### New Modules Created
+
+| Module | Lines | Responsibility |
+|--------|-------|----------------|
+| `rom_finder.py` | 143 | ROM and non-MAME file discovery (`find_roms`, `find_nonmame_roms`) |
+| `rom_extractor.py` | 67 | ZIP extraction and ROM-specific post-processing (`extract_rom`) |
+| `chd_extractor.py` | 123 | CHD extraction, cancellation and cleanup (`extract_chd`, `CHDExtractionCancelled`, `CHDExtractionError`) |
+| `launch_preparer.py` | 263 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`) |
+| `vgm_player.py` | 266 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
+
+### Emulation Facade (766 lines)
+
+The `Emulation` class now serves as a focused facade and lifecycle coordinator:
+
+- **Constructor & configuration**: `__init__`, `launch_preparer`, `vgm_player` initialization
+- **VGM state properties**: `playvgm`, `playintrovgm`, `playrandomvgm`, `vgm_info_callback`, `vgm_stopped_callback` (delegated to `VgmPlayer`)
+- **Socket state & management**: `lua_socket`, `lua_server`, `lua_log_thread`, `lua_log_stop`, `vgm_port_env`, `_start_vgm_server`, `_accept_vgm_conn`, `_close_vgm_sockets`, `_close_accepted_conn`, `_stop_lua_log_reader`, `_start_lua_log_reader`, `_lua_log_reader`, `_drain_lua_log`, `_log_lua_line`, `send_vgmaction`, `_vgm_process_env`
+- **Process lifecycle**: `run`, `_process_args`, `start_managed_process`, `managed_process_status`, `terminate_managed_process`, `kill_managed_process`, `read_managed_process_output`, `wait_for_completion`, `terminate`, `kill`, `after_run`
+- **Delegated methods**: `prepare_exodos_run`, `prepare_marp_run`, `prepare_mame_run`, `find_nonmame_roms`, `find_roms`, `extract_chd`, `extract_rom`, `demul`, `fsuae`, `flycast`, `other_emulator`, `play_vgm_thread`, `play_random_vgm_thread`, `play_random_vgm`, `play_vgm` (all delegate to `LaunchPreparer` or `VgmPlayer`)
+- **VGM playback**: `play_vgm`, `play_random_vgm` (thread management)
+
+### Verification Results
+
+All 887 tests pass (5 skipped for real-MAME integration):
+
+```
+887 passed, 5 skipped, 18 subtests passed in 14.19s
+```
+
+Key test categories verified:
+- CHD extraction: `test_emulation_chd.py` (10 tests)
+- Process management: `test_emulation_process.py` (2 tests)
+- VGM callbacks: `test_emulation_vgm_callback.py` (4 tests)
+- VGM Lua socket protocol: `test_lua_socket_log.py` (18 tests)
+- VGM pre-exit logic: `test_vgmplay_preexit.py` (17 tests)
+- VGM port handling: `test_vgmplay_port.py` (10 tests)
+- Random VGM player: `test_random_vgm_player.py` (8 tests)
+- Command line options: `test_cmd_line_options.py` (23 tests)
+- Emulator launcher: `test_emulator_launcher.py` (5 tests)
+- Architecture boundaries: `test_architecture_boundaries.py` (7 tests)
+
+### Architecture Compliance
+
+- Core modules remain Kodi-free (no `xbmc*` imports)
+- No circular imports introduced
+- `ProcessRunner` ownership unchanged
+- No duplicate process lifecycle
+- Public contracts preserved (all existing method signatures maintained)
+- `emulator_launcher.py` and `retroplayer_cache.py` work without modification
+
+### Deferred Work
+
+The following items from the refactoring plan remain for future work:
+- VGM pre-exit logic integration with real MAME (tests skipped, gated by `VGM_MAME_TESTS=1`)
+- Phase 4.9 `database.py` reorganization (`cmdline.py`, `scan_progress.py`, `game_labels.py`)
+- `gui.py` `UMSA` class extraction (Step 3)
+- Screensaver `ui.py` extraction (Step 4)
+- `database.py` further decomposition (Step 5)

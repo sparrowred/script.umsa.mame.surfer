@@ -21,22 +21,17 @@ from umsa_core import (
     parse_vgm_header,
 )
 from umsa_core.support import marp_download
+from umsa_core.rom_finder import NONMAME, find_nonmame_roms, find_roms
+from umsa_core.rom_extractor import extract_rom
+from umsa_core.chd_extractor import (
+    CHDExtractionCancelled,
+    CHDExtractionError,
+    extract_chd,
+)
+from umsa_core.launch_preparer import LaunchPreparer
+from umsa_core.vgm_player import VgmPlayer
 
 PLATFORM = platform()
-EXTENSIONS = {
-    'snes'     : '.sfc',
-    'gameboy'  : '.gb',
-    'gbcolor'  : '.gbc',
-    'gba'      : '.gba',
-    'n64'      : '.n64',
-    'n64dd'    : '.ndd',
-    'nes'      : '.nes',
-    'vboy'     : '.vb',
-    'megadriv' : '.md',
-    '32x'      : '.32x',
-    'sms'      : '.sms'
-}
-NONMAME = ('exodos','gb64_quik','gb64_cart','gb64_cass','gb64_flop','whdload_games','whdload_demos')
 CHD_PROCESS_STOP_TIMEOUT = 2
 VGM_RANDOM_BATCH_SIZE = 100
 VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
@@ -57,38 +52,6 @@ def format_vgm_info(track_filename, gamename, header, plan):
         f'{minutes}:{seconds:02d} ({plan.reason})'
     )
 
-
-class CHDExtractionCancelled(Exception):
-    """Raised when the user cancels a running CHD extraction."""
-
-
-class CHDExtractionError(RuntimeError):
-    """Raised when chdman fails to extract a CHD."""
-
-
-def _terminate_and_reap_process(process):
-    """Stop a child process, escalating to kill if it ignores terminate."""
-    if process.poll() is None:
-        try:
-            process.terminate()
-        except ProcessLookupError:
-            pass
-        try:
-            process.wait(timeout=CHD_PROCESS_STOP_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            try:
-                process.kill()
-            except ProcessLookupError:
-                pass
-            process.wait()
-    else:
-        process.wait()
-
-
-def _remove_partial_chd(folder):
-    """Remove the new extraction directory and any partial CHD output files."""
-    if os.path.isdir(folder):
-        shutil.rmtree(folder)
 
 #
 # vgmplay.lua logging protocol
@@ -237,9 +200,6 @@ class Emulation:
                     chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame={},
                     terminal='', vgmplay_exe='', vgm_stopped_callback=None):
         self.percent = 0 # chd convert
-        self.playvgm = False
-        self.playintrovgm = False
-        self.playrandomvgm = False
         self.mame_exe = mame_exe
         self.mame_dir = mame_dir
         self.chdman_exe = chdman_exe
@@ -247,11 +207,6 @@ class Emulation:
         self.process_runner = ProcessRunner()
         self.temp_dir = temp_dir
         self.emurun = {}
-        self.lua_socket = None
-        self.lua_server = None
-        self.lua_log_thread = None
-        self.lua_log_stop = None
-        self.vgm_port_env = None
         self.lua_script = vgmlua_script
         self.vgm_info_callback = vgm_info_callback
         self.vgm_stopped_callback = vgm_stopped_callback
@@ -263,6 +218,80 @@ class Emulation:
         if mame_ini_file:
             self.mame_ini = resolve_mame_paths(
                 parse_mame_ini(mame_ini_file), mame_dir)
+
+        self.launch_preparer = LaunchPreparer(
+            mame_exe=mame_exe,
+            mame_dir=mame_dir,
+            nonmame=nonmame,
+            mame_ini=self.mame_ini,
+            temp_dir=temp_dir,
+            terminal=terminal,
+            chdman_exe=chdman_exe,
+            find_roms=lambda *a, **kw: self.find_roms(*a, **kw) if callable(self.find_roms) else None,
+            find_nonmame_roms=lambda *a, **kw: self.find_nonmame_roms(*a, **kw) if callable(self.find_nonmame_roms) else None,
+            extract_rom=lambda *a, **kw: self.extract_rom(*a, **kw) if callable(self.extract_rom) else None,
+            extract_chd=lambda *a, **kw: self.extract_chd(*a, **kw) if callable(self.extract_chd) else None,
+        )
+
+        self.vgm_player = VgmPlayer(
+            mame_exe=mame_exe,
+            mame_dir=mame_dir,
+            vgmplay_exe=vgmplay_exe,
+            vgmlua_script=vgmlua_script,
+            rom_paths=self.mame_ini.get('rompath', []),
+            vgm_info_callback=vgm_info_callback,
+            vgm_stopped_callback=vgm_stopped_callback,
+        )
+
+    # VGM state properties for backward compatibility
+    @property
+    def playvgm(self):
+        return self.vgm_player.playvgm
+
+    @playvgm.setter
+    def playvgm(self, value):
+        self.vgm_player.playvgm = value
+
+    @property
+    def playintrovgm(self):
+        return self.vgm_player.playintrovgm
+
+    @playintrovgm.setter
+    def playintrovgm(self, value):
+        self.vgm_player.playintrovgm = value
+
+    @property
+    def playrandomvgm(self):
+        return self.vgm_player.playrandomvgm
+
+    @playrandomvgm.setter
+    def playrandomvgm(self, value):
+        self.vgm_player.playrandomvgm = value
+
+    @property
+    def vgm_info_callback(self):
+        return self.vgm_player.vgm_info_callback if hasattr(self, 'vgm_player') else None
+
+    @vgm_info_callback.setter
+    def vgm_info_callback(self, value):
+        if hasattr(self, 'vgm_player'):
+            self.vgm_player.vgm_info_callback = value
+
+    @property
+    def vgm_stopped_callback(self):
+        return self.vgm_player.vgm_stopped_callback if hasattr(self, 'vgm_player') else None
+
+    @vgm_stopped_callback.setter
+    def vgm_stopped_callback(self, value):
+        if hasattr(self, 'vgm_player'):
+            self.vgm_player.vgm_stopped_callback = value
+
+    # Socket state and VGM port - owned by Emulation
+    lua_socket = None
+    lua_server = None
+    lua_log_thread = None
+    lua_log_stop = None
+    vgm_port_env = None
 
     @property
     def snapshot_directory(self):
@@ -352,43 +381,15 @@ class Emulation:
 
     def prepare_exodos_run(self, emu_infos):
         """Prepare ``emurun`` for eXoDOS."""
-
-        alt = "shell"
-        if 'alt' in emu_infos['exe']:
-            alt = "alt"
-        self.find_nonmame_roms(alt)
-        self.emurun['args'] = []
-        self.emurun['emulation_start'] = 2
+        self.launch_preparer.prepare_exodos_run(self.emurun, emu_infos)
 
     def prepare_marp_run(self, emu_infos):
         """Prepare ``emurun`` for a MARP replay."""
-
-        self.emurun['emu_exe'] = self.mame_exe
-        inp_file = marp_download(
-            emu_infos['marp_dl'],
-            self.input_directory)
-        self.emurun['args'] = [
-            emu_infos['set_name'], "-playback", inp_file, "-exit_after_playback"]
+        self.launch_preparer.prepare_marp_run(self.emurun, emu_infos)
 
     def prepare_mame_run(self, ggdb, actset, dialog=None):
         """Prepare ``emurun['args']`` for MAME based on ``actset``."""
-
-        self.emurun['emu_exe'] = self.mame_exe
-        if actset['swl_name'] == 'mame':
-            self.emurun['args'] = actset['name']
-        # check for Gamebase64 files
-        elif actset['swl_name'].startswith('gb64_'):
-            filename = self.nonmame['gb64'] + 'Games/' + actset['name'] + '.zip'
-            self.emurun['args'] = [
-                'c64p', f"-{actset['swl_name'][-4:]}", filename]
-        # start a swl item
-        else:
-            if dialog is not None:
-                dialog.update(20, 'create swl options...')
-            # get cmd options
-            self.emurun['args'] = ggdb.get_cmd_line_options(
-                actset['id'], actset['name'],
-                actset['machine_name'], actset['swl_name'])
+        self.launch_preparer.prepare_mame_run(self.emurun, ggdb, actset, dialog)
 
     def wait_for_completion(self, dialog=None, sleep=None):
         """Wait for the running emulator to stop or the user to cancel.
@@ -450,6 +451,10 @@ class Emulation:
         if self.process:
             self.process.kill()
 
+    def _vgm_process_env(self):
+        """Pass the port captured for this listener only to the MAME process."""
+        return self.vgm_player._vgm_process_env(self.vgm_port_env)
+
     def _start_vgm_server(self):
         """Create and start listening socket for vgmplay.lua (client)."""
         self._close_vgm_sockets()
@@ -484,15 +489,29 @@ class Emulation:
         self._start_lua_log_reader(conn)
         return True
 
-    def _start_lua_log_reader(self, conn):
-        """Start the daemon reader thread for Lua -> Python log frames."""
+    def _close_vgm_sockets(self):
+        self._close_accepted_conn()
+        if self.lua_server:
+            try:
+                self.lua_server.close()
+            except Exception:
+                pass
+        self.lua_server = None
+
+    def _close_accepted_conn(self):
+        # reader first: it drains what lua already sent before shutdown(SHUT_RD)
+        # discards the receive buffer on linux
         self._stop_lua_log_reader()
-        stop = Event()
-        self.lua_log_stop = stop
-        thread = Thread(target=self._lua_log_reader, args=(conn, stop), daemon=True)
-        self.lua_log_thread = thread
-        thread.start()
-        return thread
+        if self.lua_socket:
+            try:
+                self.lua_socket.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                self.lua_socket.close()
+            except Exception:
+                pass
+        self.lua_socket = None
 
     def _stop_lua_log_reader(self):
         """Signal the reader thread to drain and exit, join with a bounded timeout."""
@@ -508,6 +527,16 @@ class Emulation:
         thread.join(LUA_READER_JOIN_TIMEOUT)
         if thread.is_alive():
             log("UMSA Emu: lua log reader still running after join", level='debug')
+
+    def _start_lua_log_reader(self, conn):
+        """Start the daemon reader thread for Lua -> Python log frames."""
+        self._stop_lua_log_reader()
+        stop = Event()
+        self.lua_log_stop = stop
+        thread = Thread(target=self._lua_log_reader, args=(conn, stop), daemon=True)
+        self.lua_log_thread = thread
+        thread.start()
+        return thread
 
     def _lua_log_reader(self, conn, stop):
         """Drain LOG frames sent by vgmplay.lua. Never raises into the caller."""
@@ -573,6 +602,7 @@ class Emulation:
             while b'\n' in buf:
                 line, _, buf = buf.partition(b'\n')
                 logged += 1 if self._log_lua_line(line) else 0
+        return logged
 
     def _log_lua_line(self, line):
         """Forward one Lua log frame to the addon logger, ignore anything else."""
@@ -582,30 +612,6 @@ class Emulation:
         level, text = parsed
         log(f'{LUA_LOG_MSG_PREFIX}: {text}', level=level)
         return True
-
-    def _close_accepted_conn(self):
-        # reader first: it drains what lua already sent before shutdown(SHUT_RD)
-        # discards the receive buffer on linux
-        self._stop_lua_log_reader()
-        if self.lua_socket:
-            try:
-                self.lua_socket.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-            try:
-                self.lua_socket.close()
-            except Exception:
-                pass
-        self.lua_socket = None
-
-    def _close_vgm_sockets(self):
-        self._close_accepted_conn()
-        if self.lua_server:
-            try:
-                self.lua_server.close()
-            except Exception:
-                pass
-        self.lua_server = None
 
     def send_vgmaction(self, data):
         """Send command to MAME Lua script over accepted socket connection."""
@@ -624,184 +630,56 @@ class Emulation:
             log("UMSA Emu: lua send failed", level='warning')
             return False
 
+    def _accept_vgm_conn(self):
+        """Accept connection from vgmplay.lua client. Closes old accepted conn if any."""
+        if not self.lua_server:
+            return False
+        try:
+            conn, _ = self.lua_server.accept()
+        except Exception:
+            return False
+        if self.lua_socket:
+            self._close_accepted_conn()
+        self.lua_socket = conn
+        # start reading Lua log frames right away, process.wait() below blocks
+        # for the whole track, so nothing else would drain the connection
+        self._start_lua_log_reader(conn)
+        return True
+
     def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True,
                     plan=None, info=None):
         """Play vgm."""
-
-        log(f"UMSA emu: play_vgm_thread, vgmplay_exe: {self.vgmplay_exe}")
-        self.playvgm = True
-        self.playintrovgm = intro
-        if info:
-            self._notify_vgm_info(info)
-        # Use plan.seconds_to_run if provided, else sec2run (backward compat)
-        actual_sec = plan.seconds_to_run if plan else sec2run
-        vgm_args = ['-videodriver', 'dummy', '-video', 'none', '-volume', '1', '-seconds_to_run', str(int(actual_sec)),
-            '-autoboot_script', self.lua_script,
-            'vgmplay', '-quik', vgm]
-        self.emurun = {
-            'args': vgm_args,
-            'emu_exe': self.vgmplay_exe or self.mame_exe,
-            'emulation_start': 0,
-            'working_dir': self.mame_dir,
-            'env': self._vgm_process_env(),
-        }
-        try:
-            self.run()
-            self._accept_vgm_conn()
-            # wait until emu is finished
-            if self.process:
-                # TODO wait is blocking, not good in a thread? have some poll loop?
-                my_rc = self.process.wait()
-                log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
-            else:
-                log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
-        finally:
-            self.playvgm = False
-            if close_server:
-                self._close_vgm_sockets()
-            else:
-                self._close_accepted_conn()
-            if info:
-                self._notify_vgm_stopped()
-
-    def _notify_vgm_info(self, message):
-        """Forward a VGM info message to the Kodi integration layer."""
-
-        if self.vgm_info_callback:
-            try:
-                self.vgm_info_callback(message)
-            except Exception as error:
-                log(f'UMSA Emu: VGM info callback failed: {error}', level='warning')
-
-    def _notify_vgm_stopped(self):
-        """Forward the end of a VGM playback to the Kodi integration layer."""
-
-        if self.vgm_stopped_callback:
-            try:
-                self.vgm_stopped_callback()
-            except Exception as error:
-                log(f'UMSA Emu: VGM stopped callback failed: {error}', level='warning')
-
-    def _vgm_process_env(self):
-        """Pass the port captured for this listener only to the MAME process."""
-        env = os.environ.copy()
-        if self.vgm_port_env is None:
-            env.pop('VGMPLAY_PORT', None)
+        self.vgm_player.prepare_vgm_run(self.emurun, vgm, sec2run, intro, plan, info, self.vgm_port_env)
+        self.run()
+        self._accept_vgm_conn()
+        # wait until emu is finished
+        if self.process:
+            # TODO wait is blocking, not good in a thread? have some poll loop?
+            my_rc = self.process.wait()
+            log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
         else:
-            env['VGMPLAY_PORT'] = self.vgm_port_env
-        return env
+            log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
+        self.playvgm = False
+        if info:
+            self.vgm_player._notify_vgm_stopped()
 
     def play_random_vgm_thread(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
-        """Play random vgm until ordered to stop playing.
-
-        Candidates are fetched from the database in batches and kept in an
-        in-memory queue; a new batch is requested only when the queue runs
-        out. Filesystem and archive checks stay in this player. After
-        ``VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE`` candidates in a row cannot
-        start playback, random playback stops.
-        """
-
-        self.playrandomvgm = True
-        self._start_vgm_server()
-        candidates = deque()
-        consecutive_unplayable = 0
-
-        def note_unplayable(message):
-            """Log an unusable candidate and report whether to stop playback."""
-            nonlocal consecutive_unplayable
-            log(message, level='warning')
-            consecutive_unplayable += 1
-            if consecutive_unplayable >= VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE:
-                log(
-                    'UMSA Emu: play random vgm - stopping after '
-                    f'{VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE} consecutive '
-                    'unplayable candidates',
-                    level='warning')
-                return True
-            return False
+        """Play random vgm until ordered to stop playing."""
+        def run_func(vgm, sleep=None, close_server=True, plan=None, info=None, vgm_port_env=None):
+            self.play_vgm_thread(vgm, sec2run=90, sleep=sleep, intro=False,
+                                 close_server=close_server, plan=plan, info=info)
 
         try:
-            while self.playrandomvgm:
-                if not ggdb:
-                    break
-                if not candidates:
-                    candidates.extend(
-                        ggdb.get_random_vgm_batch(db_path, VGM_RANDOM_BATCH_SIZE))
-                    if not candidates:
-                        log(
-                            'UMSA Emu: play random vgm - no candidates in '
-                            'database batch, stopping',
-                            level='warning')
-                        break
-                random_vgm = candidates.popleft()
-                self.emurun['swl_name'] = 'vgmplay'
-                self.emurun['set_name'] = random_vgm['name']
-                self.find_roms()
-                if not self.emurun['zips']:
-                    if note_unplayable(
-                            f"UMSA Emu: play random vgm - {random_vgm['name']}.zip not found"):
-                        break
-                    continue
-                vgm_zipfile = self.emurun['zips'][0]
-                try:
-                    with ZipFile(vgm_zipfile) as archive:
-                        vgm_tracklist = archive.namelist()
-                except (BadZipfile, OSError) as error:
-                    if note_unplayable(
-                            f'UMSA Emu: play random vgm - unreadable '
-                            f'{random_vgm["name"]}.zip: {error}'):
-                        break
-                    continue
-                if not vgm_tracklist:
-                    if note_unplayable(
-                            f'UMSA Emu: play random vgm - no tracks in '
-                            f'{random_vgm["name"]}.zip'):
-                        break
-                    continue
-                random_track = randint(1, len(vgm_tracklist))
-                play_vgm = f'{random_vgm["name"]}:{random_track:03d}'
-                # Parse header and calculate playback plan
-                header = parse_vgm_header(
-                    vgm_zipfile,
-                    vgm_tracklist[random_track - 1],
-                    logger=log,
-                )
-                plan = calculate_playback_plan(header)
-                log(
-                    f'UMSA Emu: VGM PLAN: {play_vgm} | {plan.reason} \n'
-                    #f'UMSA Emu: VGM header_valid={header.header_valid} header_sane={header.header_sane} \n'
-                    #f'UMSA Emu: VGM loop_only={header.loop_only} has_loop={header.has_loop} \n'
-                    f'UMSA Emu: VGM total={header.total_seconds:.1f}s loop={header.loop_seconds:.1f}s \n'
-                    f'UMSA Emu: VGM intro={header.intro_seconds:.1f}s -> run={plan.seconds_to_run:.1f}s reps={plan.loop_repetitions} \n',
-                    #f'UMSA Emu: VGM vol_mod={header.volume_modifier} gain={header.header_gain_factor:.4f} gain_db={header.header_gain_db:.2f} \n'
-                    #f'UMSA Emu: VGM extra_hdr={header.extra_header_present} chip_vol={header.has_chip_volumes}',
-                    level='debug')
-                vgm_nice = format_vgm_info(
-                    vgm_tracklist[random_track - 1], random_vgm["gamename"], header, plan)
-                if self.vgm_info_callback:
-                    self.vgm_info_callback(vgm_nice)
-                if textinfo:
-                    try:
-                        textinfo.setLabel(vgm_nice)
-                    except Exception:
-                        pass
-                consecutive_unplayable = 0
-                self.play_vgm_thread(play_vgm, sleep=sleep, close_server=False, plan=plan)
+            self.vgm_player.play_random_vgm_thread(
+                self.emurun, ggdb, textinfo, db_path, sleep,
+                find_roms_func=lambda emurun, rom_paths: self.find_roms(),
+                run_func=lambda vgm, sleep=None, close_server=True, plan=None, info=None, vgm_port_env=None: 
+                    self.play_vgm_thread(vgm, sec2run=90, sleep=sleep, intro=False,
+                                         close_server=close_server, plan=plan, info=info))
         finally:
             self._close_vgm_sockets()
-            self.playrandomvgm = False
-            self._notify_vgm_stopped()
-
-    def play_random_vgm(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
-
-        if self.playvgm:
-            return
-        self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
-            args=(ggdb, textinfo, db_path, sleep))
-        self.rvgm_thread.start()
 
     def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):
-
         if self.playvgm:
             return
         self._start_vgm_server()
@@ -811,320 +689,50 @@ class Emulation:
 
     def find_nonmame_roms(self, exodos_shell=''):
         """Search for files from other sources than MAME."""
-
-        zips, chds = [], []
-        filename = ''
-
-        if self.emurun['swl_name'] == 'exodos':
-            # TODO for real exodos usage we need to check platform and set right extension
-            dosext = '.bat'
-            log(f'UMSA Emu: Platform: {PLATFORM}', level='debug')
-            log(f'UMSA Emu: - eXoDOS arg: "{exodos_shell}"', level='debug')
-            log(f'UMSA Emu: - emurun: {self.emurun}', level='debug')
-            dospath = self.nonmame['exodos']+'eXo/eXoDOS/!dos/'+self.emurun['set_name']
-            if os.path.isdir(dospath):
-                # check for start file, needed to find zip
-                dosfiles = os.listdir(dospath)
-                for i in dosfiles:
-                    # exclude install|exception.*
-                    if dosext in i and not any(x in i for x in ('install', 'exception')):
-                        shellname = i
-                        log(f'UMSA Emu: exodos search !dos: {i}', level='debug')
-                        break
-                # set normal or alternate exosdos launcher
-                if exodos_shell == 'alt':
-                    self.emurun['emu_exe'] = dospath+'/Extras/Alternate Launcher'+dosext
-                    log(f'UMSA Emu: eXoDOS Shell: "{self.emurun["emu_exe"]}"', level='debug')
-                elif exodos_shell == 'shell':
-                    self.emurun['emu_exe'] = dospath+'/'+shellname
-                    log(f'UMSA Emu: eXoDOS Shell: "{self.emurun["emu_exe"]}"', level='debug')
-                # set zip- and filename
-                zipname = os.path.basename(shellname)[:0-len(dosext)]+'.zip'
-                filename = os.path.join(
-                    self.nonmame['exodos']+'eXo/eXoDOS/'+zipname)
-            else:
-                log(f'UMSA Emu - no rom found: {dospath}', level='warning')
-        elif 'gb64_' in self.emurun['swl_name']:
-            log(f"UMSA Emu - gb64: {self.nonmame}", level='debug')
-            filename = self.nonmame['gb64']+'Games/'+self.emurun['set_name']+'.zip'
-        elif 'whdload' in self.emurun['swl_name']:
-            # TODO emurun needs complete description
-            log(f"UMSA Emu - whdload: {self.emurun['description']}", level='debug')
-            filename = self.emurun['description'].replace(', ','_')
-            filename = filename.replace('(','_').replace(')','').replace(' ','')
-            filename = filename[0]+'/'+filename
-            if filename[0].isnumeric():
-                filename = '0'+filename[1:]
-            if 'demo' in self.emurun['swl_name']:
-                filename = filename+'_'+self.emurun['publisher']
-            # remove spaces from name + _ + details ", " to "_"
-            whdpath = self.emurun['swl_name'].split('_')[-1]+'/'
-            # TODO 3x is no lha
-            filename = self.nonmame['whdload']+whdpath+filename+'.lha'
-
-        if os.path.isfile(filename):
-            zips.append(filename)
-            log(f'UMSA Emu: found file {filename}', level='info')
-        else:
-            log(f'UMSA Emu: file not found "{filename}"', level='warning')
-
-        self.emurun['zips'] = zips
-        self.emurun['chds'] = chds
+        find_nonmame_roms(self.emurun, self.nonmame, exodos_shell)
 
     def find_roms(self, swl_name=None, set_name=None):
         """Search for rom zipfiles and chd files within MAME rompath."""
-
-        zips, chds, all_chds = [], [], []
-        # set zip name
         if swl_name and set_name:
-            zip_name = os.path.join(swl_name, set_name+'.zip')
-        elif self.emurun['swl_name'] == 'mame':
-            zip_name = self.emurun['set_name']+'.zip'
+            # For VGM mode, temporarily set emurun with the provided names
+            old_swl = self.emurun.get('swl_name')
+            old_set = self.emurun.get('set_name')
+            self.emurun['swl_name'] = swl_name
+            self.emurun['set_name'] = set_name
+            result = find_roms(self.emurun, self.rom_paths)
+            # Restore original values
+            if old_swl is not None:
+                self.emurun['swl_name'] = old_swl
+            if old_set is not None:
+                self.emurun['set_name'] = old_set
+            return result
         else:
-            zip_name = os.path.join(self.emurun['swl_name'], self.emurun['set_name']+'.zip')
-        # create chd filenames
-        for i in self.emurun.get('disks', []) or []:
-            try:
-                disk_name = i['disk']
-            except (KeyError, IndexError, TypeError):
-                continue
-            if not disk_name:
-                continue
-            all_chds.append(os.path.join(
-                self.emurun['swl_name'], self.emurun['set_name'],
-                f'{disk_name}.chd'))
-            # also check parent in case we have merged sets
-            if self.emurun['set_clone']:
-                all_chds.append(os.path.join(
-                    self.emurun['swl_name'], self.emurun['set_clone'],
-                    f'{disk_name}.chd'))
-        # search filename
-        log(f"UMSA Emu: search {zip_name}", level='debug')
-        for path in self.rom_paths:
-            # check for chd
-            if all_chds:
-                for i in all_chds:
-                    chd_file = os.path.join(path, i)
-                    if os.path.isfile(chd_file):
-                        chds.append(chd_file)
-            # check for zip
-            zip_file = os.path.join(path, zip_name)
-            if os.path.isfile(zip_file):
-                log(f"UMSA Emu: found {zip_file}", level='debug')
-                zips.append(zip_file)
-        self.emurun['zips'] = zips
-        self.emurun['chds'] = chds
-        if swl_name and set_name:
-            return zips[0]
+            find_roms(self.emurun, self.rom_paths)
+            return None
 
     def extract_chd(self, sleep=None, dialog=None):
         """Extract MAME chd CD-ROM to CUE/BIN."""
-
-        log("UMSA Emu: starting chd extract", level='info')
-        chd_name = os.path.basename(self.emurun['chds'][0])
-        # dc needs gdi extension
-        if self.emurun['swl_name'] == 'dc':
-            file_ext = '.gdi'
-        else:
-            file_ext = '.cue'
-        # check if chd is already converted
-        if os.path.exists(self.emurun['folder']):
-            self.percent = 100
-            self.emurun['extractcd'] = os.listdir(self.emurun['folder'])
-            return ""
-        os.mkdir(self.emurun['folder'])
-        output_file = os.path.join(self.emurun['folder'], chd_name+file_ext)
-        log("UMSA Emu: create process", level='debug')
-        proc = None
-        try:
-            proc = subprocess.Popen(
-                [self.chdman_exe, 'extractcd', '-i', self.emurun['chds'][0], '-o',
-                 output_file],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.percent = 0
-            log("UMSA Emu: checking process", level='debug')
-            while proc.poll() is None:
-                chdman_progress = proc.stderr.read(34)
-                rpos = str(chdman_progress)[::-1].find('%')
-                if rpos > -1:
-                    pos = len(chdman_progress)-rpos-1
-                    try:
-                        self.percent = int(float(chdman_progress[pos-4:pos]))
-                    except ValueError:
-                        pass
-                update_dialog(
-                    dialog, self.percent, f'extracting chd: {self.percent}')
-                if dialog and dialog.iscanceled():
-                    _terminate_and_reap_process(proc)
-                    _remove_partial_chd(self.emurun['folder'])
-                    raise CHDExtractionCancelled("CHD extraction canceled")
-                if sleep:
-                    sleep(250)
-                else:
-                    time_sleep(250)
-            return_code = proc.wait()
-            log(
-                f"UMSA Emu extract_rom: chd extract: RC = {return_code}",
-                level='debug')
-            if return_code == 0:
-                self.emurun['extractcd'] = [chd_name+file_ext]
-                return ""
-            _remove_partial_chd(self.emurun['folder'])
-            raise CHDExtractionError(
-                f"chdman extraction failed with exit code {return_code}")
-        except CHDExtractionCancelled:
-            raise
-        except Exception:
-            if proc is not None:
-                _terminate_and_reap_process(proc)
-            if os.path.isdir(self.emurun['folder']):
-                _remove_partial_chd(self.emurun['folder'])
-            raise
-        finally:
-            if proc is not None:
-                for stream in (proc.stdout, proc.stderr):
-                    if stream is not None:
-                        stream.close()
+        return extract_chd(self.emurun, self.chdman_exe, sleep, dialog)
 
     def extract_rom(self):
         """Extract MAME rom zipfile."""
-
-        # only extract when folder does not exists
-        if os.path.exists(self.emurun['folder']):
-            zfiles = os.listdir(self.emurun['folder'])
-        else:
-            # extract zipfile
-            os.makedirs(self.emurun['folder'])
-            try:
-                with ZipFile(self.emurun['zips'][0]) as archive:
-                    archive.extractall(self.emurun['folder'])
-            except BadZipfile:
-                try:
-                    os.rmdir(self.emurun['folder'])
-                except OSError:
-                    pass
-                return "Error: zipfile extraction was unsucessfull."
-            zfiles = os.listdir(self.emurun['folder'])
-
-            # TODO create single rom for cartridges
-            # we don't have the complete xml output with
-            # the rom info and it's actually not possible to do
-            # './mame64 nes -cart skatedi2 -listxml' to get this info
-
-            # simple hack to concatenate files so other emulators can read them
-            if len(zfiles) == 2 and self.emurun['swl_name'] in EXTENSIONS:
-                # hack swl nes: prg before chr
-                if zfiles[0][-3:] == 'chr' and zfiles[1][-3:] == 'prg':
-                    log(f"UMSA Emu extract_rom: NES: 2. is prg... {zfiles}", level='debug')
-                    with open(os.path.join(self.emurun['folder'], zfiles[1]), "ab") as prg_file, open(os.path.join(self.emurun['folder'], zfiles[0]), "rb") as chr_file:
-                        prg_file.write(chr_file.read())
-                    os.remove(os.path.join(self.emurun['folder'], zfiles[0]))
-                elif zfiles[0][-3:] == 'prg' and zfiles[1][-3:] == 'chr':
-                    log(f"UMSA Emu extract_rom: NES: 1. is prg... {zfiles}", level='debug')
-                    with open(os.path.join(self.emurun['folder'], zfiles[0]), "ab") as prg_file, open(os.path.join(self.emurun['folder'], zfiles[1]), "rb") as chr_file:
-                        prg_file.write(chr_file.read())
-                    os.remove(os.path.join(self.emurun['folder'], zfiles[1]))
-                # rest is simply sorted by name
-                else:
-                    log(f"UMSA Emu extract_rom: joining rom files: {zfiles}", level='debug')
-                    zfiles_sort = sorted(zfiles)
-                    log(f"UMSA Emu extract_rom: sorted: {zfiles_sort}", level='debug')
-                    with open(os.path.join(self.emurun['folder'], zfiles_sort[0]), "ab") as file1, open(os.path.join(self.emurun['folder'], zfiles_sort[1]), "rb") as file2:
-                        file1.write(file2.read())
-                    os.remove(os.path.join(self.emurun['folder'], zfiles_sort[1]))
-                zfiles = os.listdir(self.emurun['folder'])
-            # rename
-            if self.emurun['swl_name'] in EXTENSIONS:
-                if os.path.splitext(zfiles[0])[1] != EXTENSIONS[self.emurun['swl_name']]:
-                    os.rename(
-                        os.path.join(self.emurun['folder'], zfiles[0]),
-                        os.path.join(self.emurun['folder'], "{}.{}".format(
-                            zfiles[0], EXTENSIONS[self.emurun['swl_name']]
-                        ))
-                    )
-                zfiles = os.listdir(self.emurun['folder'])
-        self.emurun['extract_files'] = zfiles
-        return ""
+        return extract_rom(self.emurun)
 
     def demul(self):
         """Set parameters for Demul.
 
         CMD: demul -run=[dc,naomi,awave,...] -rom=
         """
-
-        err = ''
-        params = []
-        # dreamcast
-        if self.emurun['swl_name'] == 'dc' and self.emurun['chds'][0]:
-            # make symlink in tmp as spaces and brackets are not nice
-            if 'Linux' in PLATFORM:
-                self.emurun['symlink'] = os.path.join(
-                    self.emurun['folder'], self.emurun['set_name'])
-                os.symlink(self.emurun['chds'][0], self.emurun['symlink'])
-            else:
-                image = self.emurun['chds'][0]
-            params.extend(['-run=dc', f'-image={image}'])
-        # arcade
-        else:
-            # call -listroms to find parameter for -run=
-            section = ''
-            found = False
-            try:
-                listroms = subprocess.check_output([self.emurun['emu_exe'], '-listroms'])
-            except subprocess.CalledProcessError:
-                return "Error running Demul -listroms"
-            for i in listroms.splitlines():
-                i = i.decode('utf-8')
-                if len(i) > 0 and i[0] != ' ':
-                    section = i.rstrip()
-                    log(f"UMSA Emu run_emulator: demul - section {section}", level='debug')
-                elif self.emurun['set_name'] in i:
-                    log(f"UMSA Emu run_emulator: demul - found {i}", level='debug')
-                    found = True
-                    break
-            # Atomiswave exception
-            if section == "Atomiswave":
-                section = "awave"
-            if found:
-                params.extend([
-                    f'-run={section.lower()}',
-                    '-rom={0}'.format(self.emurun['set_name'])
-                ])
-            else:
-                err = "Can't find rom in Demul's rom list."
-        self.emurun['args'] = params
-        return err
+        return self.launch_preparer.demul(self.emurun)
 
     def fsuae(self):
-        """Set parameters for FS-USA.
+        """Set parameters for FS-UAE.
 
         args: --floppies_dir=<temp_dir> --floppy_drive_0=disk1 ...
               --floppy_image_0=disk1 --floppy_image_1=disk2 ...
         or    --cdrom-drive-0=path/to/cd-image = cue/iso TODO test chd
         """
-
-        params = []
-        # set amiga model depending on softwarelist
-        models = {'amigaaga_flop': "A1200", 'cd32': "CD32", 'cdtv': "CDTV"}
-        try:
-            params.append("--amiga_model={}".format(models[self.emurun['swl_name']]))
-        except KeyError:
-            params.append('--amiga_model=A500')
-        # set cdrom/floppy
-        if self.emurun['chds'] and self.emurun['chds'][0]:
-            params.append('--cdrom-drive-0={}'.format(self.emurun['chds'][0]))
-        else:
-            # set floppies_dir
-            params.append('--floppies_dir={}'.format(self.emurun['folder']))
-            for count, file_name in enumerate(self.emurun['extract_files']):
-                # set all floppy images so switching disk in fs-uae is available
-                params.append('--floppy_image_{}={}'.format(
-                    count, os.path.join(self.emurun['folder'], file_name)))
-                # set up to 4 floppy drives with images
-                if count <= 3:
-                    params.append('--floppy_drive_{}={}'.format(
-                        count, os.path.join(self.emurun['folder'], file_name)))
-        self.emurun['args'] = params
+        self.launch_preparer.fsuae(self.emurun)
 
     def flycast(self):
         """Create symlink for Naomi GD-ROMs.
@@ -1133,8 +741,7 @@ class Emulation:
         to path where zip is found. if no disks: use zip name and check for dir with name
         in rompath and if not same path: symlink
         """
-
-        self.emurun['symlink'] = ""
+        self.launch_preparer.flycast(self.emurun)
 
     def mame(self):
         """MAME handling.
@@ -1155,67 +762,5 @@ class Emulation:
         """
 
     def other_emulator(self, emu_infos, dialog=None, sleep=None):
-        """Prepare run for other emulators.
-
-        """
-        ret_val = True
-        update_dialog(dialog, 10, 'searching roms/chds...')
-
-        # set temporary folder
-        self.emurun['folder'] = os.path.join(self.temp_dir, "{}_{}".format(
-            self.emurun['swl_name'], self.emurun['set_name']))
-        # set emulator, working dir and mode
-        self.emurun['emu_exe'] = emu_infos['exe']
-        self.emurun['working_dir'] = emu_infos['dir']
-        if 'mode' in emu_infos:
-            self.emurun['emulation_start'] = emu_infos['mode']
-
-        # find file by the name of the set
-        log(f'UMSA Emu: check for nonmame: {self.emurun["swl_name"]}', level='debug')
-        if self.emurun['swl_name'] in NONMAME:
-            self.find_nonmame_roms()
-        else:
-            self.find_roms()
-
-        if not self.emurun['zips']+self.emurun['chds']:
-            log('UMSA Emu err: rom/chd not found', level='warning')
-            ret_val = False
-        # extract rom_file if needed
-        elif not emu_infos['zip']:
-            # TODO check len of zips, should not happen?
-            if self.emurun['zips'] and self.emurun['zips'][0]:
-                update_dialog(dialog, 20, 'extracting zip...')
-                self.extract_rom()
-            # extract 1st chd
-            if self.emurun['chds'] and self.emurun['chds'][0]:
-                update_dialog(dialog, 20, 'extracting chd...')
-                self.extract_chd(sleep, dialog)
-            # set args
-            if 'extract_files' in self.emurun and self.emurun['extract_files'][0]:
-                self.emurun['args'] = os.path.join(
-                    self.emurun['folder'], self.emurun['extract_files'][0])
-            elif 'extractcd' in self.emurun:
-                self.emurun['args'] = os.path.join(
-                    self.emurun['folder'], self.emurun['extractcd'][0])
-        # set 1st rom or chd as argument
-        else:
-            if self.emurun['zips'] and self.emurun['zips'][0]:
-                self.emurun['args'] = self.emurun['zips'][0]
-            elif self.emurun['chds'] and self.emurun['chds'][0]:
-                self.emurun['args'] = self.emurun['chds'][0]
-
-        # special emulator handling
-        if 'demul' in emu_infos['exe'].lower():
-            err = self.demul()
-            if err:
-                log(f"UMSA Emu ERROR: {err}", level='warning')
-                ret_val = False
-        elif 'fs-uae-launcher' in emu_infos['exe'].lower():
-            self.emurun['emulation_start'] = 2
-            self.emurun['args'] = ['--no-gui', '--config:amiga-model=A1200', self.emurun['zips'][0]]
-        elif 'fs-uae' in emu_infos['exe'].lower():
-            self.fsuae()
-        elif 'flycast' in emu_infos['name'].lower():
-            self.flycast()
-
-        return ret_val
+        """Prepare run for other emulators."""
+        return self.launch_preparer.other_emulator(self.emurun, emu_infos, dialog, sleep)

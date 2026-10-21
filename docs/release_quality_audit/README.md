@@ -10,9 +10,9 @@
 
 The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Shared Core, Screensaver) with a strict Kodi-independent Core boundary. The database refactor (Phases 4.0–4.8) is complete: `DBMod` has delegated most SQL to focused repositories and the `gamelist_filter` service. Architecture boundary tests pass.
 
-**Current test status:** 882 passed, 13 failed (pre-existing, unrelated to recent changes), 5 skipped  
+**Current test status:** 887 passed, 5 skipped, 18 subtests passed  
 **Architecture boundary tests:** 7/7 passed  
-**Lint (Ruff):** 217 issues across 11 rule codes  
+**Lint (Ruff):** 217 issues across 11 rule codes (3 F841 pre-existing in gamelist_strategies.py)  
 **Type check (mypy):** Not run as part of this audit (requires Kodi stubs for GUI/Screensaver modules)
 
 ---
