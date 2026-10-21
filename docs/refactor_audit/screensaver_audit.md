@@ -1,7 +1,8 @@
 # Screensaver Audit — `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py`
 
 **Audited at:** git HEAD `9a98cfe`  
-**File size:** ~1231 lines, three classes: `Saver` (~887 lines), `Player` (~170 lines), `Monitor` (~70 lines) + module-level helpers
+**File size:** ~1231 lines, three classes: `Saver` (~887 lines), `Player` (~170 lines), `Monitor` (~70 lines) + module-level helpers  
+**Refactored (refactor plan step 4):** `ui.py` is now 522 lines, `Saver` 258, `Player` 86, `Monitor` 79 lines — the logic moved into 11 focused modules (see *Implemented Module Map*).
 
 ---
 
@@ -100,26 +101,65 @@
 
 ---
 
-## Proposed Changes (Not Implemented)
+## Implemented Module Map (refactor plan step 4)
 
-1. **Split `ui.py` into multiple modules** under `lib/umsa_screensaver/`:
-   - `ui.py` → `Saver` (dispatch), `Player`, `Monitor` only
-   - `artwork_selector.py` — selection + validation
-   - `rendering.py` — cross/slide/wall render strategies
-   - `wall_layout.py` — grid geometry
-   - `video_playlist.py` — playlist + `ListItem` creation
-   - `history.py` — `record_display` + `onAVStarted` deduplication
-   - `temp_video.py` — eXoDOS extraction + cache
-   - `image_validator.py` — `check_snapshot`
-   - `settings.py` — settings dataclass
+All modules live in `screensaver.umsa.mame.surfer/lib/umsa_screensaver/`. The Kodi
+modules (`xbmc`, `xbmcgui`, `xbmcaddon`, `xbmcvfs`) are resolved **at call
+time** in `ui.py` and handed down as arguments, so the tests can patch
+`ui.xbmc` / `ui.xbmcgui` / `ui.xbmcvfs` / `ui.PIL` as before.
 
-2. **Extract `Player` history logic** into shared `history.py` — both `Saver.record_display` and `Player.onAVStarted` call same Core method; deduplication token logic could be shared.
+| Module | Lines | Responsibility | Kodi imports |
+|--------|-------|----------------|--------------|
+| `ui.py` | 522 | `Saver` / `Player` / `Monitor` — the Kodi window, playlist and callbacks; compat re-exports of the old module-level names | yes |
+| `actions.py` | 106 | Dispatch of the Kodi actions of the screensaver window (context handoff, playlist advance, VGM volume/next/stop) | no (injected) |
+| `artwork_selector.py` | 131 | Artwork types per mode, source roots, artwork path resolution, machine picture, aspect handling | no |
+| `constants.py` | 49 | Action codes, control ids, window properties, mode names, artwork types per mode | no |
+| `history.py` | 164 | `record_display`, `record_video_display`, playback token, `PlaybackHistoryGuard` | no (injected) |
+| `image_validator.py` | 117 | Bad-image detection (PIL and non-PIL variants) | no |
+| `rendering.py` | 384 | `RenderContext`, cross/slide/wall rendering, video label fading, `RenderSession` (the render loop) | no (injected) |
+| `settings.py` | 130 | `WallSettings`, `ScreensaverSettings` (dataclasses) + legacy dict of `Saver.settings`, `choose_mode` | no |
+| `temp_video.py` | 173 | eXoDOS ZIP videosnap extraction, cache, cleanup | no (injected `xbmcvfs`) |
+| `video_playlist.py` | 113 | `ListItem` creation, `attach_set_id` / `read_set_id` / `read_software_id` (Kodi 20 unique id) | `xbmc` (logging only) |
+| `wall_layout.py` | 122 | Wall geometry: rows, cell grid, positions, free slots | no |
 
-3. **Make `check_snapshot` configurable** — bad-image MD5 lists hardcoded; could be loaded from file or Core.
+### Class size targets
 
-4. **Capability-guard all Kodi 20+ APIs** — `attach_set_id`/`read_set_id` already do this; ensure any new unique-ID usage follows pattern.
+| Class | Before | After | Target |
+|-------|--------|-------|--------|
+| `Saver` | ~887 | 258 | < 300 ✅ |
+| `Player` | ~170 | 86 | < 100 ✅ |
+| `Monitor` | ~70 | 79 | < 80 ✅ |
 
-5. **Do not move Kodi window callbacks into `umsa_core`** — `Monitor.startme`, `onScreensaverActivated`, `Player.onAVStarted` are Kodi lifecycle hooks; must stay in screensaver add-on.
+### Public contracts kept in `ui.py`
+
+`ui.py` re-exports the names the previous monolithic module exposed, so
+callers and tests keep working unchanged: `Saver`, `Player`, `Monitor`,
+`attach_set_id`, `read_set_id`, `read_software_id`, `SET_ID_UNIQUE_TYPE`,
+`PIL`, `ACTION_CONTEXT`, `ACTION_MOVEMENT_RIGHT`, `ACTION_PLAY_NEXTITEM`,
+`BACKG`, `CROSS_BACKGROUND`, `IMAGE`, `INFO_DETAIL`, `INFO_LABEL`,
+`PIC_1TO1`, `PIC_3TO4`, `PIC_4TO3`, `PIC_MACHINE`, `MEDIA_FOLDER`.
+
+---
+
+## Preserved Quirks (kept on purpose — report, do not fix)
+
+The refactor moves code, it does not change behaviour. These oddities of the
+original file are still there and are listed so nobody "fixes" them by
+accident:
+
+- `Saver.add_video_to_playlist` calls `self.snapshot_crossover(['covers', 'flyers'])` in the "no videos found" branch — `Saver` has no such method (it would raise `AttributeError`). Kept verbatim.
+- The render loop leaves through `while saver.running != 'no'`; the cleanup block after the loop in `get_art_and_call_saver` is therefore unreachable. The cleanup now runs in `Saver.get_art_and_call_saver` after `RenderSession.run()` returned `True`.
+- The videos-mode wait branch in the render loop is unreachable (the video mode returns before the loop).
+- The wall mode calls `create_wall()` twice (once for the artwork types, once for the layout) — kept.
+- `Saver.settings['type']` is a mutable list, `Saver.wall` a plain dict — the monitor removes and re-appends `'videos'` while audio is playing.
+- `settings.ScreensaverSettings.from_addon` raises `ValueError` on an empty numeric add-on setting (`int('')`) — same as the original `read_settings`.
+
+### The one deliberate deviation
+
+`image_validator.check_snapshot` opens the snapshot file with a `with` block.
+A read error on an openable file is now reported as "invalid snapshot"
+instead of raising out of the render loop (the PIL branch already behaved
+that way). The file handle is closed in every case now.
 
 ---
 
@@ -137,3 +177,28 @@
 - `special://temp/umsa_screensaver_videos/` directory for extractions
 - Settings keys: `ssaver_time`, `ssaver_info`, `ssaver_videos`, `ssaver_slide`, `ssaver_wall`, `ssaver_cross`, `ssaver_trows`, `ssaver_trows_b`, `ssaver_srows`, `ssaver_srows_b`, `ssaver_free`, `ssaver_titles`
 - `vgm_active()` / `send_vgm_action()` protocol for VGM control
+
+---
+
+## Verification (step 4)
+
+```bash
+# focused screensaver tests (history, addon wiring, eXoDOS extraction)
+.venv-debian-vm/bin/python -m pytest tests/test_screensaver_history_hooks.py \
+    tests/test_screensaver_history_repository.py tests/test_screensaver_addon.py \
+    tests/test_screensaver_exodos_extraction.py -q      # 139 passed
+
+# new unit tests of the extracted modules
+.venv-debian-vm/bin/python -m pytest tests/test_screensaver_ui_modules.py -q  # 62 passed
+
+# full suite
+.venv-debian-vm/bin/python -m pytest tests/ -q          # 1028 passed, 5 skipped, 18 subtests passed
+
+# lint of the add-on (was 2 findings in the old ui.py, now 0)
+.venv-debian-vm/bin/python -m ruff check screensaver.umsa.mame.surfer/
+```
+
+Not covered by the automated tests (needs a running Kodi): the skin
+animation of the cross/slide/wall modes, the label fading of the video mode,
+the eXoDOS playback of an archived videosnap and the context handoff to the
+frontend.

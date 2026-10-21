@@ -155,7 +155,7 @@ argument forwarding was verified against the implementation signatures.
 
 ---
 
-## Step 4: Separate Screensaver Rendering, Playback, Lifecycle (Medium Value, Medium Risk)
+## Step 4: Separate Screensaver Rendering, Playback, Lifecycle (Medium Value, Medium Risk) ✅ **COMPLETED**
 
 | Aspect | Detail |
 |--------|--------|
@@ -168,6 +168,7 @@ argument forwarding was verified against the implementation signatures.
 | **Risk** | Medium — `Saver.get_art_and_call_saver()` is a 400-line loop with tight Kodi control manipulation. Extraction must preserve render timing and control IDs. |
 | **Dependencies** | Step 2 (Core `Emulation` extraction clarifies VGM interface); Step 3 (GUI `screensaver_vgm.py` extraction aligns protocol) |
 | **Acceptance** | <ul><li>`Saver` < 300 lines (dispatch + orchestration)</li><li>`Player` < 100 lines (callbacks only)</li><li>`Monitor` < 80 lines (lifecycle only)</li><li>All existing tests pass</li><li>Kodi-stub tests for `onAVStarted` deduplication pass</li></ul> |
+| **State** | ✅ **CODE-VERIFIED** (2026-10-21). `ui.py` is 522 lines: `Saver` 258, `Player` 86, `Monitor` 79 — all three class targets met. 11 focused modules added under `lib/umsa_screensaver/`: `actions.py` (106), `artwork_selector.py` (131), `constants.py` (49), `history.py` (164), `image_validator.py` (117), `rendering.py` (384), `settings.py` (130), `temp_video.py` (173), `video_playlist.py` (113), `wall_layout.py` (122). The Kodi modules are resolved at call time in `ui.py` and injected, so the tests keep patching `ui.xbmc` / `ui.xbmcgui` / `ui.xbmcvfs` / `ui.PIL`; `ui.py` re-exports the old module-level names (`attach_set_id`, `read_set_id`, `read_software_id`, `SET_ID_UNIQUE_TYPE`, `PIL`, control/action constants) through `__all__`. New tests: `tests/test_screensaver_ui_modules.py` (62 tests — **local-only**, `tests/` is gitignored). Focused screensaver tests: **139 passed**. Full suite: **1028 passed, 5 skipped, 18 subtests** (`966 → 1028` = the 62 new tests). `ruff check screensaver.umsa.mame.surfer/` is clean (the old `ui.py` had 2 findings). The preserved quirks of the original file are listed in `screensaver_audit.md`; the only deliberate deviation is the snapshot file read, which no longer raises out of the render loop. The manual Kodi smoke test is still open (see `release-plan.md` C-series). |
 
 ---
 
