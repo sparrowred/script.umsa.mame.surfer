@@ -1686,7 +1686,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             # re-connect to db
             if self.ggdb:
-                progress_dialog.update(90, 'copy artwork and dats back to new database...')
+                progress_dialog.update(100, 'reopening database...')
                 self.ggdb.open_db(SETTINGS_FOLDER)
             # first run
             else:

@@ -401,20 +401,43 @@ Key test categories verified:
 - Emulator launcher: `test_emulator_launcher.py` (5 tests)
 - Architecture boundaries: `test_architecture_boundaries.py` (7 tests)
 
+- `database.py` further decomposition (Step 5)
+
+---
+
+## VGM Socket Transport Extraction (2026-10-21)
+
+As a follow-up to the Emulation extraction (Step 2), the VGM socket transport and Lua log protocol have been extracted into a dedicated `vgm_socket.py` module.
+
+### New Module Created
+
+| Module | Lines | Responsibility |
+|--------|-------|----------------|
+| `vgm_socket.py` | 339 | VGM TCP transport lifecycle, Lua log protocol, connection acceptance, command sending, log frame parsing |
+
+### Key Improvements
+
+1. **Bounded connection acceptance**: `wait_for_connection()` now has a 30-second timeout and detects process exit before Lua connects, preventing indefinite blocking.
+
+2. **Explicit listener vs. client cleanup**: Separate `close_client()` (closes accepted connection + reader thread) and `close_server()` (closes listener + any client) operations. Random playback retains listener between tracks; single-track playback closes both.
+
+3. **Exception-safe startup**: `start_server()` cleans up partially initialized sockets on bind/listen failure.
+
+4. **Process-exit detection**: Connection acceptance loop checks `process_exited()` predicate to stop waiting if MAME exits before Lua connects.
+
+5. **Dynamic port allocation readiness**: Architecture supports binding to port 0 for dynamic allocation, though current Lua script requires explicit port via `VGMPLAY_PORT` env var.
+
+6. **Compatibility preserved**: All existing `Emulation` public methods and properties maintained via delegation to `VgmSocketServer`. Constants and parsing functions re-exported for backward compatibility.
+
+### Verification Results
+
+All 887 tests pass (5 skipped for real-MAME integration).
+
 ### Architecture Compliance
 
-- Core modules remain Kodi-free (no `xbmc*` imports)
-- No circular imports introduced
+- Core modules remain Kodi-free
+- No circular imports
 - `ProcessRunner` ownership unchanged
 - No duplicate process lifecycle
-- Public contracts preserved (all existing method signatures maintained)
+- Public contracts preserved
 - `emulator_launcher.py` and `retroplayer_cache.py` work without modification
-
-### Deferred Work
-
-The following items from the refactoring plan remain for future work:
-- VGM pre-exit logic integration with real MAME (tests skipped, gated by `VGM_MAME_TESTS=1`)
-- Phase 4.9 `database.py` reorganization (`cmdline.py`, `scan_progress.py`, `game_labels.py`)
-- `gui.py` `UMSA` class extraction (Step 3)
-- Screensaver `ui.py` extraction (Step 4)
-- `database.py` further decomposition (Step 5)

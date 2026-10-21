@@ -76,6 +76,34 @@ The lambdas passed arbitrary arguments to facade methods that ignored them and o
 
 ---
 
+## Step 2c: VGM Socket Transport Extraction (2026-10-21) ✅ **COMPLETED**
+
+Following the callback signature fix (Step 2b), the VGM socket transport and Lua log protocol were extracted from `Emulation` into a dedicated `vgm_socket.py` module to complete the separation of VGM concerns.
+
+| Aspect | Detail |
+|--------|--------|
+| **Goal** | Extract VGM TCP transport lifecycle, Lua log protocol, connection acceptance, command sending, and log frame parsing from `Emulation` into a dedicated `VgmSocketServer` class |
+| **Files** | `script.module.umsa.core/lib/umsa_core/emulation.py` → new `umsa_core/vgm_socket.py` |
+| **Module created** | `vgm_socket.py` — `VgmSocketServer` with `start_server`, `wait_for_connection`, `send_command`, `close_client`, `close_server`, `_start_reader`, `_stop_reader`, `_drain_buffer`, `_forward_log_frame` |
+| **Responsibility moved** | VGM TCP transport lifecycle, Lua log protocol, connection acceptance, command sending, log frame parsing — **out of `Emulation`** |
+| **Contracts unchanged** | <ul><li>`Emulation` public methods preserved via delegation: `_start_vgm_server`, `_accept_vgm_conn`, `_close_vgm_sockets`, `send_vgmaction`, `_vgm_process_env`, `_start_lua_log_reader`, `_stop_lua_log_reader`, `_close_accepted_conn`, `_drain_lua_log`</li><li>Protocol constants re-exported: `LUA_LOG_TAG`, `LUA_LOG_LEVELS`, `LUA_LOG_FALLBACK_LEVEL`, `LUA_LOG_MSG_PREFIX`, `LUA_READ_POLL_TIMEOUT`, `LUA_READER_JOIN_TIMEOUT`, `LUA_LOG_MAX_LINE_BYTES`, `VGMPLAY_DEFAULT_PORT`, `_parse_vgmplay_port`, `parse_lua_log_line`</li><li>`Emulation` socket state properties: `lua_server`, `lua_socket`, `lua_log_thread`, `lua_log_stop`</li></ul> |
+| **Tests** | <ul><li>`tests/test_lua_socket_log.py` (30 tests — Lua socket protocol)</li><li>`tests/test_vgmplay_port.py` (10 tests — port handling)</li><li>`tests/test_vgmplay_preexit.py` (17 tests — Lua pre-exit logic)</li><li>`tests/test_emulation_vgm_callback.py` (4 tests — VGM callbacks)</li><li>`tests/test_random_vgm_player.py` (8 tests — random VGM playback)</li></ul> |
+| **Risk** | Medium — `Emulation` is central; socket lifecycle must remain identical; protocol must not change |
+| **Dependencies** | Step 2b (callback signature fix) |
+| **Acceptance** | ✅ `vgm_socket.py` 339 lines; `emulation.py` 557 lines (down from 766)<br>✅ All existing tests pass unchanged (887 passed, 5 skipped)<br>✅ Architecture boundary tests pass (7/7)<br>✅ Core modules remain Kodi-free; no circular imports; `ProcessRunner` ownership unchanged |
+
+### Verification Results
+- **All 887 tests pass** (5 skipped for real-MAME integration)
+- Architecture boundary tests pass (7/7)
+- Command-line options tests pass (23/23)
+- Emulator launcher tests pass (5/5)
+- Random VGM player tests pass (8/8)
+- Lua socket log tests pass (30/30)
+- CHD extraction tests pass (10/10)
+- VGM callback tests pass (4/4)
+
+---
+
 ## Step 3: Split `gui.py` `UMSA` into Focused Workflow Modules (High Value, High Risk)
 
 ## Step 3: Split `gui.py` `UMSA` into Focused Workflow Modules (High Value, High Risk)
