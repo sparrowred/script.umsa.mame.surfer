@@ -1,7 +1,12 @@
 # GUI Audit — `plugin.program.umsa.mame.surfer/resources/lib/gui.py`
 
-**Audited at:** git HEAD `9a98cfe`  
-**File size:** ~2717 lines, single `UMSA` class (inherits `xbmcgui.WindowXMLDialog`) + module-level constants, helpers, `VgmCommandMonitor`, `GamelistCtx`, `RetroplayerCtx`, `main()`
+**Audited at:** git HEAD `9a98cfe` (audit), split completed against HEAD `00bf063`  
+**File size:** ~2717 lines (before), single `UMSA` class (inherits `xbmcgui.WindowXMLDialog`) + module-level constants, helpers, `VgmCommandMonitor`, `GamelistCtx`, `RetroplayerCtx`, `main()`
+
+> **Status: split done (2026-10-21).** `gui.py` is now the Kodi adapter
+> (1231 lines) and the workflows live in `resources/lib/umsa_gui/`
+> (15 modules, 2,000 lines). See
+> [Current Module Layout](#current-module-layout) at the end of this file.
 
 ---
 
@@ -178,15 +183,84 @@
 ## Proposed Future Changes (Not Yet Implemented)
 
 1. **Remove dead code in `run_emulator` (lines 2545–2636) — trivial, no behavior change** ✅ **COMPLETED** (2026-10-20)
-2. **Split `UMSA` into coordinator + workflow modules**:
-   - `gui/menu.py` — `build_main_menu`, `build_sublist_menu`, menu constants
-   - `gui/gamelist.py` — `popup_gamelist`, `gamelist_click`, `gamelist_context`, `gamelist_move`, `gamelist_switch_filter`
-   - `gui/filter_ui.py` — `filter_category`, `filter_content`, `set_filter_content`
-   - `gui/artwork_presenter.py` — `create_artworklist`, `show_artwork`, `search_snaps`, `get_machine_pic`
-   - `gui/software_selector.py` — `select_software`, `software_move`, `machine_move`, `fill_set_list`, `choose_media`, `show_rec`, `open_software`
-   - `gui/scan_orchestrator.py` — `update`, progress callbacks
-   - `gui/screensaver_vgm.py` — `VgmCommandMonitor`, `start/stop/get_screensaver_mode`, `_show/hide_vgm_info`, `_handle_vgm_action`
-   - `gui/startup_import.py` — `run_startup_import`, `_remember_and_select`, `_save_lastgames`
-   - `UMSA` retains: `__init__`, `onInit`, `onFocus`, `onAction` (dispatch), `onClick` (dispatch), `exit`, `main()`
+2. **Split `UMSA` into coordinator + workflow modules** — ✅ **COMPLETED** (2026-10-21), see [Current Module Layout](#current-module-layout):
+   - `umsa_gui/menu.py` — `build_main_menu`, `build_sublist_menu`, menu constants
+   - `umsa_gui/gamelist.py` — `popup_gamelist`, `gamelist_move`, `gamelist_switch_filter`, `show_fulllist`, `update_gamelist`
+   - `umsa_gui/gamelist_actions.py` — `gamelist_click`, `gamelist_context`
+   - `umsa_gui/filter_ui.py` — `filter_category`, `filter_content`, `set_filter_content`, `close_filterlist`
+   - `umsa_gui/artwork_presenter.py` — `create_artworklist`, `show_artwork`, `search_snaps`, `get_machine_pic`
+   - `umsa_gui/software_selector.py` — `select_software`, `software_move`, `machine_move`, `fill_set_list`, `open_software`
+   - `umsa_gui/media_list.py` — `choose_media`, `show_rec`
+   - `umsa_gui/scan_orchestrator.py` — `update`, progress callbacks
+   - `umsa_gui/screensaver_vgm.py` — `start/stop/get_screensaver_mode`, `_show/hide_vgm_info`, `_handle_vgm_action`
+   - `umsa_gui/startup_import.py` — `run_startup_import`, `remember_and_select`, `save_lastgames`
+   - `umsa_gui/emulator_setup.py` — `configure_emulator`, `get_diff_emulator`, `marp_replayer`, emulator output/notification
+   - `umsa_gui/constants.py`, `umsa_gui/paths.py`, `umsa_gui/optional_plugins.py` — shared constants, add-on paths, optional plugin probes
+   - `UMSA` retains: `__init__`, `onInit`, `onFocus`, `onAction` (dispatch), `onClick` (dispatch), `exit`, `run_emulator`, `main()`
 3. **Extract `Emulation` emulator-specific prep** (see `emulation_audit.md`)
 4. **Reassess `DBMod` after Phase 4.9** — move non-DB helpers (`download_and_update_umsa_db` → done, `run_scan_with_progress`, `split_gamename`, `COUNTRIES`, `make_time_nice`, `get_best_machine_for_set`, `parse_recommended_games`, `build_filter_lists`, `create_cmdline`, `get_cmd_line_options` assembly) to focused modules
+
+---
+
+## Current Module Layout
+
+Split completed 2026-10-21 against HEAD `00bf063`. `gui.py` is the Kodi
+adapter; the workflows live in the new package `resources/lib/umsa_gui/`.
+The package is **not** named `gui/` on purpose: `addon.py` puts
+`resources/lib` on `sys.path` and imports `gui`, so a `gui/` package would
+shadow `gui.py`.
+
+### Adapter — `resources/lib/gui.py` (1231 lines)
+
+| Part | Lines | Content |
+|------|-------|---------|
+| Imports / re-exports | ~140 | `umsa_gui.constants` (control IDs, action codes, `M_*`), `umsa_gui.paths`, `umsa_gui.optional_plugins` |
+| `__all__` | ~90 | Explicit public API (all names that existed before the split) |
+| `VgmCommandMonitor` | 22 | `xbmc.Monitor` subclass, unchanged |
+| `UMSA` | 925 | `__init__`, `onInit`, `onFocus`, `onClick`, `onAction`, `exit`, `run_emulator` (dispatch), `read_settings`, `artwork_source_roots` + thin wrappers for every extracted workflow |
+| `RetroplayerCtx` / `main()` | ~40 | Unchanged |
+
+### Workflow package — `resources/lib/umsa_gui/`
+
+| Module | Lines | Public functions |
+|--------|-------|------------------|
+| `constants.py` | 110 | control IDs, action codes, `M_*`, `SUBMENU_ORDER`, `FILTER_CATEGORY_KEYS`, `EMULATOR_RUNNING_PROPERTY`, `WAIT_GUI`/`WAIT_PLAYER` |
+| `paths.py` | 17 | `ADDON`, `ADDON_PATH`, `RESOURCE_LIB`, `SKIN_MEDIA_FOLDER` |
+| `optional_plugins.py` | 18 | `KODIPDF`, `KODIYT`, `play_pdf` (optional add-on probes) |
+| `menu.py` | 156 | `build_main_menu`, `build_sublist_menu` |
+| `gamelist.py` | 227 | `GamelistCtx`, `update_gamelist`, `popup_gamelist`, `gamelist_move`, `gamelist_switch_filter`, `show_fulllist` |
+| `gamelist_actions.py` | 223 | `gamelist_click`, `gamelist_context` |
+| `filter_ui.py` | 195 | `empty_filter_lists`, `close_filterlist`, `filter_category`, `filter_content`, `set_filter_content` |
+| `artwork_presenter.py` | 262 | `create_gui_element_from_snap`, `create_artworklist`, `show_artwork`, `search_snaps`, `get_machine_pic` |
+| `software_selector.py` | 303 | `select_software`, `software_move`, `machine_move`, `fill_set_list`, `open_software` |
+| `media_list.py` | 96 | `choose_media`, `show_rec` |
+| `emulator_setup.py` | 160 | `get_diff_emulator`, `configure_emulator`, `marp_replayer`, `add_or_update_emu_output`, `notify_final_launch` |
+| `scan_orchestrator.py` | 97 | `update` |
+| `screensaver_vgm.py` | 86 | `get_screensaver_mode`, `start_screensaver`, `stop_screensaver`, `show_vgm_info`, `hide_vgm_info`, `handle_vgm_action` |
+| `startup_import.py` | 109 | `run_startup_import`, `save_lastgames`, `remember_and_select` |
+
+### Conventions used by the split
+
+- Workflow functions take the `UMSA` instance as first argument (`gui`) and
+  return nothing (or a value the wrapper forwards).
+- Cross-workflow calls go through the instance (`gui.select_software(...)`,
+  `gui._save_lastgames()`) so that overrides and the original `self.`
+  dispatch semantics are preserved.
+- `update_gamelist` and `update` take the values they used to read from
+  module globals as parameters (`lastsaver_path`, `core_data_paths`) so that
+  no stub-missing attribute is touched at import time.
+- The `gamelist` module is imported as `gamelist_workflows` in `gui.py`:
+  the public method `popup_gamelist(self, gamelist, ...)` would otherwise
+  shadow the module name.
+- `gui.py` re-exports every name that existed before the split and lists them
+  in `__all__`; `tests/test_umsa_gui_workflows.py` asserts the parity.
+
+### Verification
+
+- `tests/test_umsa_gui_workflows.py` (47 tests) — new, local-only (`tests/` is
+  gitignored): covers every workflow module with a fake `UMSA` instance.
+- `tests/test_gui_history_navigation.py` — unchanged, still binds the same
+  `UMSA` methods.
+- `tests/test_scan_artwork.py` — the AST check for the artwork scan roots now
+  points at `umsa_gui/scan_orchestrator.py` (the dict moved with the code).
+- Full suite: 961 passed, 5 skipped.

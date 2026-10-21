@@ -153,6 +153,7 @@ argument forwarding was verified against the implementation signatures.
 | **Risk** | High — touches Kodi window lifecycle, focus management, control IDs. Must not change observable behavior. |
 | **Dependencies** | Step 1 (dead code gone); Step 2 (Emulation prep extracted) reduces `UMSA` coupling to `Emulation` internals |
 | **Acceptance** | <ul><li>`UMSA` class < 1000 lines; each workflow module < 300 lines</li><li>All existing tests pass</li><li>Manual Kodi smoke test: menu navigation, gamelist filtering, software selection, artwork display, scan, emulator launch, screensaver handoff</li></ul> |
+| **State** | ✅ **CODE-VERIFIED** (2026-10-21). `UMSA` is 925 lines, `gui.py` (adapter) 1231 lines, 15 workflow modules in `resources/lib/umsa_gui/` (largest: `software_selector.py` 303 lines, all others < 300). Public names of `gui.py` are unchanged and listed in its `__all__`. Full suite: 961 passed, 5 skipped. New `tests/test_umsa_gui_workflows.py` (47 tests) is **local-only** (`tests/` is gitignored). The manual Kodi smoke test is still open (see `release-plan.md` C-series). |
 
 ---
 
