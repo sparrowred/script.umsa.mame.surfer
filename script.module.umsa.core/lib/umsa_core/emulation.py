@@ -1,7 +1,6 @@
 """Module for general emulation handling."""
 
 import os
-import socket
 import subprocess
 from platform import platform
 from threading import Thread
@@ -11,33 +10,19 @@ from umsa_core import (
     ProcessRunner,
     ProcessState,
     ProcessStatus,
-    calculate_playback_plan,
     log,
-    parse_vgm_header,
 )
 from umsa_core.chd_extractor import (
-    CHDExtractionCancelled,
-    CHDExtractionError,
     extract_chd,
 )
 from umsa_core.launch_preparer import LaunchPreparer
 from umsa_core.rom_extractor import extract_rom
-from umsa_core.rom_finder import NONMAME, find_nonmame_roms, find_roms
+from umsa_core.rom_finder import find_nonmame_roms, find_roms
 from umsa_core.vgm_player import VgmPlayer
-from umsa_core.vgm_socket import VgmSocketServer
 
 # Compatibility re-exports for existing code that imports from emulation
 from umsa_core.vgm_socket import (
-    LUA_LOG_TAG,
-    LUA_LOG_LEVELS,
-    LUA_LOG_FALLBACK_LEVEL,
-    LUA_LOG_MSG_PREFIX,
-    LUA_READ_POLL_TIMEOUT,
-    LUA_READER_JOIN_TIMEOUT,
-    LUA_LOG_MAX_LINE_BYTES,
-    VGMPLAY_DEFAULT_PORT,
-    _parse_vgmplay_port,
-    parse_lua_log_line,
+    VgmSocketServer,
 )
 
 PLATFORM = platform()

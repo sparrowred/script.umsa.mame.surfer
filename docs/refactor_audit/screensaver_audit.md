@@ -41,10 +41,10 @@
 - **`check_snapshot`** (lines 372–411): MD5 against hardcoded bad-image lists (PIL and non-PIL variants); variance check for solid-color images (PIL only).
 
 ### 5. Video Playlist Management & Playback Callbacks
-- **`add_video_to_playlist`** (lines 598–645): `get_random_art(['videosnaps'])` → `_extract_exodos_video` or `resolve_art_path` → `ListItem` with info (title, genre, trailer=machine_pic, director=left_pic, `Votes`=software_id) → **`attach_set_id(video_item, set_id)`** (Kodi 20+ unique ID) → `playlist.add()`.
+- **`add_video_to_playlist`** (lines 598–645): `get_random_art(['videosnaps'])` → `_extract_exodos_video` or `resolve_art_path` → `ListItem` with info (title, genre, trailer=machine_pic, director=left_pic, `Votes`=software_id) → **`attach_set_id(video_item, set_id)`** (Kodi 20+ unique ID) → `playlist.add()`. **If eXoDOS extraction is required (archive_member present) and fails, the candidate is rejected — no fallback to zip:// URL.**
 - **`Player.onPlayBackStarted`** (lines 1077–1139): Increments `_playback_instance`, clears label, waits for `getTotalTime() > 0`, calculates fade timings, sets info labels/images from `VideoInfoTag`, runs fade loop.
 - **`Player.onAVStarted`** (lines 1012–1075): **History recording point for videos**. Deduplicates by `_av_instance_token` (instance + playlist pos + file). Reads `umsa_set_id` via `read_set_id(video_tag)` (Kodi 20+), `software_id` via `read_software_id` (`Votes`). Calls `ggdb.record_screensaver_display(set_id, software_id)`. Capability-guarded for Kodi < 20.
-- **`Player.onPlayBackEnded`** (lines 1141–1152): Adds next video to playlist if in video mode.
+- **`Player.onPlayBackEnded`**, **`onPlayBackStopped`**, **`onPlayBackError`**: Shared handler `_handle_playback_stopped` releases the active temp video and, if the screensaver is still in video mode and not shutting down, queues the next video. **Playback is only stopped during shutdown when the screensaver owns it (`_playback_owned` flag).**
 
 ### 6. Screensaver-History Recording
 - **`Saver.record_display`** (lines 285–315): Called **once per completed cross/slide/wall render** (line 835), after bad-image check, before wait loop. Normalizes `set_id` via `normalize_set_id` (Core), calls `ggdb.record_screensaver_display(normalized_set_id, software_id)`. Failures logged, never break rendering.
@@ -52,8 +52,8 @@
 - **Core side**: `HistoryRepository.record_screensaver_display` (delete-reinsert-prune in one savepoint, 100-set limit), `DBMod.record_screensaver_display` facade.
 
 ### 7. Temporary Video Extraction & Cleanup
-- **`_extract_exodos_video`**: On-demand extraction for eXoDOS videosnaps stored in ZIP. Atomic write (`.part` → rename). Cache keyed by `set_id:member`. Validates archive path inside eXoDOS root, member path safety.
-- **`_cleanup_temp_videos`**: Called from `get_art_and_call_saver` exit (line 881) and `reallyDeactivateScreensaver` (line 1226). `keep_keys` parameter preserves current playback cache.
+- **`_extract_exodos_video`**: On-demand extraction for eXoDOS videosnaps stored in ZIP. Atomic write (`.part` → rename). **No cache** — every extraction creates a new unique file. Validates archive path inside eXoDOS root, member path safety. **If extraction fails for a required eXoDOS video, the candidate is rejected (no fallback to zip:// URL).**
+- **`_cleanup_temp_videos`** (now `cleanup_temp_dir` in `temp_video.py`): Scans the temp directory directly and removes all files (including `.part` files from failed extractions). Called from `get_art_and_call_saver` exit and `reallyDeactivateScreensaver`. **Does not delete files still queued for playback** — only the file of the video that just ended is deleted via `release_playing_video()`. Full directory cleanup at startup/shutdown is disabled to avoid deleting queued files; only `.part` cleanup remains.
 
 ### 8. Settings Interpretation
 - **`Saver.read_settings`** (lines 338–370): Core settings (`own_artwork`, `progettosnaps`, `aspect_ratio_factor`) + screensaver-specific settings (`ssaver_time`, `ssaver_info`, `ssaver_videos/slide/wall/cross`, `ssaver_trows/trows_b/srows/srows_b/free/titles`).
@@ -153,6 +153,20 @@ accident:
 - The wall mode calls `create_wall()` twice (once for the artwork types, once for the layout) — kept.
 - `Saver.settings['type']` is a mutable list, `Saver.wall` a plain dict — the monitor removes and re-appends `'videos'` while audio is playing.
 - `settings.ScreensaverSettings.from_addon` raises `ValueError` on an empty numeric add-on setting (`int('')`) — same as the original `read_settings`.
+
+## Post-A4 Fixes (2026-10-22)
+
+The following correctness issues were fixed after the initial A4 screensaver split:
+
+1. **Playback Ownership (Fix 1)**: Added `_playback_owned` flag to `Saver`. `stop_video_playback()` and `shutdown_video_mode()` now only stop Kodi playback when the screensaver owns it. `prepare_artwork_mode()` and `shutdown_video_mode()` clear the flag. `_start_video_mode()` sets it when starting playback.
+
+2. **Playback Callbacks (Fix 2)**: Added `onPlayBackStopped()` and `onPlayBackError()` to `Player` class, both delegating to shared `_handle_playback_stopped()` handler. Consolidated cleanup logic. Idempotent handling of duplicate callback sequences (error → stopped, etc.).
+
+3. **eXoDOS Extraction Failure (Fix 3)**: `add_video_to_playlist()` no longer falls back to zip:// URL when required eXoDOS extraction fails. The candidate is rejected and the bounded retry/fallback policy handles it. Partial `.part` files are cleaned up on failure.
+
+4. **Playlist Clearing Removed (Fix 4)**: `onInit()` no longer calls `playlist.clear()`. `shutdown_video_mode()` no longer calls `clear_video_playlist()`. The user's Kodi video playlist is preserved when the screensaver runs in image modes. Temporary video files are still cleaned up after playback ends.
+
+5. **Rendering Cleanup Guarantee (Fix 5)**: `RenderSession.run()` wrapped in `try/finally` to ensure `_cleanup(ctx)` runs even on unexpected exceptions. Dynamic controls and render state are properly released.
 
 ### The one deliberate deviation
 

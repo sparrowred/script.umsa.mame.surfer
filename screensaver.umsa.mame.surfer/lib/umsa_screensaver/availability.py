@@ -86,7 +86,7 @@ def has_artwork(ggdb, art_types):
         raise AvailabilityError("no artwork database available")
     try:
         return bool(ggdb.has_artwork(types))
-    except Exception as error:  # noqa: BLE001 - a broken database is not an empty one
+    except Exception as error:
         raise AvailabilityError(f"artwork availability query failed: {error}") from error
 
 

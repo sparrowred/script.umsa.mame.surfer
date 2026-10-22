@@ -418,6 +418,7 @@ class RenderSession:
         if queued == 0:
             self.kodi.log("UMSA SSaver: no screensaver videos available", self.kodi.LOGWARNING)
             return False
+        saver._playback_owned = True
         saver.parent.player.play(saver.playlist)
         return True
 
@@ -434,114 +435,116 @@ class RenderSession:
         ctx = RenderContext(saver, self.gui, kodi)
         self._failures = 0
 
-        if saver.running == 'videos':
-            kodi.log("UMSA SSaver: screensaver: video", kodi.LOGDEBUG)
-            if self._start_video_mode():
-                # the video mode took over: the window stays open and the
-                # playback is driven by the player callbacks
-                return False
-            # no video at all: continue with an artwork mode
-            saver.notify_user("no screensaver videos available")
-            new_mode = saver.prepare_artwork_mode()
-            if new_mode is None:
-                saver.notify_user("no screensaver artwork available")
-                return True
-            kodi.log(f"UMSA SSaver: continuing with the {new_mode} mode", kodi.LOGINFO)
+        try:
+            if saver.running == 'videos':
+                kodi.log("UMSA SSaver: screensaver: video", kodi.LOGDEBUG)
+                if self._start_video_mode():
+                    # the video mode took over: the window stays open and the
+                    # playback is driven by the player callbacks
+                    return False
+                # no video at all: continue with an artwork mode
+                saver.notify_user("no screensaver videos available")
+                new_mode = saver.prepare_artwork_mode()
+                if new_mode is None:
+                    saver.notify_user("no screensaver artwork available")
+                    return True
+                kodi.log(f"UMSA SSaver: continuing with the {new_mode} mode", kodi.LOGINFO)
 
-        if not saver.art_types:
-            saver.art_types = art_types_for_mode(saver.running)
+            if not saver.art_types:
+                saver.art_types = art_types_for_mode(saver.running)
 
-        if saver.running == 'wall':
-            saver.create_wall()
-            ctx.lastpos = None
-            saver.setProperty('SlideView.Background', 'show')
+            if saver.running == 'wall':
+                saver.create_wall()
+                ctx.lastpos = None
+                saver.setProperty('SlideView.Background', 'show')
 
-        elif saver.running == 'slide':
-            saver.setProperty('SlideView.Background', 'show')
-
-        elif saver.running == 'cross':
-            saver.getControl(CROSS_BACKGROUND).setVisible(False)
-            saver.getControl(BACKG[0]).setVisible(False)
-            saver.getControl(BACKG[1]).setVisible(False)
-
-        # screensaver loop
-        while saver.running != 'no':
-            art = saver.parent.umsa.ggdb.get_random_art(saver.art_types)
-            # remember the software being rendered for the context handoff
-            saver.remember_art(art)
-            # no artwork to render: nothing was displayed, so nothing may be
-            # recorded (and there is no path to resolve)
-            if not art:
-                kodi.log("UMSA SSaver: no artwork returned, skipping iteration", kodi.LOGDEBUG)
-                if not self._artwork_failure():
-                    break
-                continue
-
-            roots = source_roots(saver.path, saver.parent.umsa)
-            filename = saver.resolve_art_path(art, roots)
-
-            # the artwork has no usable file: try the next one
-            if not filename:
-                kodi.log("UMSA SSaver: artwork has no usable file, skipping iteration", kodi.LOGWARNING)
-                if not self._artwork_failure():
-                    break
-                continue
-
-            # check for bad image
-            if needs_snapshot_check(art['type']) and not saver.check_snapshot(filename):
-                if not self._artwork_failure():
-                    break
-                continue
-
-            # set scaling
-            aspect = aspect_for(art)
-
-            # get machine pic
-            saver.getControl(PIC_MACHINE).setImage(
-                saver.get_machine_pic(art), False)
-
-            render_left_picture(ctx, art, roots)
-
-            # set info label
-            saver.getControl(INFO_LABEL).setLabel(f"{art['gamename']}")
-            saver.getControl(INFO_DETAIL).setLabel(
-                "{}, {}".format(art['year'], art['maker']))
-
-            # call saver
-            if saver.running == 'cross':
-                render_cross(ctx, filename, aspect)
             elif saver.running == 'slide':
-                render_slide(ctx, filename, aspect)
-            elif saver.running == 'wall':
-                render_wall(ctx, filename, aspect)
+                saver.setProperty('SlideView.Background', 'show')
 
-            # the render path completed for cross/slide/wall: this is the
-            # display-success boundary (Kodi gives no image-load callback),
-            # so record the set now, once, immediately before the wait loop.
-            # Anything raised above skips this call - no partial render is
-            # ever recorded.
-            saver.record_display(art)
+            elif saver.running == 'cross':
+                saver.getControl(CROSS_BACKGROUND).setVisible(False)
+                saver.getControl(BACKG[0]).setVisible(False)
+                saver.getControl(BACKG[1]).setVisible(False)
 
-            # the artwork was displayed: the failure counter starts again
-            self._failures = 0
+            # screensaver loop
+            while saver.running != 'no':
+                art = saver.parent.umsa.ggdb.get_random_art(saver.art_types)
+                # remember the software being rendered for the context handoff
+                saver.remember_art(art)
+                # no artwork to render: nothing was displayed, so nothing may be
+                # recorded (and there is no path to resolve)
+                if not art:
+                    kodi.log("UMSA SSaver: no artwork returned, skipping iteration", kodi.LOGDEBUG)
+                    if not self._artwork_failure():
+                        break
+                    continue
 
-            # set wait_time
-            wait_time = self._wait_time()
+                roots = source_roots(saver.path, saver.parent.umsa)
+                filename = saver.resolve_art_path(art, roots)
 
-            # wait_loop
-            count = 0
-            while count < wait_time:
-                if count == 1:
-                    saver.setProperty('LabelView.Fade', '0')
-                if count == wait_time-1:
-                    saver.setProperty('LabelView.Fade', '1')
-                count += 1
-                kodi.sleep(1000)
-                if saver.running == 'no':
-                    break
+                # the artwork has no usable file: try the next one
+                if not filename:
+                    kodi.log("UMSA SSaver: artwork has no usable file, skipping iteration", kodi.LOGWARNING)
+                    if not self._artwork_failure():
+                        break
+                    continue
 
-            ctx.order.reverse()
+                # check for bad image
+                if needs_snapshot_check(art['type']) and not saver.check_snapshot(filename):
+                    if not self._artwork_failure():
+                        break
+                    continue
 
-        # cleanup
-        self._cleanup(ctx)
+                # set scaling
+                aspect = aspect_for(art)
+
+                # get machine pic
+                saver.getControl(PIC_MACHINE).setImage(
+                    saver.get_machine_pic(art), False)
+
+                render_left_picture(ctx, art, roots)
+
+                # set info label
+                saver.getControl(INFO_LABEL).setLabel(f"{art['gamename']}")
+                saver.getControl(INFO_DETAIL).setLabel(
+                    "{}, {}".format(art['year'], art['maker']))
+
+                # call saver
+                if saver.running == 'cross':
+                    render_cross(ctx, filename, aspect)
+                elif saver.running == 'slide':
+                    render_slide(ctx, filename, aspect)
+                elif saver.running == 'wall':
+                    render_wall(ctx, filename, aspect)
+
+                # the render path completed for cross/slide/wall: this is the
+                # display-success boundary (Kodi gives no image-load callback),
+                # so record the set now, once, immediately before the wait loop.
+                # Anything raised above skips this call - no partial render is
+                # ever recorded.
+                saver.record_display(art)
+
+                # the artwork was displayed: the failure counter starts again
+                self._failures = 0
+
+                # set wait_time
+                wait_time = self._wait_time()
+
+                # wait_loop
+                count = 0
+                while count < wait_time:
+                    if count == 1:
+                        saver.setProperty('LabelView.Fade', '0')
+                    if count == wait_time-1:
+                        saver.setProperty('LabelView.Fade', '1')
+                    count += 1
+                    kodi.sleep(1000)
+                    if saver.running == 'no':
+                        break
+
+                ctx.order.reverse()
+
+        finally:
+            # Ensure cleanup happens even on unexpected exceptions
+            self._cleanup(ctx)
         return True

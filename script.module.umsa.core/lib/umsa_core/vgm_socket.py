@@ -4,12 +4,11 @@ This module encapsulates the TCP transport lifecycle and Lua log protocol
 between Python and the MAME Lua script (vgmplay.lua).
 """
 
-import os
-import socket
 import select
+import socket
 import threading
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from umsa_core import log
 
@@ -30,7 +29,7 @@ LUA_LOG_MAX_LINE_BYTES = 8192
 VGMPLAY_DEFAULT_PORT = 1234
 
 
-def _parse_vgmplay_port(value: Optional[str]) -> Optional[int]:
+def _parse_vgmplay_port(value: str | None) -> int | None:
     """Return a valid VGMPlay port, or None for a set invalid value or unset."""
     if value is None:
         return None
@@ -45,7 +44,7 @@ def _parse_vgmplay_port(value: Optional[str]) -> Optional[int]:
     return port
 
 
-def _get_vgmplay_port(value: Optional[str]) -> int:
+def _get_vgmplay_port(value: str | None) -> int:
     """Return a valid VGMPlay port, using default if unset or invalid."""
     port = _parse_vgmplay_port(value)
     if port is None:
@@ -90,8 +89,8 @@ class VgmSocketServer:
 
     def __init__(
         self,
-        logger: Optional[Callable] = None,
-        process_exited: Optional[Callable[[], bool]] = None,
+        logger: Callable | None = None,
+        process_exited: Callable[[], bool] | None = None,
     ):
         """
         Args:
@@ -101,15 +100,15 @@ class VgmSocketServer:
         self._logger = logger or log
         self._process_exited = process_exited or (lambda: False)
 
-        self._listener: Optional[socket.socket] = None
-        self._client: Optional[socket.socket] = None
-        self._reader_thread: Optional[threading.Thread] = None
-        self._reader_stop: Optional[threading.Event] = None
-        self._port_env: Optional[str] = None
-        self._bound_port: Optional[int] = None
+        self._listener: socket.socket | None = None
+        self._client: socket.socket | None = None
+        self._reader_thread: threading.Thread | None = None
+        self._reader_stop: threading.Event | None = None
+        self._port_env: str | None = None
+        self._bound_port: int | None = None
         self._lock = threading.Lock()
 
-    def start_server(self, port_env: Optional[str] = None) -> bool:
+    def start_server(self, port_env: str | None = None) -> bool:
         """Create and start the listening socket.
 
         Args:
@@ -170,7 +169,7 @@ class VgmSocketServer:
                     return False
                 try:
                     conn, _ = listener.accept()
-                except socket.timeout:
+                except TimeoutError:
                     continue
                 except Exception as err:
                     self._logger(f"UMSA VGM: accept failed: {err}", level='debug')
@@ -346,7 +345,7 @@ class VgmSocketServer:
         self._bound_port = None
 
     @property
-    def bound_port(self) -> Optional[int]:
+    def bound_port(self) -> int | None:
         """The port the server is bound to."""
         return self._bound_port
 

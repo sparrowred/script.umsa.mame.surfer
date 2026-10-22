@@ -130,6 +130,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         self._video_playlist_urls = []
         # the video mode was torn down (or is being torn down)
         self.video_teardown = False
+        # whether the screensaver owns the current video playback
+        self._playback_owned = False
         # known broken images, the list depends on the Pillow support
         self.bad_image_list = list(image_validator.bad_image_list(PIL))
 
@@ -139,7 +141,9 @@ class Saver(xbmcgui.WindowXMLDialog):
         """Kodi onInit"""
 
         xbmc.log("UMSA SSaver: onInit", xbmc.LOGDEBUG)
-        self.playlist.clear()
+        # Do not clear the Kodi video playlist - the user's playlist must not
+        # be modified when the screensaver runs in image modes. The screensaver
+        # tracks its own entries via _video_playlist_urls for cleanup.
         # correct aspect ratio for snap in bottom left position
         _4to3 = self.getControl(PIC_4TO3).getWidth()
         _3to4 = self.getControl(PIC_3TO4).getWidth()
@@ -350,14 +354,22 @@ class Saver(xbmcgui.WindowXMLDialog):
         source_roots = artwork_selector.source_roots(
             self.path, self.parent.umsa)
 
-        # For eXoDOS archive videos, extract to temp instead of using zip:// URL
-        filename = self._extract_exodos_video(rand_vid, source_roots)
-        if filename is None:
-            # Fall back to standard resolution (zip:// URL or regular path)
+        # For eXoDOS archive videos, extract to temp instead of using zip:// URL.
+        # If extraction is required (archive_member present) and fails, reject
+        # this candidate - do not fall back to the archive-backed path.
+        if temp_video.is_archive_videosnap(rand_vid):
+            filename = self._extract_exodos_video(rand_vid, source_roots)
+            if filename is None:
+                xbmc.log(
+                    f"UMSA SSaver: required extraction failed for eXoDOS video "
+                    f"(set_id={rand_vid.get('id')}, member={rand_vid.get('archive_member')})",
+                    xbmc.LOGWARNING)
+                return False
+        else:
             filename = self.resolve_art_path(rand_vid, source_roots)
-        if not filename:
-            xbmc.log("UMSA SSaver: no playable video file found", xbmc.LOGWARNING)
-            return False
+            if not filename:
+                xbmc.log("UMSA SSaver: no playable video file found", xbmc.LOGWARNING)
+                return False
 
         xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
         machine_pic = self.get_machine_pic(rand_vid)
@@ -404,8 +416,13 @@ class Saver(xbmcgui.WindowXMLDialog):
                     xbmc.LOGWARNING)
 
     def stop_video_playback(self):
-        """Stop the video playback of the screensaver."""
+        """Stop the video playback of the screensaver.
 
+        Only stops playback when the screensaver owns it (i.e. started it).
+        """
+
+        if not self._playback_owned:
+            return
         player = getattr(self.parent, 'player', None)
         if player is None:
             return
@@ -417,12 +434,12 @@ class Saver(xbmcgui.WindowXMLDialog):
                 xbmc.LOGWARNING)
 
     def shutdown_video_mode(self):
-        """Stop the video playback and release the video playlist.
+        """Stop the video playback and clean up temporary files.
 
-        Called when the screensaver really exits: the playback is stopped,
-        the queued screensaver videos are removed from the playlist and
-        the temporary files are cleaned up afterwards. Repeated calls are
-        safe.
+        Called when the screensaver really exits: the playback is stopped
+        (only if the screensaver owns it) and the temporary files are
+        cleaned up afterwards. The Kodi video playlist is NOT cleared -
+        the user's playlist entries are preserved. Repeated calls are safe.
         """
 
         if self.video_teardown:
@@ -430,7 +447,9 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.video_teardown = True
         xbmc.log("UMSA SSaver: shutting the video mode down", xbmc.LOGDEBUG)
         self.stop_video_playback()
-        self.clear_video_playlist()
+        self._playback_owned = False
+        # Do not clear the playlist - the user's playlist must not be modified.
+        # Only clean up temporary files that are no longer needed.
         self.cleanup_temp_videos()
 
     def reset_render_state(self):
@@ -455,6 +474,7 @@ class Saver(xbmcgui.WindowXMLDialog):
 
         xbmc.log("UMSA SSaver: preparing an artwork mode", xbmc.LOGDEBUG)
         self.stop_video_playback()
+        self._playback_owned = False
         candidates = availability.image_fallback_modes(
             self.parent.umsa.ggdb, list(self.settings.get('type') or []))
         if not candidates:
@@ -653,8 +673,35 @@ class Player(xbmc.Player):
     def onPlayBackEnded(self):
         """Reacts to Kodi event 'onPlayBackEnded'"""
 
+        self._handle_playback_stopped()
+
+    def onPlayBackStopped(self):
+        """Reacts to Kodi event 'onPlayBackStopped'.
+
+        Called when playback is explicitly stopped (e.g. user action).
+        Handles cleanup without restarting playback during shutdown.
+        """
+
+        self._handle_playback_stopped()
+
+    def onPlayBackError(self):
+        """Reacts to Kodi event 'onPlayBackError'.
+
+        Called when playback fails. Handles cleanup without restarting
+        playback during shutdown.
+        """
+
+        self._handle_playback_stopped()
+
+    def _handle_playback_stopped(self):
+        """Shared handler for playback end, stop, and error.
+
+        Releases the active temp video and, if the screensaver is still
+        running in video mode and not shutting down, queues the next video.
+        """
+
         try:
-            xbmc.log("UMSA SSaver Player: onPlayBackEnded", xbmc.LOGINFO)
+            xbmc.log("UMSA SSaver Player: playback stopped/ended/error", xbmc.LOGINFO)
             self.runp = False
             saver = self.parent.saver
             # the extracted file of the video that ended is not needed anymore
@@ -665,7 +712,7 @@ class Player(xbmc.Player):
                     # the database holds no video anymore: leave the video mode
                     saver.handle_missing_video()
         except SystemExit as err:
-            xbmc.log(f"UMSA SystemExit onPlayBackStarted: {err}", xbmc.LOGWARNING)
+            xbmc.log(f"UMSA SystemExit onPlayBackStopped: {err}", xbmc.LOGWARNING)
 
 
 class Monitor(xbmc.Monitor):

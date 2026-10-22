@@ -172,6 +172,22 @@ argument forwarding was verified against the implementation signatures.
 
 ---
 
+### Post-A4 Screensaver Fixes (2026-10-22) ✅ **COMPLETED**
+
+Following the A4 screensaver module split, five remaining correctness issues were identified and fixed:
+
+| Fix | Issue | Resolution | Files Changed |
+|-----|-------|------------|---------------|
+| **1. Playback Ownership** | `shutdown_video_mode()` called `player.stop()` unconditionally, stopping pre-existing Kodi audio when screensaver ran in image modes. | Added `_playback_owned` flag to `Saver`. `stop_video_playback()` and `shutdown_video_mode()` only stop playback when flag is set. `_start_video_mode()` sets flag; `prepare_artwork_mode()` and `shutdown_video_mode()` clear it. | `ui.py`, `rendering.py` |
+| **2. Playback Callbacks** | Missing `onPlayBackStopped()` and `onPlayBackError()` handlers; only `onPlayBackEnded()` handled normal completion. | Added both callbacks to `Player`, delegating to shared `_handle_playback_stopped()`. Idempotent handling of duplicate sequences (error→stopped). `video_teardown` guard prevents playlist replenishment during shutdown. | `ui.py` |
+| **3. eXoDOS Extraction Failure** | Failed extraction fell back to zip:// URL, which is invalid for Kodi playback of archive members. | `add_video_to_playlist()` now rejects candidate when required extraction fails. No fallback to archive-backed path. `.part` files cleaned up. Bounded retry policy handles failed candidate. | `ui.py` |
+| **4. Playlist Clearing** | `onInit()` called `playlist.clear()` unconditionally; `shutdown_video_mode()` called `clear_video_playlist()`. Modified user's playlist in image modes. | Removed `playlist.clear()` from `onInit()`. Removed `clear_video_playlist()` call from `shutdown_video_mode()`. User's playlist preserved. Temp file cleanup still runs. | `ui.py` |
+| **5. Rendering Cleanup** | Unexpected exceptions in render loop skipped `_cleanup()`, leaving dynamic controls and stale state. | `RenderSession.run()` wrapped in `try/finally`. `_cleanup(ctx)` always executes. Exception logged with traceback. | `rendering.py` |
+
+**Verification**: All 249 screensaver tests pass; full suite 1078 passed, 5 skipped, 18 subtests. Ruff clean on screensaver add-on. Mypy clean on Core modules.
+
+---
+
 ## Step 5: Reassess `umsa_core` Layout — Phase 4.9 `database.py` Reorganisation (Lower Priority)
 
 | Aspect | Detail |
