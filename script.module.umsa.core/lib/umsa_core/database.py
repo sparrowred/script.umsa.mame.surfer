@@ -781,6 +781,43 @@ class DBMod:
         self.gdbc.execute(select_statement, where_params)
         return self.gdbc.fetchone()[0]
 
+    def has_artwork(self, art_types):
+        """Return whether any artwork of the given types can be selected.
+
+        The check uses the same joined tables, the same artwork database
+        (``art.art_set``) and the same active filter as
+        :meth:`get_random_art`, so a positive answer means the random
+        selection can really return a row. It stops at the first hit and
+        never loads a whole artwork collection.
+
+        ``art_types`` may be empty (the answer is then ``False``) and may
+        contain duplicates.
+        """
+
+        types = list(dict.fromkeys(art_types or []))
+        if not types:
+            return False
+        types_in = ",".join("?" * len(types))
+
+        # with the active filter first, like the random selection
+        # (an empty filter would produce an invalid "AND" clause)
+        if self.use_filter and self.filter_where:
+            statement = "SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id {} \
+                         WHERE art.type IN ({}) AND {} LIMIT 1".format(
+                             " ".join(self.filter_join),
+                             types_in,
+                             " AND ".join(self.filter_where))
+            self.gdbc.execute(statement,
+                              list(types) + list(self._filter_where_params))
+            if self.gdbc.fetchone():
+                return True
+
+        # and without filter if the filter found nothing
+        statement = f"SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id \
+                    WHERE art.type IN ({types_in}) LIMIT 1"
+        self.gdbc.execute(statement, list(types))
+        return bool(self.gdbc.fetchone())
+
     def get_random_art(self, art_types):
         """Get 1 random artwork
 

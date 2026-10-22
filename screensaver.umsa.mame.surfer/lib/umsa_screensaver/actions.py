@@ -68,7 +68,10 @@ def handle_action(saver, action, kodi, vgm_active, send_vgm_action):
     if saver.running == 'videos':
         # next video
         if action.getId() in ACTION_PLAY_NEXTITEM+ACTION_MOVEMENT_RIGHT:
-            saver.add_video_to_playlist()
+            if not saver.add_video_to_playlist():
+                # the database holds no video anymore: leave the video mode
+                saver.handle_missing_video()
+                return
             saver.parent.player.playnext()
         # show actual game in gui
         elif action.getId() in ACTION_CONTEXT:
@@ -79,7 +82,8 @@ def handle_action(saver, action, kodi, vgm_active, send_vgm_action):
             except (TypeError, ValueError):
                 kodi.log("UMSA SSaver: no software id for video context", kodi.LOGWARNING)
             saver.open_software(s_id)
-            saver.parent.player.stop()
+            # stop the playback and release the playlist and the temp files
+            saver.shutdown_video_mode()
             saver.running = 'no'
             saver.close()
         # volume change, do not quit
@@ -87,7 +91,8 @@ def handle_action(saver, action, kodi, vgm_active, send_vgm_action):
             pass
         # else stop saver
         else:
-            saver.parent.player.stop()
+            # stop the playback and release the playlist and the temp files
+            saver.shutdown_video_mode()
             saver.running = 'no'
             saver.close()
     elif saver.running in IMAGE_MODES:

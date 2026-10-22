@@ -35,6 +35,21 @@ CROSS_MAX_Y = 720
 # Maximum number of pictures kept on screen in cross mode
 CROSS_MAX_PICTURES = 60
 
+# Maximum number of consecutive artwork failures before the screensaver stops
+MAX_ARTWORK_FAILURES = 10
+
+# Delay before the next artwork attempt (ms)
+ARTWORK_RETRY_DELAY = 500
+
+# Poll interval of the interruptible waits (ms)
+WAIT_POLL_INTERVAL = 250
+
+# Maximum time the label fading waits for the duration of a video (s)
+VIDEO_STARTUP_TIMEOUT = 15.0
+
+# Number of polls in a row without an active playback before the wait gives up
+VIDEO_STARTUP_INACTIVE_POLLS = 4
+
 
 class RenderContext:
     """State of one screensaver render loop."""
@@ -174,23 +189,82 @@ def render_left_picture(ctx, art, roots):
             saver.getControl(PIC_1TO1).setImage('')
 
 
+def playback_active(player):
+    """Return whether the player still plays something.
+
+    ``isPlaying()`` is used when the runtime provides it, otherwise the
+    older ``isPlayingVideo()`` is asked. A player that does not answer at
+    all is treated as active: the caller has its own timeout.
+    """
+
+    for name in ('isPlaying', 'isPlayingVideo'):
+        probe = getattr(player, name, None)
+        if probe is None:
+            continue
+        try:
+            return bool(probe())
+        except RuntimeError:
+            return False
+    return True
+
+
+def wait_for_duration(player, kodi, timeout=VIDEO_STARTUP_TIMEOUT):
+    """Wait until the player reports the duration of the video.
+
+    The wait is bounded and interruptible: it gives up when the playback
+    stops before a duration is known and when the video does not start
+    within the timeout. Returns the duration in seconds, ``0`` when no
+    valid duration was reported.
+    """
+
+    waited = 0.0
+    inactive_polls = 0
+    while True:
+        try:
+            total_time = int(player.getTotalTime())
+        except (TypeError, ValueError):
+            total_time = 0
+        if total_time > 0:
+            return total_time
+        if waited >= timeout:
+            kodi.log(
+                "UMSA SSaver Player: no video duration after "
+                f"{int(timeout)} seconds, giving up",
+                kodi.LOGWARNING)
+            return 0
+        if playback_active(player):
+            inactive_polls = 0
+        else:
+            inactive_polls += 1
+            if inactive_polls >= VIDEO_STARTUP_INACTIVE_POLLS:
+                kodi.log(
+                    "UMSA SSaver Player: playback stopped before the "
+                    "video duration was known",
+                    kodi.LOGWARNING)
+                return 0
+        kodi.sleep(WAIT_POLL_INTERVAL)
+        waited += WAIT_POLL_INTERVAL / 1000
+
+
 def run_playback_labels(player, kodi):
     """Fade the screensaver labels in and out while a video plays.
 
     The video length decides when the label appears and disappears: the
     label is shown after a few seconds and hidden shortly before the end
-    of the video.
+    of the video. A video that never reports its duration leaves the
+    screensaver untouched: the labels stay hidden and the label loop is
+    not started.
     """
 
     saver = player.parent.saver
     # clear video label
     saver.setProperty('LabelView.Fade', '1')
-    # get total time in sec
-    total_time = int(player.getTotalTime())
-    # wait until video starts
-    while total_time == 0:
-        kodi.sleep(250)
-        total_time = int(player.getTotalTime())
+    # wait until the video starts, bounded and interruptible
+    total_time = wait_for_duration(player, kodi)
+    if total_time <= 0:
+        # no valid duration: leave the label state consistent and stop
+        player.runp = False
+        return
     # calc show times
     if total_time > 28:
         timecount1 = 10
@@ -241,6 +315,8 @@ class RenderSession:
         self.saver = saver
         self.gui = gui
         self.kodi = kodi
+        # consecutive failed artwork attempts
+        self._failures = 0
 
     def _wait_time(self):
         """Return how long the artwork stays on screen."""
@@ -278,6 +354,73 @@ class RenderSession:
             saver.getControl(BACKG[0]).setImage('blank.png')
             saver.getControl(BACKG[1]).setImage('blank.png')
 
+    def _stop_saver(self):
+        """Stop the screensaver through the established lifecycle path."""
+
+        parent = getattr(self.saver, 'parent', None)
+        deactivate = getattr(parent, 'reallyDeactivateScreensaver', None)
+        if callable(deactivate):
+            deactivate()
+        else:
+            self.saver.running = 'no'
+
+    def _wait_before_retry(self):
+        """Wait a short moment before the next artwork attempt.
+
+        The wait is interruptible: a screensaver that is switched off
+        ends the wait at once.
+        """
+
+        remaining = ARTWORK_RETRY_DELAY
+        while remaining > 0:
+            if self.saver.running == 'no':
+                return
+            step = min(WAIT_POLL_INTERVAL, remaining)
+            self.kodi.sleep(step)
+            remaining -= step
+
+    def _artwork_failure(self):
+        """Handle one failed artwork attempt.
+
+        Returns ``False`` when the render loop has to end, ``True`` when
+        the next attempt may follow. A normal shutdown is not counted as
+        a failed attempt.
+        """
+
+        if self.saver.running == 'no':
+            return False
+        self._failures += 1
+        if self._failures >= MAX_ARTWORK_FAILURES:
+            self.kodi.log(
+                f"UMSA SSaver: no usable artwork after {self._failures} "
+                "attempts, stopping the screensaver",
+                self.kodi.LOGERROR)
+            self.saver.notify_user("no usable screensaver artwork found")
+            self._stop_saver()
+            return False
+        self._wait_before_retry()
+        return True
+
+    def _start_video_mode(self):
+        """Queue the screensaver videos and start the playback.
+
+        Returns ``True`` when the video mode took over and ``False`` when
+        no video was available at all - the mode was then switched to an
+        artwork mode by the caller.
+        """
+
+        saver = self.saver
+        # leftovers of a previous session must not pile up
+        saver.cleanup_temp_videos()
+        queued = 0
+        while queued < 2 and saver.add_video_to_playlist():
+            queued += 1
+        if queued == 0:
+            self.kodi.log("UMSA SSaver: no screensaver videos available", self.kodi.LOGWARNING)
+            return False
+        saver.parent.player.play(saver.playlist)
+        return True
+
     def run(self):
         """Run the screensaver until it is stopped.
 
@@ -289,18 +432,24 @@ class RenderSession:
         saver = self.saver
         kodi = self.kodi
         ctx = RenderContext(saver, self.gui, kodi)
-
-        if not saver.art_types:
-            saver.art_types = art_types_for_mode(saver.running)
-            if saver.running == 'wall':
-                saver.create_wall()
+        self._failures = 0
 
         if saver.running == 'videos':
             kodi.log("UMSA SSaver: screensaver: video", kodi.LOGDEBUG)
-            saver.add_video_to_playlist()
-            saver.add_video_to_playlist()
-            saver.parent.player.play(saver.playlist)
-            return False
+            if self._start_video_mode():
+                # the video mode took over: the window stays open and the
+                # playback is driven by the player callbacks
+                return False
+            # no video at all: continue with an artwork mode
+            saver.notify_user("no screensaver videos available")
+            new_mode = saver.prepare_artwork_mode()
+            if new_mode is None:
+                saver.notify_user("no screensaver artwork available")
+                return True
+            kodi.log(f"UMSA SSaver: continuing with the {new_mode} mode", kodi.LOGINFO)
+
+        if not saver.art_types:
+            saver.art_types = art_types_for_mode(saver.running)
 
         if saver.running == 'wall':
             saver.create_wall()
@@ -324,13 +473,24 @@ class RenderSession:
             # recorded (and there is no path to resolve)
             if not art:
                 kodi.log("UMSA SSaver: no artwork returned, skipping iteration", kodi.LOGDEBUG)
+                if not self._artwork_failure():
+                    break
                 continue
 
             roots = source_roots(saver.path, saver.parent.umsa)
             filename = saver.resolve_art_path(art, roots)
 
+            # the artwork has no usable file: try the next one
+            if not filename:
+                kodi.log("UMSA SSaver: artwork has no usable file, skipping iteration", kodi.LOGWARNING)
+                if not self._artwork_failure():
+                    break
+                continue
+
             # check for bad image
             if needs_snapshot_check(art['type']) and not saver.check_snapshot(filename):
+                if not self._artwork_failure():
+                    break
                 continue
 
             # set scaling
@@ -361,6 +521,9 @@ class RenderSession:
             # Anything raised above skips this call - no partial render is
             # ever recorded.
             saver.record_display(art)
+
+            # the artwork was displayed: the failure counter starts again
+            self._failures = 0
 
             # set wait_time
             wait_time = self._wait_time()

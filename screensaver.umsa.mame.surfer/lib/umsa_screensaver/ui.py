@@ -6,6 +6,7 @@ modules next to them:
 
 - ``actions`` - dispatch of the Kodi actions of the screensaver window
 - ``artwork_selector`` - artwork types, path resolution, aspect handling
+- ``availability`` - artwork availability check and mode planning
 - ``constants`` - control ids, action codes, window properties
 - ``history`` - screensaver display history
 - ``image_validator`` - bad image detection
@@ -33,6 +34,7 @@ from umsa_core_kodi import (
 from . import (
     actions,
     artwork_selector,
+    availability,
     history,
     image_validator,
     rendering,
@@ -50,10 +52,13 @@ from .constants import (
     IMAGE,
     INFO_DETAIL,
     INFO_LABEL,
+    MODE_PROPERTY,
+    MODE_VIDEOS,
     PIC_1TO1,
     PIC_3TO4,
     PIC_4TO3,
     PIC_MACHINE,
+    WINDOW_ID,
 )
 from .image_validator import PIL
 from .video_playlist import (
@@ -115,8 +120,16 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.current_software_id = None
         # guard so one ContextMenu does not dispatch twice
         self.opening = False
-        # track temporary extracted video files for cleanup: {set_id: temp_path}
-        self._temp_video_files = {}
+        # the controls this saver created dynamically (cross pictures, wall mesh)
+        self._dynamic_controls = []
+        # the wall layout exists exactly once per wall session
+        self._wall_created = False
+        # the extracted video that is playing right now
+        self._active_temp_video = None
+        # the videos this saver added to the playlist
+        self._video_playlist_urls = []
+        # the video mode was torn down (or is being torn down)
+        self.video_teardown = False
         # known broken images, the list depends on the Pillow support
         self.bad_image_list = list(image_validator.bad_image_list(PIL))
 
@@ -144,6 +157,40 @@ class Saver(xbmcgui.WindowXMLDialog):
             self, action, kodi=xbmc,
             vgm_active=vgm_active,
             send_vgm_action=send_vgm_action)
+
+    def addControl(self, control):
+        """Add a control to the window and remember it.
+
+        Every control the screensaver creates dynamically is tracked, so
+        the cleanup path can remove all of them again.
+        """
+
+        super().addControl(control)
+        if control not in self._dynamic_controls:
+            self._dynamic_controls.append(control)
+
+    def removeControl(self, control):
+        """Remove a control from the window and forget it."""
+
+        super().removeControl(control)
+        if control in self._dynamic_controls:
+            self._dynamic_controls.remove(control)
+
+    def remove_dynamic_controls(self):
+        """Remove every control this saver created dynamically.
+
+        The controls are removed through the normal cleanup path, also
+        when a mode is left exceptionally.
+        """
+
+        for control in list(self._dynamic_controls):
+            try:
+                self.removeControl(control)
+            except Exception as error:  # noqa: BLE001 - the cleanup must not raise
+                xbmc.log(
+                    f"UMSA SSaver: could not remove control: {error}",
+                    xbmc.LOGWARNING)
+        self._dynamic_controls = []
 
     def remember_art(self, art):
         """Remember the software id of the artwork being rendered."""
@@ -191,6 +238,16 @@ class Saver(xbmcgui.WindowXMLDialog):
         parsed = screensaver_settings.ScreensaverSettings.from_addon(
             self.__addon__, core_settings)
         self.settings = parsed.as_legacy_dict()
+
+    def notify_user(self, message):
+        """Show a short notification to the user."""
+
+        xbmc.executebuiltin(f'XBMC.Notification(Screensaver,{message},3000)')
+
+    def set_mode_property(self, mode):
+        """Publish the running mode on the shared window."""
+
+        xbmcgui.Window(WINDOW_ID).setProperty(MODE_PROPERTY, mode)
 
     def check_snapshot(self, snapshot):
         """Return true when snapshot is Ok.
@@ -240,31 +297,56 @@ class Saver(xbmcgui.WindowXMLDialog):
         if not temp_video.is_archive_videosnap(art):
             return None
         return temp_video.extract_exodos_video(
-            art, source_roots, self._temp_video_files, xbmcvfs, xbmc)
+            art, source_roots, xbmcvfs, xbmc)
 
-    def _cleanup_temp_videos(self, keep_keys=None):
-        """Clean up temporary video files no longer needed.
+    def cleanup_temp_videos(self):
+        """Remove the leftover files of the screensaver temp directory.
 
-        Args:
-            keep_keys: Set of cache keys (set_id:member) to preserve. If None,
-                cleans all temp files (used on screensaver shutdown).
+        The directory is inspected directly, so incomplete files of a
+        failed extraction are removed as well. The directory itself is
+        kept.
         """
-        temp_video.cleanup_temp_videos(
-            self._temp_video_files, keep_keys, vfs=xbmcvfs, kodi=xbmc)
+
+        temp_video.cleanup_temp_dir(xbmcvfs, xbmc)
+
+    def note_playing_video(self, playing_file):
+        """Remember the extracted video that is playing right now.
+
+        Only files of the screensaver temp directory are tracked: they are
+        the ones the screensaver may delete when the video ends.
+        """
+
+        if playing_file and temp_video.is_in_temp_dir(playing_file, xbmcvfs):
+            self._active_temp_video = playing_file
+        else:
+            self._active_temp_video = None
+
+    def release_playing_video(self):
+        """Delete the extracted file of the video that just ended.
+
+        A file that is still queued for playback is never touched: only
+        the video that was playing is released.
+        """
+
+        file_path = self._active_temp_video
+        self._active_temp_video = None
+        if not file_path:
+            return
+        temp_video.delete_temp_file(file_path, xbmcvfs, xbmc)
 
     def add_video_to_playlist(self):
-        """Add a new video to the playlist"""
+        """Add a new video to the playlist.
+
+        Returns ``True`` when a video was queued and ``False`` when the
+        database holds no video at all - the caller decides what to do
+        then.
+        """
 
         xbmc.log("UMSA SSaver: add video to playlist", xbmc.LOGDEBUG)
         rand_vid = self.parent.umsa.ggdb.get_random_art(['videosnaps'])
         if not rand_vid:
             xbmc.log("UMSA SSaver: did not find any videos", xbmc.LOGWARNING)
-            xbmc.executebuiltin('XBMC.Notification(Screensaver,no videos found,3000)')
-            self.parent.player.stop()
-            self.running = 'no'
-            self.close()
-            self.snapshot_crossover(['covers', 'flyers'])
-            return
+            return False
         source_roots = artwork_selector.source_roots(
             self.path, self.parent.umsa)
 
@@ -273,6 +355,9 @@ class Saver(xbmcgui.WindowXMLDialog):
         if filename is None:
             # Fall back to standard resolution (zip:// URL or regular path)
             filename = self.resolve_art_path(rand_vid, source_roots)
+        if not filename:
+            xbmc.log("UMSA SSaver: no playable video file found", xbmc.LOGWARNING)
+            return False
 
         xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
         machine_pic = self.get_machine_pic(rand_vid)
@@ -288,8 +373,133 @@ class Saver(xbmcgui.WindowXMLDialog):
         video_item = video_playlist.build_video_item(
             rand_vid, machine_pic, snapshot, attach_set_id, xbmcgui)
         self.playlist.add(url=filename, listitem=video_item)
+        self._video_playlist_urls.append(filename)
         xbmc.log(f"UMSA SSaver: playlist size {self.playlist.size()}, pos {self.playlist.getposition()}", xbmc.LOGDEBUG)
         return True
+
+    def clear_video_playlist(self):
+        """Remove the videos of the screensaver from the playlist.
+
+        Only the items the screensaver added are removed, so unrelated
+        content of the user stays untouched.
+        """
+
+        urls = list(self._video_playlist_urls)
+        self._video_playlist_urls = []
+        if not urls:
+            return
+        remove = getattr(self.playlist, 'remove', None)
+        if remove is None:
+            xbmc.log(
+                "UMSA SSaver: the playlist cannot remove items, clearing it",
+                xbmc.LOGWARNING)
+            self.playlist.clear()
+            return
+        for url in urls:
+            try:
+                remove(url)
+            except Exception as error:  # noqa: BLE001 - the playlist must be released
+                xbmc.log(
+                    f"UMSA SSaver: could not remove {url} from the playlist: {error}",
+                    xbmc.LOGWARNING)
+
+    def stop_video_playback(self):
+        """Stop the video playback of the screensaver."""
+
+        player = getattr(self.parent, 'player', None)
+        if player is None:
+            return
+        try:
+            player.stop()
+        except Exception as error:  # noqa: BLE001 - stopping must never raise
+            xbmc.log(
+                f"UMSA SSaver: could not stop the video playback: {error}",
+                xbmc.LOGWARNING)
+
+    def shutdown_video_mode(self):
+        """Stop the video playback and release the video playlist.
+
+        Called when the screensaver really exits: the playback is stopped,
+        the queued screensaver videos are removed from the playlist and
+        the temporary files are cleaned up afterwards. Repeated calls are
+        safe.
+        """
+
+        if self.video_teardown:
+            return
+        self.video_teardown = True
+        xbmc.log("UMSA SSaver: shutting the video mode down", xbmc.LOGDEBUG)
+        self.stop_video_playback()
+        self.clear_video_playlist()
+        self.cleanup_temp_videos()
+
+    def reset_render_state(self):
+        """Drop the artwork and the controls of the previous mode."""
+
+        self.remove_dynamic_controls()
+        self.wall = {}
+        self._wall_created = False
+        self.art_types = None
+        self.current_software_id = None
+
+    def prepare_artwork_mode(self):
+        """Prepare the screensaver for an artwork mode.
+
+        The obsolete video playback is stopped and the artwork and the
+        controls of the previous mode are reset. An artwork mode whose
+        artwork is available is selected - the configured image modes
+        come first.
+
+        Returns the new mode or ``None`` when no artwork is available.
+        """
+
+        xbmc.log("UMSA SSaver: preparing an artwork mode", xbmc.LOGDEBUG)
+        self.stop_video_playback()
+        candidates = availability.image_fallback_modes(
+            self.parent.umsa.ggdb, list(self.settings.get('type') or []))
+        if not candidates:
+            xbmc.log(
+                "UMSA SSaver: no artwork mode with available artwork",
+                xbmc.LOGWARNING)
+            return None
+        mode = screensaver_settings.choose_mode(candidates)
+        self.reset_render_state()
+        self.running = mode
+        self.art_types = None
+        self.set_mode_property(mode)
+        xbmc.log(f"UMSA SSaver: switched to the {mode} mode", xbmc.LOGINFO)
+        return mode
+
+    def handle_missing_video(self):
+        """Handle a video lookup that found nothing while running.
+
+        The user is told, the obsolete video playback is stopped and the
+        screensaver continues with an artwork mode whose artwork is
+        available. Without any artwork the screensaver stops cleanly.
+        """
+
+        xbmc.log(
+            "UMSA SSaver: no screensaver video found while running",
+            xbmc.LOGWARNING)
+        self.notify_user("no screensaver videos found")
+        new_mode = self.prepare_artwork_mode()
+        if new_mode is None:
+            self.notify_user("no screensaver artwork available")
+            self.running = 'no'
+            self.finish_screensaver()
+            return
+        session = rendering.RenderSession(self, gui=xbmcgui, kodi=xbmc)
+        session.run()
+        self.finish_screensaver()
+
+    def finish_screensaver(self):
+        """Release the screensaver resources and close the window."""
+
+        self.shutdown_video_mode()
+        self.remove_dynamic_controls()
+        self.close()
+        xbmc.log("UMSA SSaver - call screensaver deactivate", xbmc.LOGINFO)
+        self.parent.onScreensaverDeactivated()
 
     def get_art_and_call_saver(self):
         """ Get artwork and call Screensaver """
@@ -298,13 +508,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         if not session.run():
             # the video mode took over, the window stays open
             return
-
-        # Clean up temporary extracted video files
-        self._cleanup_temp_videos()
-
-        self.close()
-        xbmc.log("UMSA SSaver - call screensaver deactivate", xbmc.LOGINFO)
-        self.parent.onScreensaverDeactivated()
+        self.finish_screensaver()
 
     def create_wall(self):
         """Create UI elements for wall mode depending on settings.
@@ -312,8 +516,14 @@ class Saver(xbmcgui.WindowXMLDialog):
         - count evspace and ehspace together / 2 and then calc again with new space, see 4 rows
         - fade out and in so the background can be seen
         - in wall mode make one position a video
+
+        The controls are created exactly once per wall session: a second
+        call does nothing.
         """
 
+        if self._wall_created:
+            xbmc.log("UMSA SSaver: wall already created", xbmc.LOGDEBUG)
+            return
         rows, known = wall_layout.resolve_rows(self.settings['wall'])
         if not known:
             xbmc.log("UMSA SSaver: create_wall error rows.", xbmc.LOGWARNING)
@@ -351,6 +561,8 @@ class Saver(xbmcgui.WindowXMLDialog):
             self.wall['free'] = wall_layout.free_slot_count(
                 self.wall['pics'], self.settings['wall']['free'])
             self.wall['freelist'] = []
+
+        self._wall_created = True
 
 
 class Player(xbmc.Player):
@@ -391,6 +603,14 @@ class Player(xbmc.Player):
 
         return history.playback_token(self, self._playback_instance)
 
+    def get_playing_file(self):
+        """Return the file that is playing, or ``None``."""
+
+        try:
+            return self.getPlayingFile()
+        except RuntimeError:
+            return None
+
     def onAVStarted(self):
         """Record the displayed video once a stream is actually available.
 
@@ -419,8 +639,11 @@ class Player(xbmc.Player):
         self._playback_instance += 1
         try:
             xbmc.log("UMSA SSaver Player: onPlayBackStarted", xbmc.LOGINFO)
+            saver = self.parent.saver
+            # remember the extracted file of the video that plays now
+            saver.note_playing_video(self.get_playing_file())
             # when video ssaver runs
-            if self.parent.saver.running == 'videos':
+            if saver.running == 'videos':
                 xbmc.log("UMSA SSaver Player: monitor mode is video", xbmc.LOGINFO)
                 rendering.run_playback_labels(self, kodi=xbmc)
             xbmc.log("UMSA SSaver Player: onPlayBackStarted: routine ended", xbmc.LOGINFO)
@@ -433,10 +656,14 @@ class Player(xbmc.Player):
         try:
             xbmc.log("UMSA SSaver Player: onPlayBackEnded", xbmc.LOGINFO)
             self.runp = False
-
-            if self.parent.saver.running == 'videos':
+            saver = self.parent.saver
+            # the extracted file of the video that ended is not needed anymore
+            saver.release_playing_video()
+            if saver.running == 'videos' and not saver.video_teardown:
                 xbmc.log("UMSA SSaver Player: add video to playlist", xbmc.LOGINFO)
-                self.parent.saver.add_video_to_playlist()
+                if not saver.add_video_to_playlist():
+                    # the database holds no video anymore: leave the video mode
+                    saver.handle_missing_video()
         except SystemExit as err:
             xbmc.log(f"UMSA SystemExit onPlayBackStarted: {err}", xbmc.LOGWARNING)
 
@@ -452,29 +679,69 @@ class Monitor(xbmc.Monitor):
         self.saver = Saver(
             "umsa_saver.xml", __addon__.getAddonInfo('path'), "default", "720p", itself=self)
 
+    def _mode_candidates(self, configured):
+        """Return the modes that may be selected.
+
+        Kodi stops the music when a video starts, so the video mode is not
+        used while audio or a VGM track plays. When only the video mode is
+        configured, the other modes are added as temporary candidates - the
+        settings of the user are never changed.
+        """
+
+        candidates = list(configured)
+        if MODE_VIDEOS not in candidates:
+            return candidates
+        if not (self.player.isPlayingAudio() or vgm_active()):
+            return candidates
+        others = [mode for mode in candidates if mode != MODE_VIDEOS]
+        if not others:
+            xbmc.log(
+                "UMSA SSaver Monitor: video mode is not possible while music plays",
+                xbmc.LOGINFO)
+            self.saver.notify_user(
+                "video mode is not available while music plays")
+            candidates = candidates + list(availability.IMAGE_MODES)
+        return [mode for mode in candidates if mode != MODE_VIDEOS]
+
+    def report_no_content(self, plan):
+        """Tell the user that there is nothing to show."""
+
+        xbmc.log(
+            f"UMSA SSaver Monitor: no screensaver content available ({plan.reason})",
+            xbmc.LOGWARNING)
+        if plan.reason == availability.REASON_NO_VIDEOS:
+            self.saver.notify_user("no screensaver videos available")
+        if plan.reason != availability.REASON_NO_MODES:
+            self.saver.notify_user("no screensaver artwork available")
+
     def startme(self):
         """Start screensaver when emulator is not running."""
 
         xbmc.log("UMSA SSaver Monitor: screensaver activated", xbmc.LOGINFO)
         # only when not already running and no emulator running
         if self.saver.running == "no":
-            # no videos when audio is running
-            if self.player.isPlayingAudio() and 'videos' in self.saver.settings['type']:
-                self.saver.settings['type'].remove('videos')
-                self.saver.running = screensaver_settings.choose_mode(
-                    self.saver.settings['type'])
-                self.saver.settings['type'].append('videos')
-            else:
-                # check if any screensaver types are active
-                if self.saver.settings['type']:
-                    self.saver.running = screensaver_settings.choose_mode(
-                        self.saver.settings['type'])
-                else:
-                    xbmc.log("UMSA SSaver Monitor: no screensaver mode active, can't start.", xbmc.LOGWARNING)
-                    return
+            configured = list(self.saver.settings.get('type') or [])
+            if not configured:
+                xbmc.log("UMSA SSaver Monitor: no screensaver mode active, can't start.", xbmc.LOGWARNING)
+                return
+            candidates = self._mode_candidates(configured)
+            try:
+                plan = availability.plan_start(
+                    self.umsa.ggdb, candidates, configured=configured)
+            except availability.AvailabilityError as error:
+                xbmc.log(
+                    f"UMSA SSaver Monitor: artwork check failed: {error}",
+                    xbmc.LOGERROR)
+                self.saver.notify_user("screensaver artwork check failed")
+                return
+            if not plan.ok:
+                self.report_no_content(plan)
+                return
+            if plan.reason == availability.REASON_NO_VIDEOS:
+                self.saver.notify_user("no screensaver videos available")
+            self.saver.running = plan.mode
             self.saver.art_types = None
-            xbmcgui.Window(10000).setProperty(
-                "UMSA.Screensaver.Mode", self.saver.running)
+            self.saver.set_mode_property(plan.mode)
             xbmc.log(f"UMSA SSaver Monitor: starting {self.saver.running} saver", xbmc.LOGINFO)
             self.saver.doModal()
         xbmc.log("UMSA SSaver Monitor: onScreensaverActivated routine stop", xbmc.LOGINFO)
@@ -508,14 +775,15 @@ class Monitor(xbmc.Monitor):
         The runtime owns the saver for the whole session and discards the
         monitor afterwards, so there is no need to delete or replace the
         saver here. Setting ``running`` to ``no`` is what breaks the artwork
-        loop and lets ``doModal`` return.
+        loop and lets ``doModal`` return. The video playback is stopped and
+        the video playlist is released with it.
         """
 
         xbmc.log("UMSA SSaver Monitor: now really deactive screensaver", xbmc.LOGINFO)
         self.saver.running = 'no'
-        # Clean up temporary extracted video files
-        self.saver._cleanup_temp_videos()
-        xbmcgui.Window(10000).setProperty("UMSA.Screensaver.Mode", "no")
+        # stop the video playback, release the playlist and the temp files
+        self.saver.shutdown_video_mode()
+        xbmcgui.Window(WINDOW_ID).setProperty(MODE_PROPERTY, "no")
 
     def onDPMSActivated(self):
         """Stop screensaver when DPMS is activated."""

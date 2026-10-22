@@ -2,8 +2,11 @@
 
 Kodi cannot play a member of a ZIP archive directly, so the selected
 videosnap is extracted into the screensaver temp directory and removed
-again when the screensaver ends. The extraction is cached per set and
-archive member.
+again when the video ends or when the screensaver ends.
+
+Every extraction gets its own file name: there is no cache of already
+extracted videos, so a file is never reused and never deleted while it is
+still queued for playback.
 """
 
 import os
@@ -18,11 +21,11 @@ TEMP_DIR = 'special://temp/umsa_screensaver_videos'
 # Chunk size used while copying the archive member
 COPY_CHUNK_SIZE = 8192
 
+# Prefix of every extracted file of the screensaver
+TEMP_FILE_PREFIX = 'umsa_video_'
 
-def cache_key(set_id, archive_member):
-    """Return the cache key of an extracted video."""
-
-    return f"{set_id}:{archive_member}"
+# Suffix of a not completely extracted file
+PART_SUFFIX = '.part'
 
 
 def is_archive_videosnap(art):
@@ -39,21 +42,45 @@ def is_archive_videosnap(art):
         and art.get('relative_path'))
 
 
-def extract_exodos_video(art, roots, cache, vfs, kodi):
+def temp_dir(vfs):
+    """Return the translated path of the screensaver temp directory."""
+
+    return vfs.translatePath(TEMP_DIR)
+
+
+def is_in_temp_dir(file_path, vfs):
+    """Return whether the path belongs to the screensaver temp directory.
+
+    Only files of the add-on specific directory may be deleted by the
+    screensaver, everything else belongs to the user.
+    """
+
+    if not file_path:
+        return False
+    try:
+        directory = temp_dir(vfs)
+    except (AttributeError, RuntimeError, TypeError):
+        return False
+    try:
+        return path.dirname(path.abspath(file_path)) == path.abspath(directory)
+    except (OSError, ValueError):
+        return False
+
+
+def extract_exodos_video(art, roots, vfs, kodi):
     """Extract an eXoDOS videosnap from a ZIP archive to Kodi's temp dir.
 
     Args:
         art: Artwork metadata dict with source, relative_path,
             archive_member, id (set_id)
         roots: Mapping of source names to root paths
-        cache: Dictionary of already extracted files, keyed by set and
-            archive member
         vfs: The ``xbmcvfs`` module
         kodi: The ``xbmc`` module
 
     Returns:
         Extracted file path (str) or None if extraction failed or not
-        applicable
+        applicable. Every call extracts a new file: an already extracted
+        video is never reused.
     """
     # Only handle eXoDOS videosnaps stored in archives
     if art.get('source') != 'exodos':
@@ -89,29 +116,18 @@ def extract_exodos_video(art, roots, cache, vfs, kodi):
         kodi.log(f"UMSA SSaver: invalid archive member path: {archive_member}", kodi.LOGERROR)
         return None
 
-    # Check if we already have a cached extraction for this set_id + member
-    set_id = art.get('id')
-    key = cache_key(set_id, archive_member)
-    if key in cache:
-        cached_path = cache[key]
-        if vfs.exists(cached_path):
-            kodi.log(f"UMSA SSaver: reusing cached extraction: {cached_path}", kodi.LOGDEBUG)
-            return cached_path
-        # Cached file was deleted externally, remove from cache
-        del cache[key]
-
-    # Generate unique temp filename in screensaver-specific subdirectory
-    temp_dir = vfs.translatePath(TEMP_DIR)
+    # Generate a unique temp filename in the screensaver specific directory
+    directory = temp_dir(vfs)
     try:
-        vfs.mkdirs(temp_dir)
+        vfs.mkdirs(directory)
     except OSError as error:
-        kodi.log(f"UMSA SSaver: cannot create temp dir {temp_dir}: {error}", kodi.LOGERROR)
+        kodi.log(f"UMSA SSaver: cannot create temp dir {directory}: {error}", kodi.LOGERROR)
         return None
 
-    # Use set_id and a UUID for uniqueness, preserve .mp4 extension
-    temp_filename = f"exodos_{set_id}_{uuid.uuid4().hex}.mp4"
-    temp_path = path.join(temp_dir, temp_filename)
-    temp_partial = temp_path + '.part'
+    extension = art.get('extension') or 'mp4'
+    temp_filename = f"{TEMP_FILE_PREFIX}{uuid.uuid4().hex}.{extension}"
+    temp_path = path.join(directory, temp_filename)
+    temp_partial = temp_path + PART_SUFFIX
 
     # Extract the specific member from the ZIP
     try:
@@ -140,34 +156,76 @@ def extract_exodos_video(art, roots, cache, vfs, kodi):
             pass
         return None
 
-    # Track for cleanup
-    cache[key] = temp_path
     kodi.log(f"UMSA SSaver: extracted eXoDOS video to {temp_path}", kodi.LOGDEBUG)
     return temp_path
 
 
-def cleanup_temp_videos(cache, keep_keys=None, *, vfs, kodi):
-    """Clean up temporary video files no longer needed.
+def delete_temp_file(file_path, vfs, kodi):
+    """Delete one extracted video of the screensaver temp directory.
 
-    Args:
-        cache: Dictionary of tracked temporary files
-        keep_keys: Set of cache keys (set_id:member) to preserve. If None,
-            cleans all temp files (used on screensaver shutdown).
-        vfs: The ``xbmcvfs`` module
-        kodi: The ``xbmc`` module
+    Returns ``True`` when the file is gone afterwards. A failed deletion
+    is logged as an error; the file is left in place so a later cleanup
+    can try again.
     """
-    if keep_keys is None:
-        keep_keys = set()
 
-    for key, temp_path in list(cache.items()):
-        if key in keep_keys:
-            continue
-        try:
-            if vfs.exists(temp_path):
-                vfs.delete(temp_path)
-                kodi.log(f"UMSA SSaver: cleaned up temp video: {temp_path}", kodi.LOGDEBUG)
-        except OSError as error:
-            kodi.log(f"UMSA SSaver: failed to delete temp video {temp_path}: {error}", kodi.LOGWARNING)
-        finally:
-            # Always remove from tracking dict
-            cache.pop(key, None)
+    if not file_path:
+        return True
+    if not is_in_temp_dir(file_path, vfs):
+        kodi.log(
+            f"UMSA SSaver: not deleting {file_path}, it is outside the screensaver temp directory",
+            kodi.LOGWARNING)
+        return False
+    try:
+        if not vfs.exists(file_path):
+            return True
+    except (OSError, RuntimeError) as error:
+        kodi.log(f"UMSA SSaver: cannot check temp video {file_path}: {error}", kodi.LOGERROR)
+        return False
+    try:
+        deleted = vfs.delete(file_path)
+    except (OSError, RuntimeError) as error:
+        kodi.log(f"UMSA SSaver: failed to delete temp video {file_path}: {error}", kodi.LOGERROR)
+        return False
+    if not deleted:
+        kodi.log(f"UMSA SSaver: failed to delete temp video {file_path}", kodi.LOGERROR)
+        return False
+    kodi.log(f"UMSA SSaver: cleaned up temp video: {file_path}", kodi.LOGDEBUG)
+    return True
+
+
+def cleanup_temp_dir(vfs, kodi):
+    """Remove the files of the screensaver temp directory.
+
+    The directory is inspected directly - no cache is used as an
+    inventory - and only the files of the add-on specific directory are
+    removed: incomplete ``.part`` files of a failed extraction as well as
+    the extracted videos. Sub directories are never touched and the
+    directory itself is kept.
+
+    Returns the list of files that could not be deleted.
+    """
+
+    directory = temp_dir(vfs)
+    try:
+        if not vfs.exists(directory):
+            return []
+    except (OSError, RuntimeError) as error:
+        kodi.log(f"UMSA SSaver: cannot check temp dir {directory}: {error}", kodi.LOGERROR)
+        return []
+
+    try:
+        _dirs, files = vfs.listdir(directory)
+    except (OSError, RuntimeError) as error:
+        kodi.log(f"UMSA SSaver: cannot list temp dir {directory}: {error}", kodi.LOGERROR)
+        return []
+
+    failed = []
+    for name in files:
+        full_path = path.join(directory, name)
+        if not delete_temp_file(full_path, vfs, kodi):
+            failed.append(full_path)
+    if failed:
+        kodi.log(
+            f"UMSA SSaver: {len(failed)} temp file(s) could not be deleted",
+            kodi.LOGWARNING)
+    return failed

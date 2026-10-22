@@ -12,6 +12,7 @@ from umsa_core_kodi import (
 )
 
 from .arguments import decode_request
+from .availability import REASON_NO_VIDEOS, AvailabilityError, plan_request
 from .ui import Monitor
 
 _RUNNING_PROPERTY = "UMSA.Screensaver.Running"
@@ -130,11 +131,7 @@ class ScreensaverRuntime:
             if request is None:
                 self.monitor.startme()
             else:
-                saver = self.monitor.saver
-                saver.running = request["mode"]
-                saver.art_types = request["art_types"]
-                window.setProperty(_MODE_PROPERTY, saver.running)
-                saver.doModal()
+                self._start_request(request, window, self.monitor)
         finally:
             # Clear manual inhibition for explicit invocations
             if manual:
@@ -145,3 +142,42 @@ class ScreensaverRuntime:
             finally:
                 window.clearProperty(_MODE_PROPERTY)
                 window.clearProperty(_RUNNING_PROPERTY)
+
+    def _start_request(self, request, window, monitor):
+        """Start the explicitly requested screensaver mode.
+
+        The requested mode is only started when the artwork database holds
+        something to show for it. The video mode falls back to an artwork
+        mode, every other mode is not replaced: without artwork the
+        screensaver does not start at all.
+        """
+
+        saver = monitor.saver
+        configured = list(saver.settings.get('type') or [])
+        try:
+            plan = plan_request(
+                self.ggdb,
+                request["mode"],
+                request["art_types"],
+                configured=configured)
+        except AvailabilityError as error:
+            xbmc.log(
+                f"UMSA Screensaver: artwork check failed: {error}",
+                xbmc.LOGERROR)
+            saver.notify_user("screensaver artwork check failed")
+            return
+        if not plan.ok:
+            monitor.report_no_content(plan)
+            return
+        if plan.reason == REASON_NO_VIDEOS:
+            xbmc.log(
+                "UMSA Screensaver: no videosnap available, "
+                f"using the {plan.mode} mode instead",
+                xbmc.LOGWARNING)
+            saver.notify_user("no screensaver videos available")
+        # the artwork types of the request only belong to the requested
+        # mode: a fallback mode uses its own artwork types
+        saver.running = plan.mode
+        saver.art_types = request["art_types"] if plan.mode == request["mode"] else None
+        window.setProperty(_MODE_PROPERTY, saver.running)
+        saver.doModal()
