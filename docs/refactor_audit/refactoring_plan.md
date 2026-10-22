@@ -184,7 +184,7 @@ Following the A4 screensaver module split, five remaining correctness issues wer
 | **4. Playlist Clearing** | `onInit()` called `playlist.clear()` unconditionally; `shutdown_video_mode()` called `clear_video_playlist()`. Modified user's playlist in image modes. | Removed `playlist.clear()` from `onInit()`. Removed `clear_video_playlist()` call from `shutdown_video_mode()`. User's playlist preserved. Temp file cleanup still runs. | `ui.py` |
 | **5. Rendering Cleanup** | Unexpected exceptions in render loop skipped `_cleanup()`, leaving dynamic controls and stale state. | `RenderSession.run()` wrapped in `try/finally`. `_cleanup(ctx)` always executes. Exception logged with traceback. | `rendering.py` |
 
-**Verification**: All 249 screensaver tests pass; full suite 1078 passed, 5 skipped, 18 subtests. Ruff clean on screensaver add-on. Mypy clean on Core modules.
+**Verification**: All 247 screensaver tests pass; 254 relevant tests pass (screensaver + architecture boundaries). Ruff clean on screensaver add-on. Mypy clean on Core modules.
 
 ---
 

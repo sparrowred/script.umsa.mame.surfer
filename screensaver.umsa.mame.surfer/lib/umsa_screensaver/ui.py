@@ -344,76 +344,61 @@ class Saver(xbmcgui.WindowXMLDialog):
         Returns ``True`` when a video was queued and ``False`` when the
         database holds no video at all - the caller decides what to do
         then.
+
+        Skips candidates that cannot be played (e.g. failed eXoDOS extraction)
+        and tries the next random video, up to a bounded number of attempts.
         """
 
         xbmc.log("UMSA SSaver: add video to playlist", xbmc.LOGDEBUG)
-        rand_vid = self.parent.umsa.ggdb.get_random_art(['videosnaps'])
-        if not rand_vid:
-            xbmc.log("UMSA SSaver: did not find any videos", xbmc.LOGWARNING)
-            return False
         source_roots = artwork_selector.source_roots(
             self.path, self.parent.umsa)
 
-        # For eXoDOS archive videos, extract to temp instead of using zip:// URL.
-        # If extraction is required (archive_member present) and fails, reject
-        # this candidate - do not fall back to the archive-backed path.
-        if temp_video.is_archive_videosnap(rand_vid):
-            filename = self._extract_exodos_video(rand_vid, source_roots)
-            if filename is None:
-                xbmc.log(
-                    f"UMSA SSaver: required extraction failed for eXoDOS video "
-                    f"(set_id={rand_vid.get('id')}, member={rand_vid.get('archive_member')})",
-                    xbmc.LOGWARNING)
-                return False
-        else:
-            filename = self.resolve_art_path(rand_vid, source_roots)
-            if not filename:
-                xbmc.log("UMSA SSaver: no playable video file found", xbmc.LOGWARNING)
+        # Try up to 10 candidates to handle cases where some videos
+        # are not playable (e.g. failed eXoDOS extraction)
+        for _attempt in range(10):
+            rand_vid = self.parent.umsa.ggdb.get_random_art(['videosnaps'])
+            if not rand_vid:
+                xbmc.log("UMSA SSaver: did not find any videos", xbmc.LOGWARNING)
                 return False
 
-        xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
-        machine_pic = self.get_machine_pic(rand_vid)
-        # get left pic
-        # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
-        # TODO needs fetch info for snap from db for aspect ratio
-        snapshot = rand_vid.get('left_pic')
-        if not snapshot:
-            left_type = artwork_selector.left_picture_type(rand_vid)
-            snapshot = self.resolve_art_path(
-                rand_vid, source_roots, art_type=left_type, extension='png')
-        xbmc.log(f"UMSA SSaver {snapshot}", xbmc.LOGDEBUG)
-        video_item = video_playlist.build_video_item(
-            rand_vid, machine_pic, snapshot, attach_set_id, xbmcgui)
-        self.playlist.add(url=filename, listitem=video_item)
-        self._video_playlist_urls.append(filename)
-        xbmc.log(f"UMSA SSaver: playlist size {self.playlist.size()}, pos {self.playlist.getposition()}", xbmc.LOGDEBUG)
-        return True
+            # For eXoDOS archive videos, extract to temp instead of using zip:// URL.
+            # If extraction is required (archive_member present) and fails, reject
+            # this candidate - do not fall back to the archive-backed path.
+            if temp_video.is_archive_videosnap(rand_vid):
+                filename = self._extract_exodos_video(rand_vid, source_roots)
+                if filename is None:
+                    xbmc.log(
+                        f"UMSA SSaver: required extraction failed for eXoDOS video "
+                        f"(set_id={rand_vid.get('id')}, member={rand_vid.get('archive_member')}), "
+                        "trying next candidate",
+                        xbmc.LOGWARNING)
+                    continue  # Try next candidate
+            else:
+                filename = self.resolve_art_path(rand_vid, source_roots)
+                if not filename:
+                    xbmc.log("UMSA SSaver: no playable video file found, trying next candidate", xbmc.LOGWARNING)
+                    continue  # Try next candidate
 
-    def clear_video_playlist(self):
-        """Remove the videos of the screensaver from the playlist.
+            xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
+            machine_pic = self.get_machine_pic(rand_vid)
+            # get left pic
+            # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
+            # TODO needs fetch info for snap from db for aspect ratio
+            snapshot = rand_vid.get('left_pic')
+            if not snapshot:
+                left_type = artwork_selector.left_picture_type(rand_vid)
+                snapshot = self.resolve_art_path(
+                    rand_vid, source_roots, art_type=left_type, extension='png')
+            xbmc.log(f"UMSA SSaver {snapshot}", xbmc.LOGDEBUG)
+            video_item = video_playlist.build_video_item(
+                rand_vid, machine_pic, snapshot, attach_set_id, xbmcgui)
+            self.playlist.add(url=filename, listitem=video_item)
+            self._video_playlist_urls.append(filename)
+            xbmc.log(f"UMSA SSaver: playlist size {self.playlist.size()}, pos {self.playlist.getposition()}", xbmc.LOGDEBUG)
+            return True
 
-        Only the items the screensaver added are removed, so unrelated
-        content of the user stays untouched.
-        """
-
-        urls = list(self._video_playlist_urls)
-        self._video_playlist_urls = []
-        if not urls:
-            return
-        remove = getattr(self.playlist, 'remove', None)
-        if remove is None:
-            xbmc.log(
-                "UMSA SSaver: the playlist cannot remove items, clearing it",
-                xbmc.LOGWARNING)
-            self.playlist.clear()
-            return
-        for url in urls:
-            try:
-                remove(url)
-            except Exception as error:  # noqa: BLE001 - the playlist must be released
-                xbmc.log(
-                    f"UMSA SSaver: could not remove {url} from the playlist: {error}",
-                    xbmc.LOGWARNING)
+        xbmc.log("UMSA SSaver: exhausted candidate attempts, no playable video found", xbmc.LOGWARNING)
+        return False
 
     def stop_video_playback(self):
         """Stop the video playback of the screensaver.
@@ -509,8 +494,12 @@ class Saver(xbmcgui.WindowXMLDialog):
             self.finish_screensaver()
             return
         session = rendering.RenderSession(self, gui=xbmcgui, kodi=xbmc)
-        session.run()
-        self.finish_screensaver()
+        try:
+            session.run()
+        finally:
+            # Ensure cleanup even if render loop raises unexpectedly
+            if self.running != 'videos' or self.video_teardown:
+                self.finish_screensaver()
 
     def finish_screensaver(self):
         """Release the screensaver resources and close the window."""
@@ -521,14 +510,38 @@ class Saver(xbmcgui.WindowXMLDialog):
         xbmc.log("UMSA SSaver - call screensaver deactivate", xbmc.LOGINFO)
         self.parent.onScreensaverDeactivated()
 
+    def _reset_session_state(self):
+        """Reset state that must be cleared at the start of each new screensaver session.
+
+        The Saver instance is reused across multiple activations (the Monitor
+        creates it once and calls doModal() each time). This method ensures
+        that session-specific flags like video_teardown are cleared so that
+        a new session can start playback and handle callbacks normally.
+        """
+        self.video_teardown = False
+        self._playback_owned = False
+        self._active_temp_video = None
+        self._video_playlist_urls = []
+        self.running = "no"
+        self.art_types = None
+        self.current_software_id = None
+        self.opening = False
+
     def get_art_and_call_saver(self):
         """ Get artwork and call Screensaver """
 
         session = rendering.RenderSession(self, gui=xbmcgui, kodi=xbmc)
-        if not session.run():
-            # the video mode took over, the window stays open
-            return
-        self.finish_screensaver()
+        try:
+            if not session.run():
+                # the video mode took over, the window stays open
+                return
+        finally:
+            # Ensure finish_screensaver is called even if render loop
+            # raises an unexpected exception. The render session's own
+            # finally block cleans up dynamic controls; this ensures
+            # the outer lifecycle (video teardown, window close) runs too.
+            if self.running != 'videos' or self.video_teardown:
+                self.finish_screensaver()
 
     def create_wall(self):
         """Create UI elements for wall mode depending on settings.
@@ -610,6 +623,11 @@ class Player(xbmc.Player):
         # history has already been recorded (or deliberately skipped).
         self._playback_instance = 0
         self._history = history.PlaybackHistoryGuard()
+        # per-playback-instance completion guard: prevents duplicate processing
+        # of onPlayBackEnded/onPlayBackStopped/onPlayBackError for the same
+        # playback instance. Key is the playback instance number, value is True
+        # once finalization has run.
+        self._playback_finalized = set()
 
     def _av_instance_token(self):
         """Return an identity for the current playback instance, or ``None``.
@@ -657,6 +675,8 @@ class Player(xbmc.Player):
         # a new playback instance begins; history is never written here
         # (the stream may not exist yet) - onAVStarted does that
         self._playback_instance += 1
+        # reset the completion guard for this new playback instance
+        self._playback_finalized.discard(self._playback_instance)
         try:
             xbmc.log("UMSA SSaver Player: onPlayBackStarted", xbmc.LOGINFO)
             saver = self.parent.saver
@@ -698,7 +718,21 @@ class Player(xbmc.Player):
 
         Releases the active temp video and, if the screensaver is still
         running in video mode and not shutting down, queues the next video.
+
+        Idempotent: only processes the first callback for each playback
+        instance. Subsequent callbacks (e.g. error followed by stopped)
+        are ignored.
         """
+
+        # Check if this playback instance has already been finalized
+        instance = self._playback_instance
+        if instance in self._playback_finalized:
+            xbmc.log(
+                f"UMSA SSaver Player: duplicate playback finalization for "
+                f"instance {instance}, ignoring",
+                xbmc.LOGDEBUG)
+            return
+        self._playback_finalized.add(instance)
 
         try:
             xbmc.log("UMSA SSaver Player: playback stopped/ended/error", xbmc.LOGINFO)
@@ -786,6 +820,8 @@ class Monitor(xbmc.Monitor):
                 return
             if plan.reason == availability.REASON_NO_VIDEOS:
                 self.saver.notify_user("no screensaver videos available")
+            # Reset session-specific state for the new activation
+            self.saver._reset_session_state()
             self.saver.running = plan.mode
             self.saver.art_types = None
             self.saver.set_mode_property(plan.mode)
