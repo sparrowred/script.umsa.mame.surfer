@@ -99,16 +99,25 @@ def extract_exodos_video(art, roots, vfs, kodi):
         kodi.log("UMSA SSaver: eXoDOS root not configured", kodi.LOGWARNING)
         return None
 
-    # Resolve full archive path and validate it's inside the eXoDOS root
+    # Validate relative_path: must be relative, no absolute paths or traversal
+    if path.isabs(relative_path):
+        kodi.log(f"UMSA SSaver: absolute relative_path rejected: {relative_path}", kodi.LOGERROR)
+        return None
+    if '..' in relative_path.split(path.sep) or (path.altsep and '..' in relative_path.split(path.altsep)):
+        kodi.log(f"UMSA SSaver: traversal in relative_path rejected: {relative_path}", kodi.LOGERROR)
+        return None
+
+    # Normalize paths for lexical containment check
     archive_full = path.join(exodos_root, relative_path)
     try:
-        archive_real = path.realpath(archive_full)
-        exodos_real = path.realpath(exodos_root)
-        if not archive_real.startswith(exodos_real + path.sep) and archive_real != exodos_real:
+        exodos_norm = path.normpath(path.abspath(exodos_root))
+        archive_norm = path.normpath(path.abspath(archive_full))
+        # Verify archive_norm is inside exodos_norm using commonpath
+        if path.commonpath([archive_norm, exodos_norm]) != exodos_norm:
             kodi.log(f"UMSA SSaver: archive path outside eXoDOS root: {archive_full}", kodi.LOGERROR)
             return None
-    except OSError:
-        kodi.log(f"UMSA SSaver: cannot resolve archive path: {archive_full}", kodi.LOGERROR)
+    except (OSError, ValueError):
+        kodi.log(f"UMSA SSaver: cannot validate archive path: {archive_full}", kodi.LOGERROR)
         return None
 
     # Validate archive_member: reject absolute paths and traversal components
@@ -130,8 +139,9 @@ def extract_exodos_video(art, roots, vfs, kodi):
     temp_partial = temp_path + PART_SUFFIX
 
     # Extract the specific member from the ZIP
+    # Use archive_full (validated path) - OS will follow symlinks naturally
     try:
-        with ZipFile(archive_real, 'r') as archive:
+        with ZipFile(archive_full, 'r') as archive:
             # Verify member exists
             if archive_member not in archive.namelist():
                 kodi.log(f"UMSA SSaver: member not found in archive: {archive_member}", kodi.LOGWARNING)
@@ -147,7 +157,7 @@ def extract_exodos_video(art, roots, vfs, kodi):
             # Atomic rename
             os.rename(temp_partial, temp_path)
     except (OSError, KeyError, RuntimeError, zipfile.BadZipFile) as error:
-        kodi.log(f"UMSA SSaver: failed to extract {archive_member} from {archive_real}: {error}", kodi.LOGERROR)
+        kodi.log(f"UMSA SSaver: failed to extract {archive_member} from {archive_full}: {error}", kodi.LOGERROR)
         # Clean up partial file if it exists
         try:
             if path.exists(temp_partial):
