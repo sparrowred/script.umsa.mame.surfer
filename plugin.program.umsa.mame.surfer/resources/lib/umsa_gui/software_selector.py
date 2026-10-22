@@ -149,28 +149,28 @@ def select_software(gui, software_id):
 
     # set border for machines
     if no_machines == 1:
-        gui.getControl(SYSTEM_BORDER).setWidth(124)
+        gui.getControl(SYSTEM_BORDER).setWidth(186)
         gui.getControl(SYSTEM_BORDER).setImage("border1.png")
         gui.getControl(MACHINE_SEP1).setVisible(False)
         gui.getControl(MACHINE_SEP2).setVisible(False)
         gui.getControl(MACHINE_SEP3).setVisible(False)
         gui.getControl(MACHINE_PLUS).setVisible(False)
     elif no_machines == 2:
-        gui.getControl(SYSTEM_BORDER).setWidth(246)
+        gui.getControl(SYSTEM_BORDER).setWidth(369)
         gui.getControl(SYSTEM_BORDER).setImage("border2.png")
         gui.getControl(MACHINE_SEP1).setVisible(True)
         gui.getControl(MACHINE_SEP2).setVisible(False)
         gui.getControl(MACHINE_SEP3).setVisible(False)
         gui.getControl(MACHINE_PLUS).setVisible(False)
     elif no_machines == 3:
-        gui.getControl(SYSTEM_BORDER).setWidth(368)
+        gui.getControl(SYSTEM_BORDER).setWidth(552)
         gui.getControl(SYSTEM_BORDER).setImage("border3.png")
         gui.getControl(MACHINE_SEP1).setVisible(True)
         gui.getControl(MACHINE_SEP2).setVisible(True)
         gui.getControl(MACHINE_SEP3).setVisible(False)
         gui.getControl(MACHINE_PLUS).setVisible(False)
     else:
-        gui.getControl(SYSTEM_BORDER).setWidth(490)
+        gui.getControl(SYSTEM_BORDER).setWidth(735)
         gui.getControl(SYSTEM_BORDER).setImage("border4.png")
         gui.getControl(MACHINE_SEP1).setVisible(True)
         gui.getControl(MACHINE_SEP2).setVisible(True)
@@ -178,10 +178,10 @@ def select_software(gui, software_id):
 
     # set width for wraplist
     if no_machines > 4:
-        gui.getControl(SYSTEM_WRAPLIST).setWidth(480)
+        gui.getControl(SYSTEM_WRAPLIST).setWidth(720)
         gui.getControl(MACHINE_PLUS).setVisible(True)
     else:
-        gui.getControl(SYSTEM_WRAPLIST).setWidth(no_machines * 120)
+        gui.getControl(SYSTEM_WRAPLIST).setWidth(no_machines * 180)
 
     gui.getControl(TEXTLIST).reset()
     # search local snaps

@@ -1204,7 +1204,7 @@ def main():
          'error': xbmc.LOGERROR}
         .get(level, xbmc.LOGDEBUG)))
     path = __cwd__
-    gui = UMSA("umsa_estuary.xml", path, "default", "720p")
+    gui = UMSA("umsa_estuary.xml", path, "default", "1080i")
     if len(sys.argv) > 2 and sys.argv[1] == "select_software":
         try:
             gui.initial_software_id = int(sys.argv[2])
