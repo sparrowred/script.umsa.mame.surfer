@@ -141,9 +141,9 @@ class Saver(xbmcgui.WindowXMLDialog):
         """Kodi onInit"""
 
         xbmc.log("UMSA SSaver: onInit", xbmc.LOGDEBUG)
-        # Do not clear the Kodi video playlist - the user's playlist must not
-        # be modified when the screensaver runs in image modes. The screensaver
-        # tracks its own entries via _video_playlist_urls for cleanup.
+        # Clear the Kodi video playlist to remove stale entries from previous
+        # screensaver sessions. This is done once during initialization.
+        self.playlist.clear()
         # correct aspect ratio for snap in bottom left position
         _4to3 = self.getControl(PIC_4TO3).getWidth()
         _3to4 = self.getControl(PIC_3TO4).getWidth()

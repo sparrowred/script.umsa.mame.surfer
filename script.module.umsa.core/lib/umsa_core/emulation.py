@@ -21,8 +21,29 @@ from umsa_core.rom_finder import find_nonmame_roms, find_roms
 from umsa_core.vgm_player import VgmPlayer
 
 # Compatibility re-exports for existing code that imports from emulation
+from umsa_core.chd_extractor import (
+    CHDExtractionCancelled,
+    CHDExtractionError,
+)
+from umsa_core.rom_finder import NONMAME
+import socket
+
+from umsa_core.vgm_header import (
+    calculate_playback_plan,
+    parse_vgm_header,
+)
 from umsa_core.vgm_socket import (
+    LUA_LOG_FALLBACK_LEVEL,
+    LUA_LOG_LEVELS,
+    LUA_LOG_MAX_LINE_BYTES,
+    LUA_LOG_MSG_PREFIX,
+    LUA_LOG_TAG,
+    LUA_READ_POLL_TIMEOUT,
+    LUA_READER_JOIN_TIMEOUT,
+    VGMPLAY_DEFAULT_PORT,
     VgmSocketServer,
+    _parse_vgmplay_port,
+    parse_lua_log_line,
 )
 
 PLATFORM = platform()
