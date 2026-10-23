@@ -26,22 +26,22 @@
 
 ---
 
-## Ruff Findings (217 issues, 17 rule codes)
+## Ruff Findings (225 issues, 17 rule codes)
 
 ### By Severity/Category
 
 | Code | Count | Description | Fixable |
 |------|-------|-------------|---------|
-| **BLE001** | 102 | Blind `except Exception:` — catches too broadly | ❌ |
-| **S110** | 52 | `try: ... except Exception: pass` — silent failure | ❌ |
-| **UP031** | 24 | Legacy `%` formatting → prefer f-strings | ✅ 4 |
+| **BLE001** | 106 | Blind `except Exception:` — catches too broadly | ❌ |
+| **S110** | 54 | `try: ... except Exception: pass` — silent failure | ❌ |
+| **UP031** | 16 | Legacy `%` formatting → prefer f-strings | ✅ 4 |
 | **UP007** | 6 | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ✅ |
 | **SIM115** | 6 | `open()` without context manager | ✅ |
 | **SIM113** | 4 | `enumerate()` instead of manual index | ✅ |
 | **F841** | 4 | Unused variable | ❌ |
 | **I001** | 3 | Unsorted imports | ✅ |
 | **SIM102** | 2 | Collapsible `if` statements | ✅ |
-| **F401** | 2 | Unused import | ✅ |
+| **F401** | 17 | Unused import | ✅ |
 | **TRY203** | 2 | Useless `try`/`except` | ✅ |
 | **E722** | 1 | Bare `except:` (no exception type) | ❌ |
 | **UP030** | 1 | Explicit `.format()` positional index | ✅ |
@@ -53,7 +53,7 @@
 | **C413** | 1 | Unnecessary `sorted()` call | ✅ |
 | **RUF046** | 1 | Unnecessary `int()` cast | ✅ |
 | **RUF059** | 1 | Unused unpacked variable | ❌ |
-| **Total** | **217** | | **4 fixable auto** |
+| **Total** | **225** | | **19 fixable auto** |
 
 ### High-Priority Findings (Correctness Risk)
 
@@ -216,7 +216,7 @@ Cannot type-check without Kodi stubs (`Kodistubs` package). Requires Kodi runtim
 
 # 4. No new Ruff correctness issues (BLE001, S110, E722, B006, PLW1510)
 .venv-debian-vm/bin/python -m ruff check . --select BLE001,S110,E722,B006,PLW1510
-# → Must not increase from baseline (154 BLE001/S110, 1 E722, 1 B006, 1 PLW1510)
+# → Must not increase from baseline (160 BLE001/S110, 1 E722, 1 B006, 1 PLW1510)
 ```
 
 ### Recommended (P1 — Should Pass)
@@ -252,11 +252,11 @@ done
 | Architecture boundary tests | 7/7 ✅ | 7/7 ✅ |
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
-| Ruff correctness issues | 157 (BLE001/S110/E722/B006/PLW1510) | **No increase**; P1: reduce BLE001/S110 |
-| Ruff style issues | 60 (UP031, UP007, etc.) | P1: UP031 → 0 |
+| Ruff correctness issues | 160 (BLE001/S110/E722/B006/PLW1510) | **No increase**; P1: reduce BLE001/S110 |
+| Ruff style issues | 65 (UP031, UP007, etc.) | P1: UP031 → 0 |
 | Mypy (Core modules) | Clean (per-module) | Clean |
 | Pre-existing test failures | 13 | Documented, no new |
-| Full suite | 882 passed | ≥ 882, no new failures |
+| Full suite | 1081 passed | ≥ 1081, no new failures |
 
 ---
 

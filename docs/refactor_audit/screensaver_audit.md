@@ -1,8 +1,8 @@
 # Screensaver Audit — `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py`
 
-**Audited at:** git HEAD `9a98cfe`  
-**File size:** ~1231 lines, three classes: `Saver` (~887 lines), `Player` (~170 lines), `Monitor` (~70 lines) + module-level helpers  
-**Refactored (refactor plan step 4):** `ui.py` is now 522 lines, `Saver` 258, `Player` 86, `Monitor` 79 lines — the logic moved into 11 focused modules (see *Implemented Module Map*).
+**Audited at:** git HEAD `4c9b2a7637cbfb88bc93d32b3a6d43cd753f5ee4` (2026-10-23)  
+**File size:** ~873 lines, three classes: `Saver` (~500 lines), `Player` (~151 lines), `Monitor` (~122 lines) + module-level helpers  
+**Refactored (refactor plan step 4):** `ui.py` is now the Kodi adapter (873 lines), `Saver` 500, `Player` 151, `Monitor` 122 lines — the logic moved into 10 focused modules (see *Implemented Module Map*).
 
 ---
 
@@ -52,7 +52,7 @@
 - **Core side**: `HistoryRepository.record_screensaver_display` (delete-reinsert-prune in one savepoint, 100-set limit), `DBMod.record_screensaver_display` facade.
 
 ### 7. Temporary Video Extraction & Cleanup
-- **`_extract_exodos_video`**: On-demand extraction for eXoDOS videosnaps stored in ZIP. Atomic write (`.part` → rename). **No cache** — every extraction creates a new unique file. Validates archive path inside eXoDOS root, member path safety. **If extraction fails for a required eXoDOS video, the candidate is rejected (no fallback to zip:// URL).**
+- **`_extract_exodos_video`**: On-demand extraction for eXoDOS videosnaps stored in ZIP. Atomic write (`.part` → rename). **No cache** — every extraction creates a new unique file. Lexical validation rejects absolute paths and `..` traversal in `relative_path`; the constructed archive path is passed directly to `ZipFile`, allowing the OS to follow intentional symlinks inside the configured eXoDOS tree. Member path safety validated. **If extraction fails for a required eXoDOS video, the candidate is rejected (no fallback to zip:// URL).**
 - **`_cleanup_temp_videos`** (now `cleanup_temp_dir` in `temp_video.py`): Scans the temp directory directly and removes all files (including `.part` files from failed extractions). Called from `get_art_and_call_saver` exit and `reallyDeactivateScreensaver`. **Does not delete files still queued for playback** — only the file of the video that just ended is deleted via `release_playing_video()`. Full directory cleanup at startup/shutdown is disabled to avoid deleting queued files; only `.part` cleanup remains.
 
 ### 8. Settings Interpretation
@@ -110,15 +110,16 @@ time** in `ui.py` and handed down as arguments, so the tests can patch
 
 | Module | Lines | Responsibility | Kodi imports |
 |--------|-------|----------------|--------------|
-| `ui.py` | 522 | `Saver` / `Player` / `Monitor` — the Kodi window, playlist and callbacks; compat re-exports of the old module-level names | yes |
+| `ui.py` | 873 | `Saver` / `Player` / `Monitor` — the Kodi window, playlist and callbacks; compat re-exports of the old module-level names | yes |
 | `actions.py` | 106 | Dispatch of the Kodi actions of the screensaver window (context handoff, playlist advance, VGM volume/next/stop) | no (injected) |
 | `artwork_selector.py` | 131 | Artwork types per mode, source roots, artwork path resolution, machine picture, aspect handling | no |
+| `availability.py` | 89 | Artwork availability checks, mode selection fallbacks | no |
 | `constants.py` | 49 | Action codes, control ids, window properties, mode names, artwork types per mode | no |
 | `history.py` | 164 | `record_display`, `record_video_display`, playback token, `PlaybackHistoryGuard` | no (injected) |
 | `image_validator.py` | 117 | Bad-image detection (PIL and non-PIL variants) | no |
-| `rendering.py` | 384 | `RenderContext`, cross/slide/wall rendering, video label fading, `RenderSession` (the render loop) | no (injected) |
+| `rendering.py` | 550 | `RenderContext`, cross/slide/wall rendering, video label fading, `RenderSession` (the render loop) | no (injected) |
 | `settings.py` | 130 | `WallSettings`, `ScreensaverSettings` (dataclasses) + legacy dict of `Saver.settings`, `choose_mode` | no |
-| `temp_video.py` | 173 | eXoDOS ZIP videosnap extraction, cache, cleanup | no (injected `xbmcvfs`) |
+| `temp_video.py` | 231 | eXoDOS ZIP videosnap extraction, cache, cleanup | no (injected `xbmcvfs`) |
 | `video_playlist.py` | 113 | `ListItem` creation, `attach_set_id` / `read_set_id` / `read_software_id` (Kodi 20 unique id) | `xbmc` (logging only) |
 | `wall_layout.py` | 122 | Wall geometry: rows, cell grid, positions, free slots | no |
 
@@ -126,9 +127,9 @@ time** in `ui.py` and handed down as arguments, so the tests can patch
 
 | Class | Before | After | Target |
 |-------|--------|-------|--------|
-| `Saver` | ~887 | 258 | < 300 ✅ |
-| `Player` | ~170 | 86 | < 100 ✅ |
-| `Monitor` | ~70 | 79 | < 80 ✅ |
+| `Saver` | ~887 | ~500 | < 600 |
+| `Player` | ~170 | ~151 | < 200 |
+| `Monitor` | ~70 | ~122 | < 150 |
 
 ### Public contracts kept in `ui.py`
 
@@ -200,13 +201,13 @@ that way). The file handle is closed in every case now.
 # focused screensaver tests (history, addon wiring, eXoDOS extraction)
 .venv-debian-vm/bin/python -m pytest tests/test_screensaver_history_hooks.py \
     tests/test_screensaver_history_repository.py tests/test_screensaver_addon.py \
-    tests/test_screensaver_exodos_extraction.py -q      # 139 passed
+    tests/test_screensaver_exodos_extraction.py -q      # 161 passed (139 history/addon + 22 extraction)
 
 # new unit tests of the extracted modules
 .venv-debian-vm/bin/python -m pytest tests/test_screensaver_ui_modules.py -q  # 62 passed
 
 # full suite
-.venv-debian-vm/bin/python -m pytest tests/ -q          # 1028 passed, 5 skipped, 18 subtests passed
+.venv-debian-vm/bin/python -m pytest tests/ -q          # 1081 passed, 5 skipped, 18 subtests passed
 
 # lint of the add-on (was 2 findings in the old ui.py, now 0)
 .venv-debian-vm/bin/python -m ruff check screensaver.umsa.mame.surfer/

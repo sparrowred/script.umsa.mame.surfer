@@ -50,7 +50,7 @@ been removed.
 
 Refactor decisions Q1–Q9 are settled; phase 4.6.1a questions Q1–Q6 are resolved as
 D12–D19, with the D20/D21 corrective follow-up recorded in the audit. The current
-repository HEAD at the time of this summary is `e7cb00a`; older commit hashes below are
+repository HEAD at the time of this summary is `4c9b2a7637cbfb88bc93d32b3a6d43cd753f5ee4` (2026-10-23); older commit hashes below are
 historical landing references, not claims about the current HEAD. The Kodi-runtime
 verification status is evidence-based and recorded in
 `history_persistence_audit.md` §16.2; it is **not** inferred from implementation or

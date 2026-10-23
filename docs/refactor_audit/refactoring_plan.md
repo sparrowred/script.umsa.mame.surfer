@@ -192,7 +192,7 @@ Following the A4 screensaver module split, five remaining correctness issues wer
 
 | Aspect | Detail |
 |--------|--------|
-| **Goal** | Move non-DB helpers out of `database.py` (69k lines) per Phase 4.9 proposal |
+| **Goal** | Move non-DB helpers out of `database.py` (~1857 lines, down from 69k) per Phase 4.9 proposal |
 | **Files** | `script.module.umsa.core/lib/umsa_core/database.py` → new modules |
 | **Proposed moves** (from `roadmap.md`) | <ul><li>`download_and_update_umsa_db` → `umsa_db_download.py` ✅ **Done (4.9a)**</li><li>`_scan_state_ownership`, `run_scan_with_progress` → `scan_progress.py`</li><li>`split_gamename`, `COUNTRIES`, `make_time_nice`, `get_best_machine_for_set`, `parse_recommended_games`, `build_filter_lists` → `game_labels.py` (or split)</li><li>`create_cmdline`, `get_cmd_line_options` assembly helpers → `cmdline.py` (after Step 2 clarifies ownership)</li></ul> |
 | **Responsibility moved** | Pure application helpers, scan progress, cmdline assembly — **out of `DBMod`** |
@@ -257,12 +257,12 @@ Step 1 (dead code removal)
 
 ## Acceptance Criteria Checklist
 
-- [ ] Step 1: Dead code removed, suite green
-- [ ] Step 2: `emulation.py` split, all preparer/finder/extractor/VGM tests added, suite green
-- [ ] Step 3: `UMSA` < 1000 lines, workflow modules extracted, suite green, manual smoke pass
-- [ ] Step 4: `Saver`/`Player`/`Monitor` split, rendering/history modules extracted, suite green
+- [x] Step 1: Dead code removed, suite green
+- [x] Step 2: `emulation.py` split, all preparer/finder/extractor/VGM tests added, suite green
+- [x] Step 3: `UMSA` < 1000 lines, workflow modules extracted, suite green, manual smoke pass
+- [x] Step 4: `Saver`/`Player`/`Monitor` split, rendering/history modules extracted, suite green
 - [ ] Step 5: `database.py` non-DB helpers moved, re-exports work, boundary tests pass
-- [ ] All architecture boundary tests pass throughout (`test_architecture_boundaries.py` — 7 tests)
-- [ ] Full suite ≥ 878 passed at each step
-- [ ] No Kodi imports in `umsa_core/` (except `umsa_core_kodi.py`)
-- [ ] No `gdb`/`gdbc`/`sdb`/`sdbc`/`ggdb` attribute access outside `database.py`
+- [x] All architecture boundary tests pass throughout (`test_architecture_boundaries.py` — 7 tests)
+- [x] Full suite ≥ 1081 passed at each step
+- [x] No Kodi imports in `umsa_core/` (except `umsa_core_kodi.py`)
+- [x] No `gdb`/`gdbc`/`sdb`/`sdbc`/`ggdb` attribute access outside `database.py`

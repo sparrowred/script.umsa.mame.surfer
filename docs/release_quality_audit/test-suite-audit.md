@@ -1,7 +1,7 @@
 # Test Suite Audit
 
-**Audited:** 2026-10-21  
-**Baseline (after fixes):** 887 passed, 5 skipped, 18 subtests passed  
+**Audited:** 2026-10-23  
+**Baseline (after fixes):** 1081 passed, 5 skipped, 18 subtests passed  
 **Environment:** `.venv-debian-vm/bin/python -m pytest tests/ -q`  
 **Python:** 3.14.7, pytest 9.1.1
 
@@ -71,7 +71,7 @@
 ```
 # Full suite
 .venv-debian-vm/bin/python -m pytest tests/ -q
-# → 887 passed, 5 skipped, 18 subtests passed in 14.12s
+# → 1081 passed, 5 skipped, 18 subtests passed in 14.36s
 
 # Gameslist strategies (9 tests)
 .venv-debian-vm/bin/python -m pytest tests/test_gamelist_strategies.py -v
@@ -98,6 +98,6 @@
 
 ## Summary
 
-All previously failing tests have been resolved. The test suite is now clean with **887 passed, 5 skipped, 18 subtests passed**. All previously documented failures have been resolved through targeted fixes to test fixtures and expectation updates.
+All previously failing tests have been resolved. The test suite is now clean with **1081 passed, 5 skipped, 18 subtests passed**. All previously documented failures have been resolved through targeted fixes to test fixtures and expectation updates.
 
 The f-string conversion in `gamelist_strategies.py` (8 instances) is complete and verified - all tests pass and Ruff UP031 checks pass.

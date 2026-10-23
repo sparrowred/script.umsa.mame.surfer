@@ -1,7 +1,8 @@
 # Emulation Audit — Full Launch Path
 
-**Audited at:** git HEAD `9a98cfe`  
-**Scope:** `UMSA.run_emulator()` → `emulator_launcher.py` → `retroplayer_cache.py` → `Emulation` (prepare/run/wait) → `DBMod.get_cmd_line_options()`/`create_cmdline()` → `GameRepository` reads → `ProcessRunner`
+**Audited at:** git HEAD `4c9b2a7637cbfb88bc93d32b3a6d43cd753f5ee4` (2026-10-23)  
+**Scope:** `UMSA.run_emulator()` → `emulator_launcher.py` → `retroplayer_cache.py` → `Emulation` (facade: prepare/run/wait) → `DBMod.get_cmd_line_options()`/`create_cmdline()` → `GameRepository` reads → `ProcessRunner` 
+**Extraction complete (Step 2):** `Emulation` (592 lines) delegates to `launch_preparer.py`, `rom_finder.py`, `rom_extractor.py`, `chd_extractor.py`, `vgm_player.py`, `vgm_socket.py`
 
 ---
 
@@ -358,7 +359,7 @@ GUI (gui.py)
 
 ## Extraction Completed (2026-10-21)
 
-The following modules have been extracted from `Emulation` (originally 1221 lines, now 586 lines):
+The following modules have been extracted from `Emulation` (originally 1221 lines, now 592 lines):
 
 ### New Modules Created
 
@@ -367,7 +368,7 @@ The following modules have been extracted from `Emulation` (originally 1221 line
 | `rom_finder.py` | 143 | ROM and non-MAME file discovery (`find_roms`, `find_nonmame_roms`) |
 | `rom_extractor.py` | 67 | ZIP extraction and ROM-specific post-processing (`extract_rom`) |
 | `chd_extractor.py` | 123 | CHD extraction, cancellation and cleanup (`extract_chd`, `CHDExtractionCancelled`, `CHDExtractionError`) |
-| `launch_preparer.py` | 263 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`) |
+| `launch_preparer.py` | 259 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`) |
 | `vgm_player.py` | 333 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
 
 ### Emulation Facade (586 lines)
@@ -383,10 +384,10 @@ The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 
 ### Verification Results
 
-All 914 tests pass (5 skipped for real-MAME integration):
+All 1081 tests pass (5 skipped for real-MAME integration):
 
 ```
-914 passed, 5 skipped, 18 subtests passed in 14.18s
+1081 passed, 5 skipped, 18 subtests passed in 14.36s
 ```
 
 Key test categories verified:
@@ -414,7 +415,7 @@ As a follow-up to the Emulation extraction (Step 2), the VGM socket transport an
 
 | Module | Lines | Responsibility |
 |--------|-------|----------------|
-| `vgm_socket.py` | 339 | VGM TCP transport lifecycle, Lua log protocol, connection acceptance, command sending, log frame parsing |
+| `vgm_socket.py` | 354 | VGM TCP transport lifecycle, Lua log protocol, connection acceptance, command sending, log frame parsing |
 
 ### Key Improvements
 

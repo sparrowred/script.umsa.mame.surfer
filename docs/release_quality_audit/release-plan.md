@@ -1,8 +1,8 @@
 # UMSA MAME Surfer — Release Plan
 
 **Target:** Readiness-based (approx. 2 months)  
-**Generated:** 2026-10-21  
-**Based on:** Release quality audit (2026-10-21)
+**Generated:** 2026-10-23  
+**Based on:** Release quality audit (2026-10-23)
 
 ---
 
@@ -28,7 +28,7 @@
 | A2b | Extract VGM socket transport (`vgm_socket.py`) | `CODE-VERIFIED` | P1 | VGM TCP transport, Lua log protocol mixed in `Emulation` | `vgm_socket.py` 339 lines created; `emulation.py` 557 lines; all 887 tests pass | `refactoring_plan.md` Step 2c, `emulation_audit.md` |
 | A3 | Split `gui.py` `UMSA` into workflow modules | ✅ **CODE-VERIFIED** | P1 | 2600+ line god class; focus/navigation, gamelist, filter, artwork, scans, screensaver/VGM | `UMSA` 925 lines; 15 modules in `resources/lib/umsa_gui/` (largest `software_selector.py` 303 lines); 966 tests pass; public API unchanged; first-start DAT scan moved off the calling thread. **Manual Kodi smoke test still open (C-series)** | `refactoring_plan.md` Step 3, `gui_audit.md` |
 | A4 | Separate Screensaver `Saver`/`Player`/`Monitor` | ✅ **CODE-VERIFIED** | P1 | 1200 line `ui.py` mixes rendering, playback, lifecycle, history | `ui.py` 522 lines: `Saver` 258, `Player` 86, `Monitor` 79 (all class targets met); 11 focused modules in `lib/umsa_screensaver/`; 1028 tests pass (62 new); public names of `ui.py` unchanged (re-exported); quirks of the original file preserved. **Post-A4 fixes (2026-10-22): playback ownership tracking, `onPlayBackStopped`/`onPlayBackError` handlers, eXoDOS extraction failure handling, playlist clearing removed, `try/finally` rendering cleanup. Manual Kodi smoke test still open (C-series)** | `refactoring_plan.md` Step 4, `screensaver_audit.md` |
-| A5 | Phase 4.9 `database.py` reorganisation | `OPEN` | P1 | 1820 lines (down from 69k); non-DB helpers still in `DBMod` | `database.py` < 30k lines; `scan_progress.py`, `game_labels.py`, `cmdline.py` created; re-exports work; boundary tests pass | `refactoring_plan.md` Step 5, `database_refactor/roadmap.md` |
+| A5 | Phase 4.9 `database.py` reorganisation | `OPEN` | P1 | ~1857 lines (down from 69k); non-DB helpers still in `DBMod` | `database.py` < 30k lines; `scan_progress.py`, `game_labels.py`, `cmdline.py` created; re-exports work; boundary tests pass | `refactoring_plan.md` Step 5, `database_refactor/roadmap.md` |
 | A6 | Optional further `DBMod` decomposition | `DEFERRED` | Post-release | Mixed queries (`get_random_id`, `get_random_art`), cross-db `open_db` | Only if maintenance burden grows | `refactoring_plan.md` Step 6, `dbmod_audit.md` |
 
 ---
@@ -170,9 +170,9 @@ F1-F7 (Release prep) → After A2-A5, C1-C3, D1-D5 complete
 | Architecture boundaries | 7/7 tests pass |
 | Core regression tests | ~200 pass (sampled) |
 | Integration tests (stubs) | 140 pass (sampled) |
-| Full test suite | 1028 passed, 5 skipped, 18 subtests (re-verified 2026-10-21 after the A4 screensaver split: 966 + 62 new module tests; the audit snapshot recorded 882 passed with 13 pre-existing failures — the suite is green now) |
+| Full test suite | 1081 passed, 5 skipped, 18 subtests (re-verified 2026-10-23) |
 | Ruff correctness issues | 157 (BLE001/S110/E722/B006/PLW1510) |
-| Ruff style issues | 60 (UP031, UP007, etc.) |
+| Ruff style issues | 68 (UP031, UP007, etc.) |
 | Mypy (Core modules) | Clean (per-module, `--follow-imports=skip`) |
 | Kodi API audit | No deprecated/removed APIs found |
 | Kodi 20+ specific APIs | Capability-guarded (`setUniqueID`, `getGameInfoTag`) |

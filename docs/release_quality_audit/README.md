@@ -1,8 +1,8 @@
 # Release Quality Audit — UMSA MAME Surfer
 
-**Repository state:** git HEAD `...` (audited 2026-10-21)  
+**Repository state:** git HEAD `4c9b2a7637cbfb88bc93d32b3a6d43cd753f5ee4` (audited 2026-10-23)  
 **Scope:** All three add-ons (Frontend, Core, Screensaver), tests, tooling, packaging  
-**Generated:** 2026-10-21 (read-only audit, no production code modified)
+**Generated:** 2026-10-23 (read-only audit, no production code modified)
 
 ---
 
@@ -10,10 +10,10 @@
 
 The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Shared Core, Screensaver) with a strict Kodi-independent Core boundary. The database refactor (Phases 4.0–4.8) is complete: `DBMod` has delegated most SQL to focused repositories and the `gamelist_filter` service. Architecture boundary tests pass.
 
-**Current test status:** 887 passed, 5 skipped, 18 subtests passed  
+**Current test status:** 1081 passed, 5 skipped, 18 subtests passed  
 **Architecture boundary tests:** 7/7 passed  
-**Lint (Ruff):** 217 issues across 11 rule codes (3 F841 pre-existing in gamelist_strategies.py)  
-**Type check (mypy):** Not run as part of this audit (requires Kodi stubs for GUI/Screensaver modules)
+**Lint (Ruff):** 225 issues across 17 rule codes  
+**Type check (mypy):** Clean on Core modules (per-module, `--follow-imports=skip`)
 
 ---
 
@@ -44,10 +44,12 @@ The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Sha
 | Step | Description | Status |
 |------|-------------|--------|
 | 1 | Remove dead code in `UMSA.run_emulator()` | ✅ **Done** (2026-10-20) |
-| 2 | Extract `Emulation` emulator-specific prep | ⏳ **Open** (1200+ lines) |
-| 3 | Split `gui.py` `UMSA` into workflow modules | ⏳ **Open** (~2600 lines) |
-| 4 | Separate Screensaver `Saver`/`Player`/`Monitor` | ⏳ **Open** (~1200 lines) |
-| 5 | Phase 4.9 `database.py` reorganisation | ⏳ **Open** (1820 lines, down from 69k) |
+| 2 | Extract `Emulation` emulator-specific prep | ✅ **Done** (2026-10-21) — 6 modules extracted |
+| 2b | Extract VGM socket transport (`vgm_socket.py`) | ✅ **Done** (2026-10-21) |
+| 2c | Fix VGM callback signatures and entry points | ✅ **Done** (2026-10-21) |
+| 3 | Split `gui.py` `UMSA` into workflow modules | ✅ **Done** (2026-10-21) — 15 modules in `umsa_gui/` |
+| 4 | Separate Screensaver `Saver`/`Player`/`Monitor` | ✅ **Done** (2026-10-22) — 10 modules in `lib/umsa_screensaver/` |
+| 5 | Phase 4.9 `database.py` reorganisation | ⏳ **Open** (~1857 lines, down from 69k) |
 | 6 | Optional further `DBMod` decomposition | 📋 **Deferred** |
 
 **Completed:** Database refactor Phases 4.0–4.8 (repositories, `gamelist_filter`, row-leak closure, artwork/DAT source-of-truth, history migration)
