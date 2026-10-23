@@ -1,8 +1,8 @@
 # Screensaver Audit — `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py`
 
-**Audited at:** git HEAD `4c9b2a7637cbfb88bc93d32b3a6d43cd753f5ee4` (2026-10-23)  
-**File size:** ~873 lines, three classes: `Saver` (~500 lines), `Player` (~151 lines), `Monitor` (~122 lines) + module-level helpers  
-**Refactored (refactor plan step 4):** `ui.py` is now the Kodi adapter (873 lines), `Saver` 500, `Player` 151, `Monitor` 122 lines — the logic moved into 10 focused modules (see *Implemented Module Map*).
+**Audited at:** git HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c` (2026-10-23)  
+**File size:** ~522 lines, three classes: `Saver` (~258 lines), `Player` (~86 lines), `Monitor` (~79 lines) + module-level helpers  
+**Refactored (refactor plan step 4):** `ui.py` is now the Kodi adapter (522 lines), `Saver` 258, `Player` 86, `Monitor` 79 lines — the logic moved into 11 focused modules (see *Implemented Module Map*).
 
 ---
 
@@ -11,7 +11,7 @@
 | Class | Responsibility | Key Methods | Kodi APIs Used |
 |-------|----------------|-------------|----------------|
 | `Saver` (`xbmcgui.WindowXMLDialog`) | Artwork rendering loop (cross, slide, wall), video playlist management, bad-image filtering, artwork path resolution, temporary video extraction/cleanup, screensaver history recording, settings interpretation | `__init__`, `onInit`, `onAction`, `remember_art`, `record_display`, `open_software`, `read_settings`, `check_snapshot`, `get_machine_pic`, `resolve_art_path`, `_extract_exodos_video`, `_cleanup_temp_videos`, `add_video_to_playlist`, `get_art_and_call_saver`, `create_wall` | `xbmcgui.WindowXMLDialog`, `xbmc.PlayList`, `xbmcgui.ListItem`, `xbmcgui.ControlImage`, `xbmcvfs`, `xbmcaddon`, `xbmc.sleep`, `xbmc.log`, `xbmc.executebuiltin`, window properties |
-| `Player` (`xbmc.Player`) | Video playback callbacks (`onAVStarted`, `onPlayBackStarted`, `onPlayBackEnded`), label fading, playlist advancement, history recording for videos | `__init__`, `_av_instance_token`, `onAVStarted`, `onPlayBackStarted`, `onPlayBackEnded` | `xbmc.Player`, `getVideoInfoTag`, `getTotalTime`, `getPlayingFile`, `isPlayingVideo`, `playnext` |
+| `Player` (`xbmc.Player`) | Video playback callbacks (`onAVStarted`, `onPlayBackStarted`, `onPlayBackEnded`, `onPlayBackStopped`, `onPlayBackError`), label fading, playlist advancement, history recording for videos | `__init__`, `_av_instance_token`, `onAVStarted`, `onPlayBackStarted`, `onPlayBackEnded`, `onPlayBackStopped`, `onPlayBackError` | `xbmc.Player`, `getVideoInfoTag`, `getTotalTime`, `getPlayingFile`, `isPlayingVideo`, `playnext` |
 | `Monitor` (`xbmc.Monitor`) | Screensaver lifecycle (activation/deactivation/DPMS), mode selection, `Saver`/`Player` instantiation, frontend communication (window properties, `NotifyAll` via `vgm_active`/`send_vgm_action`) | `__init__`, `startme`, `onScreensaverActivated`, `onScreensaverDeactivated`, `reallyDeactivateScreensaver`, `onDPMSActivated` | `xbmc.Monitor`, `xbmcgui.Window(10000)`, `xbmcaddon`, `xbmc.log`, `vgm_active`, `send_vgm_action` |
 
 ---
@@ -110,14 +110,14 @@ time** in `ui.py` and handed down as arguments, so the tests can patch
 
 | Module | Lines | Responsibility | Kodi imports |
 |--------|-------|----------------|--------------|
-| `ui.py` | 873 | `Saver` / `Player` / `Monitor` — the Kodi window, playlist and callbacks; compat re-exports of the old module-level names | yes |
+| `ui.py` | 522 | `Saver` / `Player` / `Monitor` — the Kodi window, playlist and callbacks; compat re-exports of the old module-level names | yes |
 | `actions.py` | 106 | Dispatch of the Kodi actions of the screensaver window (context handoff, playlist advance, VGM volume/next/stop) | no (injected) |
 | `artwork_selector.py` | 131 | Artwork types per mode, source roots, artwork path resolution, machine picture, aspect handling | no |
 | `availability.py` | 89 | Artwork availability checks, mode selection fallbacks | no |
 | `constants.py` | 49 | Action codes, control ids, window properties, mode names, artwork types per mode | no |
 | `history.py` | 164 | `record_display`, `record_video_display`, playback token, `PlaybackHistoryGuard` | no (injected) |
 | `image_validator.py` | 117 | Bad-image detection (PIL and non-PIL variants) | no |
-| `rendering.py` | 550 | `RenderContext`, cross/slide/wall rendering, video label fading, `RenderSession` (the render loop) | no (injected) |
+| `rendering.py` | 384 | `RenderContext`, cross/slide/wall rendering, video label fading, `RenderSession` (the render loop) | no (injected) |
 | `settings.py` | 130 | `WallSettings`, `ScreensaverSettings` (dataclasses) + legacy dict of `Saver.settings`, `choose_mode` | no |
 | `temp_video.py` | 231 | eXoDOS ZIP videosnap extraction, cache, cleanup | no (injected `xbmcvfs`) |
 | `video_playlist.py` | 113 | `ListItem` creation, `attach_set_id` / `read_set_id` / `read_software_id` (Kodi 20 unique id) | `xbmc` (logging only) |
@@ -127,9 +127,9 @@ time** in `ui.py` and handed down as arguments, so the tests can patch
 
 | Class | Before | After | Target |
 |-------|--------|-------|--------|
-| `Saver` | ~887 | ~500 | < 600 |
-| `Player` | ~170 | ~151 | < 200 |
-| `Monitor` | ~70 | ~122 | < 150 |
+| `Saver` | ~887 | ~258 | < 600 |
+| `Player` | ~170 | ~86 | < 200 |
+| `Monitor` | ~70 | ~79 | < 150 |
 
 ### Public contracts kept in `ui.py`
 
@@ -216,4 +216,4 @@ that way). The file handle is closed in every case now.
 Not covered by the automated tests (needs a running Kodi): the skin
 animation of the cross/slide/wall modes, the label fading of the video mode,
 the eXoDOS playback of an archived videosnap and the context handoff to the
-frontend.
+frontend. See `release-plan.md` open manual areas.

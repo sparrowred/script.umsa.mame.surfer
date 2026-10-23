@@ -1,6 +1,6 @@
 # Static Analysis & Code Quality Audit
 
-**Audited:** 2026-10-21  
+**Audited:** 2026-10-23 (at HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c`)  
 **Tools:** Ruff (primary), mypy (limited), Architecture boundary tests (AST-based)  
 **Scope:** All production Python in three add-ons
 
@@ -26,7 +26,7 @@
 
 ---
 
-## Ruff Findings (225 issues, 17 rule codes)
+## Ruff Findings (225 issues, 19 rule codes)
 
 ### By Severity/Category
 
@@ -34,18 +34,17 @@
 |------|-------|-------------|---------|
 | **BLE001** | 106 | Blind `except Exception:` — catches too broadly | ❌ |
 | **S110** | 54 | `try: ... except Exception: pass` — silent failure | ❌ |
+| **F401** | 17 | Unused import | ✅ |
 | **UP031** | 16 | Legacy `%` formatting → prefer f-strings | ✅ 4 |
 | **UP007** | 6 | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ✅ |
-| **SIM115** | 6 | `open()` without context manager | ✅ |
+| **SIM115** | 5 | `open()` without context manager | ✅ |
 | **SIM113** | 4 | `enumerate()` instead of manual index | ✅ |
 | **F841** | 4 | Unused variable | ❌ |
-| **I001** | 3 | Unsorted imports | ✅ |
-| **SIM102** | 2 | Collapsible `if` statements | ✅ |
-| **F401** | 17 | Unused import | ✅ |
+| **I001** | 2 | Unsorted imports | ✅ |
 | **TRY203** | 2 | Useless `try`/`except` | ✅ |
 | **E722** | 1 | Bare `except:` (no exception type) | ❌ |
 | **UP030** | 1 | Explicit `.format()` positional index | ✅ |
-| **SIM118** | 1 | `in dict.keys()` → `in dict` | ✅ |
+| **SIM102** | 1 | Collapsible `if` statements | ✅ |
 | **PERF402** | 1 | Manual list copy | ✅ |
 | **B006** | 1 | Mutable default argument | ❌ |
 | **EXE002** | 1 | Shebang on non-executable file | ❌ |
@@ -53,7 +52,7 @@
 | **C413** | 1 | Unnecessary `sorted()` call | ✅ |
 | **RUF046** | 1 | Unnecessary `int()` cast | ✅ |
 | **RUF059** | 1 | Unused unpacked variable | ❌ |
-| **Total** | **225** | | **19 fixable auto** |
+| **Total** | **225** | | **19 fixable auto** (17 unsafe-fixable with `--unsafe-fixes`) |
 
 ### High-Priority Findings (Correctness Risk)
 
@@ -170,7 +169,7 @@ Cannot type-check without Kodi stubs (`Kodistubs` package). Requires Kodi runtim
 
 | Suite | Passed | Failed | Skipped | Notes |
 |-------|--------|--------|---------|-------|
-| Full suite | 882 | 13 | 5 | 13 pre-existing failures |
+| Full suite | 1081 | 0 | 5 | 13 pre-existing failures resolved |
 | `test_architecture_boundaries.py` | 7 | 0 | 0 | All passed |
 | `test_frontend_entrypoint.py` | 7 | 0 | 0 | Updated for new imports |
 | `test_emulator_launcher.py` | 5 | 0 | 0 | Disk selection logic |
@@ -252,10 +251,10 @@ done
 | Architecture boundary tests | 7/7 ✅ | 7/7 ✅ |
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
-| Ruff correctness issues | 160 (BLE001/S110/E722/B006/PLW1510) | **No increase**; P1: reduce BLE001/S110 |
-| Ruff style issues | 65 (UP031, UP007, etc.) | P1: UP031 → 0 |
+| Ruff correctness issues | 162 (BLE001=106, S110=54, E722=1, B006=1, PLW1510=1) | **No increase**; P1: reduce BLE001/S110 |
+| Ruff style issues | 63 (UP031=16, UP007=6, SIM115=5, F841=4, etc.) | P1: UP031 → 0 |
 | Mypy (Core modules) | Clean (per-module) | Clean |
-| Pre-existing test failures | 13 | Documented, no new |
+| Pre-existing test failures | 0 (13 historical resolved) | Documented, no new |
 | Full suite | 1081 passed | ≥ 1081, no new failures |
 
 ---

@@ -1,8 +1,8 @@
 # Emulation Audit — Full Launch Path
 
-**Audited at:** git HEAD `4c9b2a7637cbfb88bc93d32b3a6d43cd753f5ee4` (2026-10-23)  
+**Audited at:** git HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c` (2026-10-23)  
 **Scope:** `UMSA.run_emulator()` → `emulator_launcher.py` → `retroplayer_cache.py` → `Emulation` (facade: prepare/run/wait) → `DBMod.get_cmd_line_options()`/`create_cmdline()` → `GameRepository` reads → `ProcessRunner` 
-**Extraction complete (Step 2):** `Emulation` (592 lines) delegates to `launch_preparer.py`, `rom_finder.py`, `rom_extractor.py`, `chd_extractor.py`, `vgm_player.py`, `vgm_socket.py`
+**Extraction complete (Step 2):** `Emulation` (557 lines) delegates to `launch_preparer.py`, `rom_finder.py`, `rom_extractor.py`, `chd_extractor.py`, `vgm_player.py`, `vgm_socket.py`
 
 ---
 
@@ -371,7 +371,7 @@ The following modules have been extracted from `Emulation` (originally 1221 line
 | `launch_preparer.py` | 259 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`) |
 | `vgm_player.py` | 333 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
 
-### Emulation Facade (586 lines)
+### Emulation Facade (557 lines)
 
 The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 
@@ -433,7 +433,7 @@ As a follow-up to the Emulation extraction (Step 2), the VGM socket transport an
 
 ### Verification Results
 
-All 887 tests pass (5 skipped for real-MAME integration).
+All 1081 tests pass (5 skipped for real-MAME integration).
 
 ### Architecture Compliance
 
@@ -553,7 +553,7 @@ Commands and results (all executed in this working tree):
   137 passed, 18 subtests passed in 10.09s
 
 .venv-debian-vm/bin/python -m pytest tests/ -q
-  914 passed, 5 skipped, 18 subtests passed in 14.18s
+  1081 passed, 5 skipped, 18 subtests passed in 14.18s
 
 VGM_MAME_TESTS=1 .venv-debian-vm/bin/python -m pytest tests/test_vgm_preexit_mame.py -q
   4 passed, 1 skipped, 3 subtests passed in 32.59s

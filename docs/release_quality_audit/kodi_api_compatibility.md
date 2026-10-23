@@ -1,6 +1,6 @@
 # Kodi API Compatibility Audit
 
-**Audited:** 2026-10-21  
+**Audited:** 2026-10-23 (at HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c`)  
 **Scope:** All Kodi API usage across three add-ons  
 **Declared Minimum:** `xbmc.python` 3.0.0 = **Kodi 20 (Nexus)**  
 **Sources:** [Kodi Python API docs](https://xbmc.github.io/docs.kodi.tv/), [Kodi GitHub](https://github.com/xbmc/xbmc), Kodistubs 21.0.0
@@ -266,8 +266,8 @@ def onAVStarted(self):
 |----------|--------|
 | ✅ Static source inspection | grep/read of all Python files |
 | ✅ Capability guards verified | `ui.py` lines 79-84, 102-103 |
-| 📋 Maintainer-reported | Database refactor, screensaver/emulator lifecycle, recent Kodi smoke tests |
-| ❓ Unverified | Scenarios A–E runtime behavior |
+| 📋 Maintainer-confirmed manual smoke tests | GUI navigation, screensaver modes, video playback, VGM controls, playback history, DB refactor, screensaver inhibition — **recorded in `release-plan.md`** |
+| ❓ Unverified | Scenarios A–E runtime behavior; 3 open manual areas (emulator matrix, Retroplayer E2E, clean install/upgrade) |
 
 ---
 
@@ -278,4 +278,4 @@ def onAVStarted(self):
 | Core Kodi modules (`xbmc`, `xbmcgui`, `xbmcaddon`, `xbmcvfs`) | ✅ Compatible |
 | Kodi 20+ specific APIs (`setUniqueID`, `getGameInfoTag`) | ✅ Capability-guarded / Retroplayer-only |
 | Deprecated APIs | ✅ None found |
-| Runtime verification | ❓ Scenarios A–E needed |
+| Runtime verification | ❓ Scenarios A–E needed; 3 open manual areas explicitly listed in `release-plan.md` |

@@ -1,6 +1,6 @@
 1: # Python Style & String Formatting Audit
 2: 
-3: **Audited:** 2026-10-21  
+3: **Audited:** 2026-10-23 (at HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c`)  
 4: **Tools:** Ruff (UP031, UP030), manual grep inspection  
 5: **Scope:** All production Python in `plugin.program.umsa.mame.surfer/`, `screensaver.umsa.mame.surfer/`, `script.module.umsa.core/`
 6: 

@@ -2,7 +2,8 @@
 
 **Target:** Readiness-based (approx. 2 months)  
 **Generated:** 2026-10-23  
-**Based on:** Release quality audit (2026-10-23)
+**Based on:** Release quality audit (2026-10-23)  
+**HEAD inspected:** `cc2efc83855eb2fd10b17e814a507b59d341a76c`
 
 ---
 
@@ -24,10 +25,11 @@
 | # | Task | Status | Priority | Rationale | Acceptance Criteria | Related Files / Audit |
 |---|------|--------|----------|-----------|---------------------|----------------------|
 | A1 | Remove dead code in `UMSA.run_emulator()` | ✅ **CODE-VERIFIED** | P0 | Done 2026-10-20 | 92 lines removed; 19 relevant tests pass | `refactoring_plan.md` Step 1, `gui.py:2504-2542` |
-| A2 | Extract `Emulation` preparers/finders/extractors/VGM player | `CODE-VERIFIED` | P1 | 1200+ line god class; isolates emulator-specific logic | `emulation.py` 557 lines (was 1200+); all existing tests pass; new modules added | `refactoring_plan.md` Step 2, `emulation_audit.md` |
-| A2b | Extract VGM socket transport (`vgm_socket.py`) | `CODE-VERIFIED` | P1 | VGM TCP transport, Lua log protocol mixed in `Emulation` | `vgm_socket.py` 339 lines created; `emulation.py` 557 lines; all 887 tests pass | `refactoring_plan.md` Step 2c, `emulation_audit.md` |
-| A3 | Split `gui.py` `UMSA` into workflow modules | ✅ **CODE-VERIFIED** | P1 | 2600+ line god class; focus/navigation, gamelist, filter, artwork, scans, screensaver/VGM | `UMSA` 925 lines; 15 modules in `resources/lib/umsa_gui/` (largest `software_selector.py` 303 lines); 966 tests pass; public API unchanged; first-start DAT scan moved off the calling thread. **Manual Kodi smoke test still open (C-series)** | `refactoring_plan.md` Step 3, `gui_audit.md` |
-| A4 | Separate Screensaver `Saver`/`Player`/`Monitor` | ✅ **CODE-VERIFIED** | P1 | 1200 line `ui.py` mixes rendering, playback, lifecycle, history | `ui.py` 522 lines: `Saver` 258, `Player` 86, `Monitor` 79 (all class targets met); 11 focused modules in `lib/umsa_screensaver/`; 1028 tests pass (62 new); public names of `ui.py` unchanged (re-exported); quirks of the original file preserved. **Post-A4 fixes (2026-10-22): playback ownership tracking, `onPlayBackStopped`/`onPlayBackError` handlers, eXoDOS extraction failure handling, playlist clearing removed, `try/finally` rendering cleanup. Manual Kodi smoke test still open (C-series)** | `refactoring_plan.md` Step 4, `screensaver_audit.md` |
+| A2 | Extract `Emulation` preparers/finders/extractors/VGM player | ✅ **CODE-VERIFIED** | P1 | 1200+ line god class; isolates emulator-specific logic | `emulation.py` 557 lines (was 1200+); all existing tests pass; 6 modules added | `refactoring_plan.md` Step 2, `emulation_audit.md` |
+| A2b | Extract VGM socket transport (`vgm_socket.py`) | ✅ **CODE-VERIFIED** | P1 | VGM TCP transport, Lua log protocol mixed in `Emulation` | `vgm_socket.py` 339 lines created; `emulation.py` 557 lines; all tests pass | `refactoring_plan.md` Step 2c, `emulation_audit.md` |
+| A2c | Fix VGM callback signatures and entry points | ✅ **CODE-VERIFIED** | P1 | Restored `play_random_vgm`, fixed thread arg forwarding, one-shot stopped callback | 24 VGM entry-point tests pass; no duplicate stopped notification | `refactoring_plan.md` Step 2f, `emulation_audit.md` |
+| A3 | Split `gui.py` `UMSA` into workflow modules | ✅ **CODE-VERIFIED** | P1 | 2600+ line god class; focus/navigation, gamelist, filter, artwork, scans, screensaver/VGM | `UMSA` 925 lines; 15 modules in `resources/lib/umsa_gui/` (largest `software_selector.py` 303 lines); 966 tests pass; public API unchanged; first-start DAT scan moved off calling thread | `refactoring_plan.md` Step 3, `gui_audit.md` |
+| A4 | Separate Screensaver `Saver`/`Player`/`Monitor` | ✅ **CODE-VERIFIED** | P1 | 1200 line `ui.py` mixes rendering, playback, lifecycle, history | `ui.py` 522 lines: `Saver` 258, `Player` 86, `Monitor` 79 (all targets met); 11 focused modules in `lib/umsa_screensaver/`; 1081 tests pass (62 new); public names re-exported; post-A4 fixes (2026-10-22): playback ownership, `onPlayBackStopped`/`onPlayBackError`, eXoDOS extraction failure handling, playlist clearing removed, `try/finally` rendering cleanup | `refactoring_plan.md` Step 4, `screensaver_audit.md` |
 | A5 | Phase 4.9 `database.py` reorganisation | `OPEN` | P1 | ~1857 lines (down from 69k); non-DB helpers still in `DBMod` | `database.py` < 30k lines; `scan_progress.py`, `game_labels.py`, `cmdline.py` created; re-exports work; boundary tests pass | `refactoring_plan.md` Step 5, `database_refactor/roadmap.md` |
 | A6 | Optional further `DBMod` decomposition | `DEFERRED` | Post-release | Mixed queries (`get_random_id`, `get_random_art`), cross-db `open_db` | Only if maintenance burden grows | `refactoring_plan.md` Step 6, `dbmod_audit.md` |
 
@@ -79,15 +81,15 @@
 
 | # | Task | Status | Priority | Rationale | Acceptance Criteria | Related Files / Audit |
 |---|------|--------|----------|-----------|---------------------|----------------------|
-| D1 | Document 13 pre-existing test failures | ✅ **CODE-VERIFIED** | P0 | Known limitations | Failures listed in this plan; no new failures introduced | `static_analysis_audit.md` |
-| D2 | Core regression test suite passes | `OPEN` | P0 | No Kodi needed | `test_database.py`, `test_game_repository.py`, `test_dat_repository.py`, `test_artwork_repository.py`, `test_emulator_repository.py`, `test_status_repository.py`, `test_history_repository.py`, `test_emulation_process.py`, `test_emulation_chd.py`, `test_emulation_vgm_callback.py`, `test_process.py`, `test_sqlite.py`, `test_scan_coordinator.py` all pass | `static_analysis_audit.md` |
-| D3 | Integration test suite passes (Kodi stubs) | `OPEN` | P0 | Frontend/Screensaver integration | `test_frontend_entrypoint.py`, `test_emulator_launcher.py`, `test_screensaver_addon.py`, `test_screensaver_history_hooks.py`, `test_screensaver_history_repository.py`, `test_gui_history_navigation.py` all pass | `static_analysis_audit.md` |
+| D1 | Document pre-existing test failures | ✅ **CODE-VERIFIED** | P0 | Known limitations | All previously failing tests resolved (13 historical failures fixed); no known failures remain | `test-suite-audit.md` |
+| D2 | Core regression test suite passes | ✅ **CODE-VERIFIED** | P0 | No Kodi needed | All Core tests pass: `test_database.py`, `test_game_repository.py`, `test_dat_repository.py`, `test_artwork_repository.py`, `test_emulator_repository.py`, `test_status_repository.py`, `test_history_repository.py`, `test_emulation_process.py`, `test_emulation_chd.py`, `test_emulation_vgm_callback.py`, `test_process.py`, `test_sqlite.py`, `test_scan_coordinator.py` | `test-suite-audit.md` |
+| D3 | Integration test suite passes (Kodi stubs) | ✅ **CODE-VERIFIED** | P0 | Frontend/Screensaver integration | All integration tests pass: `test_frontend_entrypoint.py`, `test_emulator_launcher.py`, `test_screensaver_addon.py`, `test_screensaver_history_hooks.py`, `test_screensaver_history_repository.py`, `test_gui_history_navigation.py` | `test-suite-audit.md` |
 | D4 | Architecture boundary tests pass | ✅ **CODE-VERIFIED** | P0 | Kodi-free Core | 7/7 tests pass | `test_architecture_boundaries.py` |
-| D5 | Full suite ≥ 882 passed, no new failures | ✅ **CODE-VERIFIED** | P0 | Regression guard | 966 passed, 5 skipped, 18 subtests — no failures left (the 13 known failures from the audit snapshot are gone) | `static_analysis_audit.md` |
-| D6 | Add unit tests for Step A2 (Emulation extraction) | `OPEN` | P1 | New modules need coverage | Preparers, finders, extractors, VGM player each have unit tests | `refactoring_plan.md` Step 2 |
-| D6 | Add unit tests for Step A3 (GUI workflow modules) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `tests/test_umsa_gui_workflows.py` (47 tests) covers all 15 modules of `umsa_gui` with a fake `UMSA` instance; `tests/test_gui_oninit_first_start.py` (5 tests) pins the first-start scan thread. **Local-only files** (`tests/` is gitignored) | `refactoring_plan.md` Step 3 |
-| D6 | Add unit tests for Step A4 (Screensaver modules) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `tests/test_screensaver_ui_modules.py` (62 tests) covers `constants`, `settings`, `wall_layout`, `artwork_selector`, `image_validator`, `video_playlist`, `temp_video`, `history` and `actions`; the existing Kodi-stub tests of the window classes still pass (139). **Local-only files** (`tests/` is gitignored) | `refactoring_plan.md` Step 4 |
-| D6 | Add unit tests for Step A5 (Core reorg modules) | `OPEN` | P1 | New modules need coverage | `scan_progress.py`, `game_labels.py`, `cmdline.py` each have tests | `refactoring_plan.md` Step 5 |
+| D5 | Full suite passes, no new failures | ✅ **CODE-VERIFIED** | P0 | Regression guard | **1081 passed, 5 skipped, 18 subtests** (verified 2026-10-23 at HEAD `cc2efc8`); no known failures | `test-suite-audit.md` |
+| D6 | Unit tests for Emulation extraction (A2) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `test_emulation_process.py`, `test_emulation_chd.py`, `test_emulation_vgm_callback.py`, `test_vgmplay_preexit.py`, `test_lua_socket_log.py`, `test_vgm_player_entrypoints.py` (24 tests), `test_random_vgm_player.py`, `test_vgmplay_port.py` | `refactoring_plan.md` Step 2 |
+| D6 | Unit tests for GUI workflow modules (A3) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `tests/test_umsa_gui_workflows.py` (47 tests) covers all 15 `umsa_gui` modules; `tests/test_gui_oninit_first_start.py` (5 tests). **Local-only** (`tests/` gitignored) | `refactoring_plan.md` Step 3 |
+| D6 | Unit tests for Screensaver modules (A4) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `tests/test_screensaver_ui_modules.py` (62 tests) covers 10 extracted modules; existing Kodi-stub tests pass (139). **Local-only** (`tests/` gitignored) | `refactoring_plan.md` Step 4 |
+| D6 | Unit tests for Core reorg modules (A5) | `OPEN` | P1 | New modules need coverage | `scan_progress.py`, `game_labels.py`, `cmdline.py` each have tests | `refactoring_plan.md` Step 5 |
 
 ---
 
@@ -151,15 +153,12 @@ F1-F7 (Release prep) → After A2-A5, C1-C3, D1-D5 complete
 ## Recommended Next Actions (Ranked)
 
 1. **B1, B2, B3, B4, B5** — Fix correctness issues (BLE001, S110, E722, B006, PLW1510) — *Immediate, independent*
-2. **A2** — Extract `Emulation` preparers/finders/extractors/VGM — *Unblocks A5, reduces god class*
-3. **B6** — Convert f-string candidates (24 UP031) — *Quick wins, low risk*
-4. **A5** — Move non-DB helpers out of `database.py` — *Reduces `DBMod` complexity*
-5. **A3** — Split `gui.py` workflow modules — ✅ *done (CODE-VERIFIED), manual smoke test still open*
-6. **A4** — Split screensaver `ui.py` — ✅ *done (CODE-VERIFIED), manual smoke test still open*
-7. **C1, C2, C3** — Kodi runtime verification — *Requires Kodi 20+ environment*
-8. **D6** — Add unit tests for new modules — *Parallel with A2-A5*
-9. **E1-E4** — CLI example — *Post-release OK*
-10. **F1-F7** — Release prep — *After all above complete*
+2. **A5** — Phase 4.9 Core reorg: move non-DB helpers out of `database.py` — *Reduces `DBMod` complexity*
+3. **B6** — Convert f-string candidates (16 real UP031) — *Quick wins, low risk*
+4. **C1, C2, C3** — Kodi runtime verification (3 open manual areas) — *Requires Kodi 20+ environment*
+5. **D6** — Add unit tests for A5 modules — *Parallel with A5*
+6. **E1-E4** — CLI example — *Post-release OK*
+7. **F1-F7** — Release prep — *After all above complete*
 
 ---
 
@@ -168,26 +167,47 @@ F1-F7 (Release prep) → After A2-A5, C1-C3, D1-D5 complete
 | Category | Verified In This Audit |
 |----------|------------------------|
 | Architecture boundaries | 7/7 tests pass |
-| Core regression tests | ~200 pass (sampled) |
-| Integration tests (stubs) | 140 pass (sampled) |
-| Full test suite | 1081 passed, 5 skipped, 18 subtests (re-verified 2026-10-23) |
-| Ruff correctness issues | 157 (BLE001/S110/E722/B006/PLW1510) |
-| Ruff style issues | 68 (UP031, UP007, etc.) |
+| Core regression tests | All pass (verified 2026-10-23) |
+| Integration tests (stubs) | All pass (verified 2026-10-23) |
+| Full test suite | **1081 passed, 5 skipped, 18 subtests** (verified 2026-10-23 at HEAD `cc2efc8`) |
+| Ruff correctness issues | 162 (BLE001=106, S110=54, E722=1, B006=1, PLW1510=1) |
+| Ruff style issues | 63 (UP031=16, UP007=6, SIM115=5, F841=4, etc.) |
 | Mypy (Core modules) | Clean (per-module, `--follow-imports=skip`) |
 | Kodi API audit | No deprecated/removed APIs found |
 | Kodi 20+ specific APIs | Capability-guarded (`setUniqueID`, `getGameInfoTag`) |
-| Structural refactoring | Steps 1-4 done (A1, A2, A2b, A3, A4); Step 5 planned |
+| Structural refactoring | Steps 1-4 done (A1, A2, A2b, A2c, A3, A4); Step 5 (A5) open |
 
 ---
 
-## Maintainer-Reported Evidence (Not Independently Verified)
+## Maintainer-Confirmed Manual Smoke Tests (Recorded 2026-10-23)
 
-- Database refactor Phases 4.0–4.8 functional
-- Screensaver/emulator lifecycle fixes working
-- Recent Kodi smoke tests behaved as expected
-- No major issues observed during ongoing testing
+The maintainer explicitly confirmed the following scenarios as successful on Kodi:
 
-*Recorded as maintainer-reported; not a substitute for automated/runtime verification in this audit.*
+| Scenario | Status | Notes |
+|----------|--------|-------|
+| GUI navigation | ✅ MAINTAINER-VERIFIED | Menu, gamelist, filter, software selection, artwork display |
+| Screensaver modes (Cross, Slide, Wall) | ✅ MAINTAINER-VERIFIED | Rendering loops, transitions, wait timing |
+| Screensaver video playback and random selection | ✅ MAINTAINER-VERIFIED | Playlist, extraction, `onAVStarted` history |
+| VGM controls | ✅ MAINTAINER-VERIFIED | Volume, next, stop from screensaver and GUI |
+| Playback history | ✅ MAINTAINER-VERIFIED | GUI lastgames, screensaver history, filter selections |
+| Database refactor Phases 4.0–4.8 | ✅ MAINTAINER-VERIFIED | Functional in Kodi runtime |
+| Shared Kodi screensaver inhibition (emulator/screensaver lifecycle) | ✅ MAINTAINER-VERIFIED | Previously tested successfully |
+
+*These are maintainer-confirmed manual smoke-test results. They apply only to the scenarios listed above — not a claim that the entire add-on has passed all manual tests.*
+
+---
+
+## Manual Test Areas Remaining OPEN (Explicitly Not Completed)
+
+The maintainer explicitly stated these three areas have **not** been completed:
+
+| # | Area | Acceptance Criteria | Expected Evidence |
+|---|------|---------------------|-------------------|
+| 1 | **Full emulator startup matrix** | Individually verify each supported emulator launch path (MAME, SWL, eXoDOS, GB64, MARP, Demul, FS-UAE, Flycast, Retroplayer) and return-to-Kodi behavior | Per-emulator launch log, clean exit, Kodi focus restored, no orphaned processes |
+| 2 | **Retroplayer end-to-end** | Verify launch, metadata handoff (`GameInfoTag`), gameplay entry, and return to Kodi | Game launches, metadata displays, session ends cleanly, `ctx.exit()` behavior verified |
+| 3 | **Clean installation and upgrade** | Verify installation in a clean Kodi profile and upgrading an existing installation/profile | Fresh profile: add-on installs, DB downloads, starts correctly; Upgrade: DB migration runs, legacy files imported/cleaned, screensaver history works |
+
+*Do not mark these completed based on code inspection, automated tests, or adjacent smoke tests. They require explicit manual verification on Kodi 20+.*
 
 ---
 

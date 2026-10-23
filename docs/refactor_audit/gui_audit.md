@@ -1,6 +1,6 @@
 # GUI Audit — `plugin.program.umsa.mame.surfer/resources/lib/gui.py`
 
-**Audited at:** git HEAD `4c9b2a7637cbfb88bc93d32b3a6d43cd753f5ee4` (2026-10-23), split completed against HEAD `ace91cb`  
+**Audited at:** git HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c` (2026-10-23), split completed against HEAD `ace91cb`  
 **File size:** ~1231 lines (adapter), single `UMSA` class (inherits `xbmcgui.WindowXMLDialog`) + module-level constants, helpers, `VgmCommandMonitor`, `GamelistCtx`, `RetroplayerCtx`, `main()`; workflows in `resources/lib/umsa_gui/` (15 modules, ~2000 lines)
 
 > **Status: split done (2026-10-21).** `gui.py` is now the Kodi adapter
@@ -266,7 +266,7 @@ shadow `gui.py`.
   `UMSA` methods.
 - `tests/test_scan_artwork.py` — the AST check for the artwork scan roots now
   points at `umsa_gui/scan_orchestrator.py` (the dict moved with the code).
-- Full suite: 1081 passed, 5 skipped, 18 subtests.
+- Full suite: **1081 passed, 5 skipped, 18 subtests**.
 
 ### Fixes found during the final verification (2026-10-21)
 
@@ -284,3 +284,4 @@ shadow `gui.py`.
 - First-run database download and the background DAT scan.
 - Menu navigation, gamelist/filter handling, software selection, artwork.
 - Emulator launch, Retroplayer handoff, screensaver handoff, VGM controls.
+- See `release-plan.md` open manual areas for the three explicit remaining areas.

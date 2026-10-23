@@ -1,6 +1,6 @@
 # Release Quality Audit — UMSA MAME Surfer
 
-**Repository state:** git HEAD `4c9b2a7637cbfb88bc93d32b3a6d43cd753f5ee4` (audited 2026-10-23)  
+**Repository state:** git HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c` (audited 2026-10-23)  
 **Scope:** All three add-ons (Frontend, Core, Screensaver), tests, tooling, packaging  
 **Generated:** 2026-10-23 (read-only audit, no production code modified)
 
@@ -8,9 +8,9 @@
 
 ## Executive Summary
 
-The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Shared Core, Screensaver) with a strict Kodi-independent Core boundary. The database refactor (Phases 4.0–4.8) is complete: `DBMod` has delegated most SQL to focused repositories and the `gamelist_filter` service. Architecture boundary tests pass.
+The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Shared Core, Screensaver) with a strict Kodi-independent Core boundary. The database refactor (Phases 4.0–4.8) is complete: `DBMod` has delegated most SQL to focused repositories and the `gamelist_filter` service. Architecture boundary tests pass. Structural refactoring Steps 1–4 (A1–A4) are complete: dead code removal, Emulation extraction, GUI workflow split, and Screensaver split.
 
-**Current test status:** 1081 passed, 5 skipped, 18 subtests passed  
+**Current test status:** 1081 passed, 5 skipped, 18 subtests passed (verified 2026-10-23 at HEAD `cc2efc8`)  
 **Architecture boundary tests:** 7/7 passed  
 **Lint (Ruff):** 225 issues across 17 rule codes  
 **Type check (mypy):** Clean on Core modules (per-module, `--follow-imports=skip`)
@@ -48,7 +48,7 @@ The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Sha
 | 2b | Extract VGM socket transport (`vgm_socket.py`) | ✅ **Done** (2026-10-21) |
 | 2c | Fix VGM callback signatures and entry points | ✅ **Done** (2026-10-21) |
 | 3 | Split `gui.py` `UMSA` into workflow modules | ✅ **Done** (2026-10-21) — 15 modules in `umsa_gui/` |
-| 4 | Separate Screensaver `Saver`/`Player`/`Monitor` | ✅ **Done** (2026-10-22) — 10 modules in `lib/umsa_screensaver/` |
+| 4 | Separate Screensaver `Saver`/`Player`/`Monitor` | ✅ **Done** (2026-10-22) — 11 modules in `lib/umsa_screensaver/` |
 | 5 | Phase 4.9 `database.py` reorganisation | ⏳ **Open** (~1857 lines, down from 69k) |
 | 6 | Optional further `DBMod` decomposition | 📋 **Deferred** |
 
@@ -102,10 +102,10 @@ The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Sha
 | Category | Source |
 |----------|--------|
 | ✅ Verified by static source inspection | This audit (grep, read, Ruff, pytest) |
-| ✅ Confirmed by tests executed during audit | `test_architecture_boundaries.py` (7), Ruff (217), pytest (882 passed) |
-| 📋 Maintainer-reported manual verification | Database refactor functionality, screensaver/emulator lifecycle, recent Kodi smoke tests |
-| 📜 Historical results from previous commits | Database refactor Phases 4.0–4.8 test counts (recorded in `docs/database_refactor/`) |
-| ❓ Unverified / proposed | Kodi 20+ runtime scenarios, standalone CLI example, Steps 2–5 refactoring |
+| ✅ Confirmed by tests executed during audit | `test_architecture_boundaries.py` (7), Ruff (225), pytest (1081 passed, 5 skipped, 18 subtests — verified 2026-10-23 at HEAD `cc2efc8`) |
+| 📋 Maintainer-confirmed manual smoke tests | GUI navigation, screensaver modes (Cross/Slide/Wall), video playback, VGM controls, playback history, DB refactor Phases 4.0–4.8, screensaver inhibition — **recorded in `release-plan.md`** |
+| 📜 Historical results from previous commits | Database refactor Phases 4.0–4.8 test counts (recorded in `docs/database_refactor/`); Step 4.7 full suite 661 passed; Step 4.6.2 full suite 819 passed |
+| ❓ Unverified / proposed | 3 open manual areas (emulator matrix, Retroplayer E2E, clean install/upgrade), standalone CLI example, Step 5 (A5) refactoring |
 
 ---
 
@@ -121,20 +121,23 @@ The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Sha
 
 ---
 
-## Verification Commands Executed
+## Verification Commands Executed (2026-10-23 at HEAD `cc2efc8`)
 
 ```bash
 # Architecture boundary tests (7 passed)
 .venv-debian-vm/bin/python -m pytest tests/test_architecture_boundaries.py -v
 
-# Ruff lint (217 issues, 4 fixable)
+# Ruff lint (225 issues, 19 fixable)
 .venv-debian-vm/bin/python -m ruff check . --statistics
 
-# Full test suite (882 passed, 13 failed, 5 skipped)
+# Full test suite (1081 passed, 5 skipped, 18 subtests)
 .venv-debian-vm/bin/python -m pytest tests/ -q
 
-# Ruff f-string candidates (24 UP031)
+# Ruff f-string candidates (16 real UP031)
 .venv-debian-vm/bin/python -m ruff check . --select UP031
+
+# Mypy on Core modules (clean with --follow-imports=skip)
+.venv-debian-vm/bin/python -m mypy script.module.umsa.core/lib/umsa_core/vgm_header.py --follow-imports=skip
 ```
 
 ---
@@ -144,6 +147,7 @@ The UMSA MAME Surfer project is a three-add-on Kodi ecosystem (Frontend GUI, Sha
 - ✅ No production code modified
 - ✅ No tests modified
 - ✅ No configuration files changed
-- ✅ Only `docs/release_quality_audit/` and `docs/release-plan.md` created
+- ✅ Only `docs/release_quality_audit/` and `docs/release-plan.md` updated
 - ✅ All recommendations supported by observed implementation details
-- ✅ Maintainer-reported vs independently verified clearly distinguished
+- ✅ Maintainer-confirmed manual smoke tests vs independently verified clearly distinguished
+- ✅ Three open manual areas explicitly listed and not claimed as complete
