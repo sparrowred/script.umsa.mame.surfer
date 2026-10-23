@@ -107,18 +107,8 @@ def extract_exodos_video(art, roots, vfs, kodi):
         kodi.log(f"UMSA SSaver: traversal in relative_path rejected: {relative_path}", kodi.LOGERROR)
         return None
 
-    # Normalize paths for lexical containment check
+    # Construct archive path from configured root and stored relative path.
     archive_full = path.join(exodos_root, relative_path)
-    try:
-        exodos_norm = path.normpath(path.abspath(exodos_root))
-        archive_norm = path.normpath(path.abspath(archive_full))
-        # Verify archive_norm is inside exodos_norm using commonpath
-        if path.commonpath([archive_norm, exodos_norm]) != exodos_norm:
-            kodi.log(f"UMSA SSaver: archive path outside eXoDOS root: {archive_full}", kodi.LOGERROR)
-            return None
-    except (OSError, ValueError):
-        kodi.log(f"UMSA SSaver: cannot validate archive path: {archive_full}", kodi.LOGERROR)
-        return None
 
     # Validate archive_member: reject absolute paths and traversal components
     if path.isabs(archive_member) or '..' in archive_member.split('/'):
