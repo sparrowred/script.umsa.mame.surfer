@@ -1,6 +1,6 @@
 # GUI Audit — `plugin.program.umsa.mame.surfer/resources/lib/gui.py`
 
-**Audited at:** git HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c` (2026-10-23), split completed against HEAD `ace91cb`  
+**Audited at:** git HEAD `4186b5f5dd3479b19df84215d1fa21a4cbb38f29` (2026-10-23), split completed against HEAD `ace91cb`  
 **File size:** ~1231 lines (adapter), single `UMSA` class (inherits `xbmcgui.WindowXMLDialog`) + module-level constants, helpers, `VgmCommandMonitor`, `GamelistCtx`, `RetroplayerCtx`, `main()`; workflows in `resources/lib/umsa_gui/` (15 modules, ~2000 lines)
 
 > **Status: split done (2026-10-21).** `gui.py` is now the Kodi adapter

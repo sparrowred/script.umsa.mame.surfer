@@ -1,6 +1,6 @@
 # Architecture Audit — UMSA MAME Surfer
 
-**Repository state:** git HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c` (2026-10-23)  
+**Repository state:** git HEAD `4186b5f5dd3479b19df84215d1fa21a4cbb38f29` (2026-10-23)  
 **Audit scope:** `gui.py`, screensaver `ui.py`, `emulation.py`, complete `umsa_core` package, emulator launch path spanning `DBMod`, `Emulation`, `emulator_launcher.py`, `retroplayer_cache.py`  
 **Generated:** 2026-10-23 (read-only audit, no production code modified)
 
@@ -14,9 +14,9 @@ The codebase implements a three-add-on architecture (Frontend, Core, Screensaver
 
 **Structural refactoring (Steps 1–4) is complete:**
 - Step 1: Dead code in `UMSA.run_emulator()` removed (92 lines)
-- Step 2: `Emulation` (1200 lines) split into `launch_preparer.py`, `rom_finder.py`, `rom_extractor.py`, `chd_extractor.py`, `vgm_player.py`, `vgm_socket.py`; `Emulation` now 557 lines as facade
-- Step 3: `gui.py` `UMSA` split into 15 workflow modules under `resources/lib/umsa_gui/`; `UMSA` now 925 lines, `gui.py` adapter 1231 lines
-- Step 4: Screensaver `ui.py` split into 11 focused modules under `lib/umsa_screensaver/`; `Saver` 258, `Player` 86, `Monitor` 79 (all class targets met); `ui.py` 522 lines
+- Step 2: `Emulation` (1200 lines) split into `launch_preparer.py`, `rom_finder.py`, `rom_extractor.py`, `chd_extractor.py`, `vgm_player.py`, `vgm_socket.py`; `Emulation` now 592 lines as facade
+- Step 3: `gui.py` `UMSA` split into 15 workflow modules under `resources/lib/umsa_gui/`; `UMSA` now 927 lines, `gui.py` adapter 1231 lines
+- Step 4: Screensaver `ui.py` split into 11 focused modules under `lib/umsa_screensaver/`; `ui.py` retains the Kodi window/playlist/callbacks
 
 **Key architectural strengths:**
 - Clear add-on boundaries with automated boundary tests (`test_architecture_boundaries.py` — 7/7 pass)
@@ -30,9 +30,9 @@ The codebase implements a three-add-on architecture (Frontend, Core, Screensaver
 
 | Area | Risk | Evidence |
 |------|------|----------|
-| `gui.py` `UMSA` class | ~925 lines (down from 2700), retains Kodi window lifecycle, input dispatch, state coordination | 15 workflow modules extracted; `UMSA` remains Kodi dialog coordinator |
+| `gui.py` `UMSA` class | ~927 lines (down from 2700), retains Kodi window lifecycle, input dispatch, state coordination | 15 workflow modules extracted; `UMSA` remains Kodi dialog coordinator |
 | `DBMod` | ~1857 lines (down from 69k); retains mixed queries (`get_random_id`, `get_random_art`, `get_artwork_by_software_id`), cross-db sync (`open_db`), orchestration (`get_all_for_software`, `get_cmd_line_options`, `get_last_played`) | Phase 4.9 reorganisation proposed but not implemented |
-| Screensaver `Saver` | 258 lines; `get_art_and_call_saver` delegates to `RenderSession` but retains lifecycle orchestration | 11 focused modules extracted; quirks of original preserved |
+| Screensaver `Saver` | `get_art_and_call_saver` delegates to `RenderSession` but retains lifecycle orchestration | 11 focused modules extracted; valid original quirks preserved |
 | Test infrastructure | `tests/` directory is gitignored; new workflow tests are local-only | 1081 passed, 5 skipped, 18 subtests; 47 GUI workflow tests, 62 screensaver module tests not in repo |
 
 ---
@@ -81,7 +81,7 @@ The codebase implements a three-add-on architecture (Frontend, Core, Screensaver
 | 2c | Fix VGM callback signatures and entry points | Restored `Emulation.play_random_vgm()`, fixed thread argument forwarding, one-shot stopped callback guard | ✅ **Done** (2026-10-21) |
 | 3 | Split `gui.py` `UMSA` into focused GUI workflow modules (menu handling, gamelist strategies already extracted, filter UI, artwork/media display, scan orchestration) | Reduces god-class; retains `UMSA` as Kodi dialog coordinator | ✅ **Done** (2026-10-21) — 15 modules in `umsa_gui/` |
 | 4 | Separate `Saver` rendering loop from `Player` playback callbacks and `Monitor` lifecycle — `screensaver/rendering.py`, `screensaver/history.py`, `screensaver/temp_video.py`, etc. | Improves testability of artwork selection/validation and history recording | ✅ **Done** (2026-10-22) — 11 modules in `lib/umsa_screensaver/` |
-| 5 | Reassess `umsa_core` module layout after boundaries settle (Phase 4.9 `database.py` reorganisation: `scan_progress.py`, `game_labels.py`, `cmdline.py`) | Only meaningful once launch-path and GUI extractions clarify what stays in `DBMod` | ⏳ **Open** |
+| 5 | Reassess `umsa_core` module layout after boundaries settle (Phase 4.9 `database.py` reorganisation: `scan_progress.py`, `game_labels.py`, `cmdline.py`) | Only meaningful once launch-path and GUI extractions clarify what stays in `DBMod` | 📋 **Deferred** (optional) |
 
 ---
 

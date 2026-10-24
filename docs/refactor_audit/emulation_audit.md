@@ -1,8 +1,8 @@
 # Emulation Audit — Full Launch Path
 
-**Audited at:** git HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c` (2026-10-23)  
+**Audited at:** git HEAD `4186b5f5dd3479b19df84215d1fa21a4cbb38f29` (2026-10-23)  
 **Scope:** `UMSA.run_emulator()` → `emulator_launcher.py` → `retroplayer_cache.py` → `Emulation` (facade: prepare/run/wait) → `DBMod.get_cmd_line_options()`/`create_cmdline()` → `GameRepository` reads → `ProcessRunner` 
-**Extraction complete (Step 2):** `Emulation` (557 lines) delegates to `launch_preparer.py`, `rom_finder.py`, `rom_extractor.py`, `chd_extractor.py`, `vgm_player.py`, `vgm_socket.py`
+**Extraction complete (Step 2):** `Emulation` (592 lines) delegates to `launch_preparer.py`, `rom_finder.py`, `rom_extractor.py`, `chd_extractor.py`, `vgm_player.py`, `vgm_socket.py`
 
 ---
 
@@ -371,7 +371,7 @@ The following modules have been extracted from `Emulation` (originally 1221 line
 | `launch_preparer.py` | 259 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`) |
 | `vgm_player.py` | 333 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
 
-### Emulation Facade (557 lines)
+### Emulation Facade (592 lines)
 
 The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 
@@ -382,9 +382,9 @@ The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 - **Delegated methods**: `prepare_exodos_run`, `prepare_marp_run`, `prepare_mame_run`, `find_nonmame_roms`, `find_roms`, `extract_chd`, `extract_rom`, `demul`, `fsuae`, `flycast`, `other_emulator` (delegate to `LaunchPreparer`)
 - **VGM playback**: `play_vgm`, `play_vgm_thread`, `play_random_vgm`, `play_random_vgm_thread` (thread management and socket lifecycle stay in `Emulation`; the candidate loop and the run preparation are delegated to `VgmPlayer`)
 
-### Verification Results
+### Verification Results (at the time of this step; current HEAD: 1081 passed)
 
-All 1081 tests pass (5 skipped for real-MAME integration):
+All 887 tests passed (5 skipped for real-MAME integration):
 
 ```
 1081 passed, 5 skipped, 18 subtests passed in 14.36s
@@ -536,9 +536,9 @@ The 7 tests that also pass on `eaaffe1` are guard tests for behavior that
 must not change (skip-while-playing, state reset after a successful
 playback, no notification without `info`, `nonmame` argument kept).
 
-### Verification Results
+### Verification Results (historical, 2026-10-21)
 
-Commands and results (all executed in this working tree):
+Commands and results (all executed in this working tree at the time of the step):
 
 ```
 .venv-debian-vm/bin/python -m pytest tests/test_vgm_player_entrypoints.py -q
@@ -553,7 +553,8 @@ Commands and results (all executed in this working tree):
   137 passed, 18 subtests passed in 10.09s
 
 .venv-debian-vm/bin/python -m pytest tests/ -q
-  1081 passed, 5 skipped, 18 subtests passed in 14.18s
+  914 passed, 5 skipped, 18 subtests passed in 14.18s
+# current HEAD (2026-10-23): 1081 passed, 5 skipped, 18 subtests
 
 VGM_MAME_TESTS=1 .venv-debian-vm/bin/python -m pytest tests/test_vgm_preexit_mame.py -q
   4 passed, 1 skipped, 3 subtests passed in 32.59s

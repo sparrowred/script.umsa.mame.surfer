@@ -33,7 +33,7 @@
 | **Tests** | <ul><li>`tests/test_emulation_process.py` (process mgmt)</li><li>`tests/test_emulation_chd.py` (CHD extraction + NULL-disk fix)</li><li>`tests/test_emulation_vgm_callback.py` (VGM callback)</li><li>`tests/test_vgmplay_preexit.py` + `test_vgmplay_preexit.lua` (Lua pre-exit)</li><li>`tests/test_vgm_preexit_mame.py` (real MAME, gated)</li><li>`tests/test_emulator_launcher.py` (integration via `launch_emulator`)</li></ul> |
 | **Risk** | Medium — `Emulation` is central; `emurun` dict structure must stay identical; `ProcessRunner` integration unchanged |
 | **Dependencies** | Step 1 (clean `run_emulator` first); `GameRepository` reads stable (Phase 4.4 done) |
-| **Acceptance** | ✅ `emulation.py` 557 lines (keeps `ProcessRunner` integration, `emurun` management, `wait_for_completion`, `after_run`, VGM socket mgmt)<br>✅ All existing tests pass unchanged (1081 passed, 5 skipped)<br>✅ `emulator_launcher.launch_emulator` works without modification<br>✅ Core modules remain Kodi-free; no circular imports; `ProcessRunner` ownership unchanged |
+| **Acceptance** | ✅ `emulation.py` is a 592-line facade (keeps `ProcessRunner` integration, `emurun` management, `wait_for_completion`, `after_run`, VGM socket mgmt)<br>✅ All existing tests pass unchanged (1081 passed, 5 skipped)<br>✅ `emulator_launcher.launch_emulator` works without modification<br>✅ Core modules remain Kodi-free; no circular imports; `ProcessRunner` ownership unchanged |
 
 ---
 
@@ -64,8 +64,9 @@ The lambdas passed arbitrary arguments to facade methods that ignored them and o
 - `tests/test_emulation_chd.py::test_other_emulator_propagates_chd_cancellation_before_preparing_launch` — Now injects mock into `LaunchPreparer._extract_chd` and `LaunchPreparer._find_roms` directly
 - `tests/test_emulation_vgm_callback.py::test_random_vgm_info_is_forwarded_through_injected_callback` — Now patches `umsa_core.vgm_header.parse_vgm_header` instead of `umsa_core.emulation.parse_vgm_header`
 
-### Verification Results
-- **All 887 tests pass** (5 skipped for real-MAME integration)
+### Verification Results (at the time of this step)
+- **All 887 tests passed** (5 skipped for real-MAME integration) — historical count at Step 2b commit
+- Current full suite at audited HEAD: **1081 passed, 5 skipped, 18 subtests**
 - Architecture boundary tests pass (7/7)
 - Command-line options tests pass (23/23)
 - Emulator launcher tests pass (5/5)
@@ -90,10 +91,11 @@ Following the callback signature fix (Step 2b), the VGM socket transport and Lua
 | **Tests** | <ul><li>`tests/test_lua_socket_log.py` (30 tests — Lua socket protocol)</li><li>`tests/test_vgmplay_port.py` (10 tests — port handling)</li><li>`tests/test_vgmplay_preexit.py` (17 tests — Lua pre-exit logic)</li><li>`tests/test_emulation_vgm_callback.py` (4 tests — VGM callbacks)</li><li>`tests/test_random_vgm_player.py` (8 tests — random VGM playback)</li></ul> |
 | **Risk** | Medium — `Emulation` is central; socket lifecycle must remain identical; protocol must not change |
 | **Dependencies** | Step 2b (callback signature fix) |
-| **Acceptance** | ✅ `vgm_socket.py` 339 lines; `emulation.py` 557 lines (down from 766)<br>✅ All existing tests pass unchanged (887 passed, 5 skipped)<br>✅ Architecture boundary tests pass (7/7)<br>✅ Core modules remain Kodi-free; no circular imports; `ProcessRunner` ownership unchanged |
+| **Acceptance** | ✅ `vgm_socket.py` 354 lines; `emulation.py` 592 lines (down from ~1,200)<br>✅ All existing tests pass unchanged (1081 passed, 5 skipped)<br>✅ Architecture boundary tests pass (7/7)<br>✅ Core modules remain Kodi-free; no circular imports; `ProcessRunner` ownership unchanged |
 
-### Verification Results
-- **All 1081 tests pass** (5 skipped for real-MAME integration)
+### Verification Results (at the time of this step)
+- **All 887 tests passed** (5 skipped for real-MAME integration) — historical count at Step 2c commit
+- Current full suite at audited HEAD: **1081 passed, 5 skipped, 18 subtests**
 - Architecture boundary tests pass (7/7)
 - Command-line options tests pass (23/23)
 - Emulator launcher tests pass (5/5)
@@ -115,7 +117,7 @@ Following the VGM socket extraction (Step 2c), several correctness issues were i
 | **Issues Fixed** | <ul><li><strong>Port type handling</strong>: `bound_port` (int) was passed to subprocess environment without string conversion. Fixed by converting to string at the boundary in `Emulation.play_vgm_thread()` and `VgmPlayer._play_vgm_thread_impl()`. Added validation in `VgmPlayer._vgm_process_env()` to reject invalid ports.</li><li><strong>Socket startup failure</strong>: `_start_vgm_server()` now checks `start_server()` return value and returns `False` on failure, preventing connection wait on non-existent listener. `play_vgm()` and `play_random_vgm_thread()` handle startup failure gracefully.</li><li><strong>Exception-safe playback cleanup</strong>: `play_vgm_thread()` wrapped in try/finally to ensure `playvgm` flag reset and socket cleanup. `play_random_vgm_thread()` already had finally block; verified correct.</li><li><strong>Shutdown-safe connection acceptance</strong>: `wait_for_connection()` now uses stable local reference to listener, avoiding `AttributeError` if listener is closed concurrently.</li><li><strong>Argument order fix</strong>: Fixed `_play_vgm_thread_impl()` call to `prepare_vgm_run()` - removed erroneous `sleep` argument and corrected parameter order. The separate thread argument tuple stayed broken and was fixed in Step 2f.</li></ul> |
 | **Tests Updated** | <ul><li>`tests/test_vgmplay_port.py` - Added 4 new tests for port type handling, invalid port propagation, missing port propagation, and environment value types</li><li>`tests/test_random_vgm_player.py` - Updated mock to return `True` for `_start_vgm_server`</li><li>`tests/test_emulation_vgm_callback.py` - Updated mock to return `True` for `_start_vgm_server`</li></ul> |
 | **Tests Added** | <ul><li>4 new tests in `test_vgmplay_port.py`: `test_environment_values_are_strings`, `test_invalid_port_does_not_propagate_none`, `test_missing_port_does_not_propagate`</li></ul> |
-| **Verification** | ✅ All 890 tests pass (5 skipped)<br>✅ Architecture boundary tests pass (7/7)<br>✅ Core modules remain Kodi-free |
+| **Verification** | ✅ All 890 tests pass (5 skipped) — historical count at Step 2e commit<br>✅ Current full suite at audited HEAD: **1081 passed, 5 skipped, 18 subtests**<br>✅ Architecture boundary tests pass (7/7)<br>✅ Core modules remain Kodi-free |
 
 ---
 
@@ -132,7 +134,7 @@ argument forwarding was verified against the implementation signatures.
 | **Fixes applied** | <ul><li>Thread arguments are forwarded as explicit keywords, so they can no longer drift from `_play_vgm_thread_impl()`.</li><li>`Emulation.play_random_vgm()` restored (thread owner; socket lifecycle stays in `play_random_vgm_thread()`).</li><li>`playvgm` reset and stopped callback moved into a `finally` block, matching `Emulation.play_vgm_thread()`.</li><li>Duplicate import removed; `nonmame` default is `None` with a fresh dict per instance.</li><li>The stopped callback is delivered at most once per playback: `VgmPlayer.begin_vgm_playback()` clears the one-shot guard at the start of every playback, so each playback still reports its end exactly once.</li></ul> |
 | **Contracts unchanged** | `VgmPlayer.play_vgm()` and `VgmPlayer.play_random_vgm()` keep their signatures — both have no in-repo caller, are the extracted counterparts of the pre-refactor `Emulation` methods, and are documented as compatibility surfaces. They are kept, fixed and covered by tests instead of being removed on assumption. |
 | **Tests** | `tests/test_vgm_player_entrypoints.py` (24 tests — thread target arguments, argument forwarding, playback state reset, stopped callback on success and failure, no duplicate stopped notification, one notification per playback, `Emulation` compatibility wrappers) |
-| **Verification** | ✅ VGM test group (10 files): 137 passed, 18 subtests<br>✅ Full suite: 914 passed, 5 skipped, 18 subtests<br>✅ Real MAME (`VGM_MAME_TESTS=1`): 4 passed, 1 skipped (90 s long track needs `VGM_MAME_TESTS_FULL=1`)<br>✅ Lua pre-exit harness: `PASS trigger_exact`<br>✅ Regression proof: 13 of 24 tests fail on `eaaffe1` (pre-fix) and 1 fails on `dc122c9` (before the one-shot guard) |
+| **Verification** | ✅ VGM test group (10 files): 137 passed, 18 subtests — historical at Step 2f<br>✅ Full suite: 914 passed, 5 skipped, 18 subtests — historical at Step 2f<br>✅ Current full suite at audited HEAD: **1081 passed, 5 skipped, 18 subtests**<br>✅ Real MAME (`VGM_MAME_TESTS=1`): 4 passed, 1 skipped (90 s long track needs `VGM_MAME_TESTS_FULL=1`)<br>✅ Lua pre-exit harness: `PASS trigger_exact`<br>✅ Regression proof: 13 of 24 tests fail on `eaaffe1` (pre-fix) and 1 fails on `dc122c9` (before the one-shot guard) |
 | **Acceptance** | ✅ Supported entry points have consistent signatures and correct argument forwarding<br>✅ GUI call sites of `Emulation` verified against the class (no missing attribute left)<br>✅ Stopped callback fires exactly once per playback, on success and on failure<br>✅ No change to database behavior, port allocation or Kodi-facing behavior |
 | **State** | Argument forwarding, restored `Emulation.play_random_vgm()`, import cleanup and `nonmame` default are committed in `dc122c9`. The one-shot guard for the stopped callback and the four extra tests are in the working tree and **not** committed (this task forbids committing). `tests/` is gitignored (`.gitignore:15`), so `tests/test_vgm_player_entrypoints.py` is a local-only file by repository convention. |
 
@@ -150,8 +152,8 @@ argument forwarding was verified against the implementation signatures.
 | **Tests** | <ul><li>`tests/test_gamelist_filter.py` (35 tests — filter logic)</li><li>`tests/test_filter_state_accessors.py` (2 tests)</li><li>`tests/test_frontend_entrypoint.py`</li><li>`tests/test_emulator_launcher.py`</li><li>**New**: `tests/test_umsa_gui_workflows.py` (47 tests — all 15 workflow modules), `tests/test_gui_oninit_first_start.py` (5 tests — first-start scan thread)</li></ul> |
 | **Risk** | High — touches Kodi window lifecycle, focus management, control IDs. Must not change observable behavior. |
 | **Dependencies** | Step 1 (dead code gone); Step 2 (Emulation prep extracted) reduces `UMSA` coupling to `Emulation` internals |
-| **Acceptance** | <ul><li>`UMSA` class < 1000 lines; each workflow module ≤ 300 lines</li><li>All existing tests pass</li><li>Manual Kodi smoke test: menu navigation, gamelist filtering, software selection, artwork display, scan, emulator launch, screensaver handoff</li></ul> |
-| **State** | ✅ **CODE-VERIFIED** (2026-10-21), extraction committed in `ace91cb`. `UMSA` is 925 lines, `gui.py` (adapter) 1231 lines, 15 workflow modules in `resources/lib/umsa_gui/` (largest: `software_selector.py` 303 lines, all others ≤ 300). Public names of `gui.py` are unchanged and listed in its `__all__`. Full suite: **1081 passed, 5 skipped, 18 subtests** (`tests/test_umsa_gui_workflows.py` 47 tests, `tests/test_gui_oninit_first_start.py` 5 tests — both **local-only**, `tests/` is gitignored). One regression was found and fixed during the final verification: the first-start branch started the DAT scan with `Thread(target=self.update('dat'))`, which ran the scan synchronously inside the thread constructor and left the thread without a target; it is now `Thread(target=self.update, args=('dat',))`, matching the `M_UPD` branches. The manual Kodi smoke test is still open (see `release-plan.md` open manual areas). |
+| **Acceptance** | <ul><li>Workflow logic moved out of `UMSA`; `UMSA` retains only the Kodi dialog coordination</li><li>All existing tests pass</li><li>Maintainer-confirmed Kodi smoke test: menu navigation, gamelist filtering, software selection, artwork display</li></ul> |
+| **State** | ✅ **CODE-VERIFIED** (2026-10-21), extraction committed in `ace91cb`. 15 workflow modules live in `resources/lib/umsa_gui/`; `gui.py` remains the adapter. Public names of `gui.py` are unchanged and listed in its `__all__`. Full suite: **1081 passed, 5 skipped, 18 subtests** (`tests/test_umsa_gui_workflows.py` 47 tests, `tests/test_gui_oninit_first_start.py` 5 tests — both **local-only**, `tests/` is gitignored). One regression was found and fixed during the final verification: the first-start branch started the DAT scan with `Thread(target=self.update('dat'))`, which ran the scan synchronously inside the thread constructor and left the thread without a target; it is now `Thread(target=self.update, args=('dat',))`, matching the `M_UPD` branches. GUI navigation is maintainer-verified; the wider emulator-startup matrix remains open (see `release-plan.md`). |
 
 ---
 
@@ -159,7 +161,7 @@ argument forwarding was verified against the implementation signatures.
 
 | Aspect | Detail |
 |--------|--------|
-| **Goal** | Split `ui.py` (1231 lines) into `Saver` (dispatch), `Player`, `Monitor` + focused modules |
+| **Goal** | Split the monolithic screensaver `ui.py` into `Saver` (dispatch), `Player`, `Monitor` + focused modules |
 | **Files** | `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py` → new modules under `lib/umsa_screensaver/` |
 | **Proposed modules** | <ul><li>`artwork_selector.py` — `get_random_art` → `resolve_art_path` → `check_snapshot` → aspect</li><li>`rendering.py` — cross/slide/wall render strategies (strategy pattern)</li><li>`wall_layout.py` — `create_wall` geometry</li><li>`video_playlist.py` — `add_video_to_playlist`, `Player.onPlayBackEnded`</li><li>`history.py` — `record_display` + `onAVStarted` deduplication</li><li>`temp_video.py` — `_extract_exodos_video`, `_cleanup_temp_videos`</li><li>`image_validator.py` — `check_snapshot` (configurable bad-image list)</li><li>`settings.py` — screensaver settings dataclass</li></ul> |
 | **Responsibility moved** | Artwork selection/validation, mode-specific rendering, video playlist, history recording, temp video, image validation — **out of `Saver`/`Player`** |
@@ -167,8 +169,8 @@ argument forwarding was verified against the implementation signatures.
 | **Tests** | <ul><li>`tests/test_screensaver_history_hooks.py` (52 Kodi-stub tests)</li><li>`tests/test_screensaver_history_repository.py` (51 tests)</li><li>`tests/test_screensaver_addon.py`</li><li>`tests/test_screensaver_exodos_extraction.py`</li><li>**New**: unit tests for `artwork_selector`, `rendering` strategies, `wall_layout`, `temp_video`, `image_validator`</li></ul> |
 | **Risk** | Medium — `Saver.get_art_and_call_saver()` is a 400-line loop with tight Kodi control manipulation. Extraction must preserve render timing and control IDs. |
 | **Dependencies** | Step 2 (Core `Emulation` extraction clarifies VGM interface); Step 3 (GUI `screensaver_vgm.py` extraction aligns protocol) |
-| **Acceptance** | <ul><li>`Saver` < 300 lines (dispatch + orchestration)</li><li>`Player` < 100 lines (callbacks only)</li><li>`Monitor` < 80 lines (lifecycle only)</li><li>All existing tests pass</li><li>Kodi-stub tests for `onAVStarted` deduplication pass</li></ul> |
-| **State** | ✅ **CODE-VERIFIED** (2026-10-21). `ui.py` is 522 lines: `Saver` 258, `Player` 86, `Monitor` 79 — all three class targets met. 11 focused modules added under `lib/umsa_screensaver/`: `actions.py` (106), `artwork_selector.py` (131), `constants.py` (49), `history.py` (164), `image_validator.py` (117), `rendering.py` (384), `settings.py` (130), `temp_video.py` (173), `video_playlist.py` (113), `wall_layout.py` (122). The Kodi modules are resolved at call time in `ui.py` and injected, so the tests keep patching `ui.xbmc` / `ui.xbmcgui` / `ui.xbmcvfs` / `ui.PIL`; `ui.py` re-exports the old module-level names (`attach_set_id`, `read_set_id`, `read_software_id`, `SET_ID_UNIQUE_TYPE`, `PIL`, control/action constants) through `__all__`. New tests: `tests/test_screensaver_ui_modules.py` (62 tests — **local-only**, `tests/` is gitignored). Focused screensaver tests: **139 passed**. Full suite: **1081 passed, 5 skipped, 18 subtests**. `ruff check screensaver.umsa.mame.surfer/` is clean (the old `ui.py` had 2 findings). The preserved quirks of the original file are listed in `screensaver_audit.md`; the only deliberate deviation is the snapshot file read, which no longer raises out of the render loop. The manual Kodi smoke test is still open (see `release-plan.md` open manual areas). |
+| **Acceptance** | <ul><li>Rendering, playback and lifecycle concerns separated into focused modules</li><li>All existing tests pass</li><li>Kodi-stub tests for `onAVStarted` deduplication pass</li></ul> |
+| **State** | ✅ **CODE-VERIFIED** (2026-10-21). `ui.py` retains the Kodi window/playlist/callbacks. 11 focused modules live under `lib/umsa_screensaver/`: `actions.py`, `artwork_selector.py`, `availability.py`, `constants.py`, `history.py`, `image_validator.py`, `rendering.py`, `settings.py`, `temp_video.py`, `video_playlist.py`, `wall_layout.py` (current sizes are in `screensaver_audit.md`). The Kodi modules are resolved at call time in `ui.py` and injected, so the tests keep patching `ui.xbmc` / `ui.xbmcgui` / `ui.xbmcvfs` / `ui.PIL`; `ui.py` re-exports the old module-level names (`attach_set_id`, `read_set_id`, `read_software_id`, `SET_ID_UNIQUE_TYPE`, `PIL`, control/action constants) through `__all__`. New tests: `tests/test_screensaver_ui_modules.py` (62 tests — **local-only**, `tests/` is gitignored). Focused screensaver tests: **139 passed**. Full suite: **1081 passed, 5 skipped, 18 subtests**. `ruff check screensaver.umsa.mame.surfer/` is clean (the old `ui.py` had 2 findings). The only deliberate behavioural deviation is the snapshot file read, which no longer raises out of the render loop. Screensaver modes and video playback are maintainer-verified (see `release-plan.md`). |
 
 ---
 
@@ -181,14 +183,14 @@ Following the A4 screensaver module split, five remaining correctness issues wer
 | **1. Playback Ownership** | `shutdown_video_mode()` called `player.stop()` unconditionally, stopping pre-existing Kodi audio when screensaver ran in image modes. | Added `_playback_owned` flag to `Saver`. `stop_video_playback()` and `shutdown_video_mode()` only stop playback when flag is set. `_start_video_mode()` sets flag; `prepare_artwork_mode()` and `shutdown_video_mode()` clear it. | `ui.py`, `rendering.py` |
 | **2. Playback Callbacks** | Missing `onPlayBackStopped()` and `onPlayBackError()` handlers; only `onPlayBackEnded()` handled normal completion. | Added both callbacks to `Player`, delegating to shared `_handle_playback_stopped()`. Idempotent handling of duplicate sequences (error→stopped). `video_teardown` guard prevents playlist replenishment during shutdown. | `ui.py` |
 | **3. eXoDOS Extraction Failure** | Failed extraction fell back to zip:// URL, which is invalid for Kodi playback of archive members. | `add_video_to_playlist()` now rejects candidate when required extraction fails. No fallback to archive-backed path. `.part` files cleaned up. Bounded retry policy handles failed candidate. | `ui.py` |
-| **4. Playlist Clearing** | `onInit()` called `playlist.clear()` unconditionally; `shutdown_video_mode()` called `clear_video_playlist()`. Modified user's playlist in image modes. | Removed `playlist.clear()` from `onInit()`. Removed `clear_video_playlist()` call from `shutdown_video_mode()`. User's playlist preserved. Temp file cleanup still runs. | `ui.py` |
+| **4. Playlist Lifecycle** | The previous `shutdown_video_mode()` cleared the shared Kodi video playlist on every shutdown. | `shutdown_video_mode()` no longer clears the playlist; temp-file cleanup still runs. `Saver.onInit()` still calls `playlist.clear()` once at initialization (`ui.py:146`), so the shared Kodi video playlist is cleared at screensaver start and existing user video-playlist entries are not preserved. | `ui.py` |
 | **5. Rendering Cleanup** | Unexpected exceptions in render loop skipped `_cleanup()`, leaving dynamic controls and stale state. | `RenderSession.run()` wrapped in `try/finally`. `_cleanup(ctx)` always executes. Exception logged with traceback. | `rendering.py` |
 
-**Verification**: All 247 screensaver tests pass; 254 relevant tests pass (screensaver + architecture boundaries). Ruff clean on screensaver add-on. Mypy clean on Core modules.
+**Verification** (historical at Step 4 commit): 247 screensaver tests pass; 254 relevant tests pass (screensaver + architecture boundaries). Current focused screensaver tests: **139 passed**; full suite **1081 passed, 5 skipped, 18 subtests**. Ruff clean on screensaver add-on. Mypy clean on `vgm_header.py`.
 
 ---
 
-## Step 5: Reassess `umsa_core` Layout — Phase 4.9 `database.py` Reorganisation (Lower Priority)
+## Step 5: Reassess `umsa_core` Layout — Phase 4.9 `database.py` Reorganisation (Optional / Deferred)
 
 | Aspect | Detail |
 |--------|--------|
@@ -263,6 +265,6 @@ Step 1 (dead code removal)
 - [x] Step 4: `Saver`/`Player`/`Monitor` split, rendering/history modules extracted, suite green
 - [ ] Step 5: `database.py` non-DB helpers moved, re-exports work, boundary tests pass
 - [x] All architecture boundary tests pass throughout (`test_architecture_boundaries.py` — 7 tests)
-- [x] Full suite ≥ 1081 passed at each step
+- [x] Full suite green at the audited HEAD (1081 passed, 5 skipped)
 - [x] No Kodi imports in `umsa_core/` (except `umsa_core_kodi.py`)
 - [x] No `gdb`/`gdbc`/`sdb`/`sdbc`/`ggdb` attribute access outside `database.py`

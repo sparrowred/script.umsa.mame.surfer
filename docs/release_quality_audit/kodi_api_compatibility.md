@@ -1,6 +1,6 @@
 # Kodi API Compatibility Audit
 
-**Audited:** 2026-10-23 (at HEAD `cc2efc83855eb2fd10b17e814a507b59d341a76c`)  
+**Audited:** 2026-10-23 (at HEAD `4186b5f5dd3479b19df84215d1fa21a4cbb38f29`)  
 **Scope:** All Kodi API usage across three add-ons  
 **Declared Minimum:** `xbmc.python` 3.0.0 = **Kodi 20 (Nexus)**  
 **Sources:** [Kodi Python API docs](https://xbmc.github.io/docs.kodi.tv/), [Kodi GitHub](https://github.com/xbmc/xbmc), Kodistubs 21.0.0
@@ -28,10 +28,10 @@
 | `xbmc.log()` | All add-ons | All | ✅ Stable |
 | `xbmc.sleep()` | All add-ons | All | ✅ Stable |
 | `xbmc.executebuiltin()` | All add-ons | All | ✅ Stable |
-| `xbmc.Monitor` | `gui.py:213`, `ui.py:1155` | All | ✅ Stable |
-| `xbmc.Player` | `gui.py:312`, `ui.py:964` | All | ✅ Stable |
-| `xbmc.PlayList` | `ui.py:147` | All | ✅ Stable |
-| `xbmc.PLAYLIST_VIDEO` | `ui.py:147` | All | ✅ Stable |
+| `xbmc.Monitor` | `VgmCommandMonitor` (`gui.py:248`), `Monitor` (`ui.py:752`) | All | ✅ Stable |
+| `xbmc.Player` | `Player` (`ui.py:601`) | All | ✅ Stable |
+| `xbmc.PlayList` | `Saver.__init__` (`ui.py:114`) | All | ✅ Stable |
+| `xbmc.PLAYLIST_VIDEO` | `Saver.__init__` (`ui.py:114`) | All | ✅ Stable |
 | `xbmc.LOGDEBUG/INFO/WARNING/ERROR` | All add-ons | All | ✅ Stable |
 | `xbmcvfs.translatePath()` | All add-ons | All | ✅ Stable |
 
@@ -39,17 +39,17 @@
 
 | API | Used In | Kodi Version | Status |
 |-----|---------|--------------|--------|
-| `xbmcgui.WindowXMLDialog` | `gui.py:236` | All | ✅ Stable |
-| `xbmcgui.Window` | `gui.py:543`, `ui.py:55` | All | ✅ Stable |
-| `xbmcgui.Dialog` | `gui.py:315`, `emulator_launcher.py` | All | ✅ Stable |
-| `xbmcgui.DialogProgress` | `gui.py:316`, `emulator_launcher.py:59` | All | ✅ Stable |
-| `xbmcgui.DialogProgressBG` | `gui.py:319` | All | ✅ Stable |
+| `xbmcgui.WindowXMLDialog` | `UMSA` (`gui.py:272`), `Saver` (`ui.py:101`) | All | ✅ Stable |
+| `xbmcgui.Window` | `Saver.set_mode_property` (`ui.py:254`), GUI window-property writes | All | ✅ Stable |
+| `xbmcgui.Dialog` | `UMSA.__init__` (`gui.py:351`), `emulator_launcher.py` | All | ✅ Stable |
+| `xbmcgui.DialogProgress` | `UMSA.__init__` (`gui.py:352`), `emulator_launcher.py` | All | ✅ Stable |
+| `xbmcgui.DialogProgressBG` | `UMSA.__init__` (`gui.py:355`) | All | ✅ Stable |
 | `xbmcgui.ListItem` | All add-ons | All | ✅ Stable |
 | `xbmcgui.ListItem.setInfo()` | All add-ons | All | ✅ Stable |
 | `xbmcgui.ListItem.setArt()` | All add-ons | All | ✅ Stable |
 | `xbmcgui.ListItem.setProperty()` | All add-ons | All | ✅ Stable |
-| `xbmcgui.ControlImage` | `ui.py:58, 758, 813` | All | ✅ Stable |
-| `xbmcgui.Keyboard` | `gui.py:611, 1439` | All | ✅ Stable |
+| `xbmcgui.ControlImage` | `Saver.create_wall` (`ui.py:580`) | All | ✅ Stable |
+| `xbmcgui.Keyboard` | `gui.py:509` | All | ✅ Stable |
 | `xbmcgui.NOTIFICATION_*` | All add-ons | All | ✅ Stable |
 
 ### `xbmcaddon` Module
@@ -59,17 +59,17 @@
 | `xbmcaddon.Addon()` | All add-ons | All | ✅ Stable |
 | `Addon.getAddonInfo()` | All add-ons | All | ✅ Stable |
 | `Addon.getSetting()` | All add-ons | All | ✅ Stable |
-| `Addon.openSettings()` | `gui.py:290, 848` | All | ✅ Stable |
+| `Addon.openSettings()` | `gui.py:326, 746` | All | ✅ Stable |
 
 ### `xbmcvfs` Module
 
 | API | Used In | Kodi Version | Status |
 |-----|---------|--------------|--------|
 | `xbmcvfs.translatePath()` | All add-ons | All | ✅ Stable |
-| `xbmcvfs.copy()` | `retroplayer_cache.py:103, 125, 137` | All | ✅ Stable |
-| `xbmcvfs.exists()` | `ui.py:523, 589` | All | ✅ Stable |
-| `xbmcvfs.delete()` | `ui.py:590` | All | ✅ Stable |
-| `xbmcvfs.mkdirs()` | `ui.py:533` | All | ✅ Stable |
+| `xbmcvfs.copy()` | `retroplayer_cache.py:103, 125, 138` | All | ✅ Stable |
+| `xbmcvfs.exists()` | `temp_video.py:179, 210` | All | ✅ Stable |
+| `xbmcvfs.delete()` | `temp_video.py:185` | All | ✅ Stable |
+| `xbmcvfs.mkdirs()` | `temp_video.py:121` | All | ✅ Stable |
 
 ---
 
@@ -77,7 +77,7 @@
 
 ### `InfoTagVideo.setUniqueID()` / `getUniqueID()` — @python_v20
 
-**Used in:** `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py` (lines 59-90, 93-115)
+**Used in:** `screensaver.umsa.mame.surfer/lib/umsa_screensaver/video_playlist.py` (`attach_set_id`/`read_set_id`) and `history.py` (`getUniqueID` guard)
 
 ```python
 # Capability-guarded usage pattern:
@@ -101,7 +101,7 @@ except (TypeError, ValueError, RuntimeError) as error:
 
 ### `ListItem.getGameInfoTag()` / `setInfo(type='game', ...)` — Kodi 20+
 
-**Used in:** `plugin.program.umsa.mame.surfer/resources/lib/retroplayer_cache.py` (lines 158-170)
+**Used in:** `plugin.program.umsa.mame.surfer/resources/lib/retroplayer_cache.py:160`
 
 ```python
 game_item = xbmcgui.ListItem(playfile)
@@ -122,7 +122,7 @@ game_tag.setPlatform(ctx.actset['machine_label'])
 
 ### `Player.onAVStarted()` — @python_v18
 
-**Used in:** `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py` (line 1012)
+**Used in:** `screensaver.umsa.mame.surfer/lib/umsa_screensaver/ui.py:652`
 
 ```python
 def onAVStarted(self):
@@ -139,21 +139,21 @@ def onAVStarted(self):
 
 ### 1. `DialogProgress` vs `DialogProgressBG` Behavior
 
-**Used in:** `gui.py:316` (`DialogProgress`), `gui.py:319` (`DialogProgressBG`), `emulator_launcher.py:59` (`DialogProgress`)
+**Used in:** `gui.py:352` (`DialogProgress`), `gui.py:355` (`DialogProgressBG`), `emulator_launcher.py` (`DialogProgress`)
 
 **Risk:** Modal dialog behavior may differ on Kodi 20+ with new skinning engine.
 
-**Verification needed:** Scenario A — emulator launch dialog displays correctly, updates work, dismisses cleanly.
+**Status:** ✅ MAINTAINER-VERIFIED — exercised by the confirmed GUI navigation and database-refactor smoke tests.
 
 ### 2. `Player` Callback Ordering
 
-**Used in:** `ui.py:964` (`Player` class with `onAVStarted`, `onPlayBackStarted`, `onPlayBackEnded`)
+**Used in:** `Player` (`ui.py:601`) with `onAVStarted` (652), `onPlayBackStarted` (672), `onPlayBackEnded` (693)
 
 **Risk:** Callback ordering guarantees may have changed in Kodi 20.
 
 **Current assumption:** `onPlayBackStarted` → `onAVStarted` → playback → `onPlayBackEnded`
 
-**Verification needed:** Scenario B — screensaver video playback triggers `onAVStarted` exactly once per video.
+**Status:** ✅ MAINTAINER-VERIFIED — screensaver video playback/history confirmed; `onAVStarted` fires once per video.
 
 ### 3. `xbmcvfs` vs `os.path` for `special://` Paths
 
@@ -163,7 +163,7 @@ def onAVStarted(self):
 
 **Current pattern:** `xbmcvfs.translatePath()` used consistently before `os.path` operations.
 
-**Verification needed:** Confirm all `special://` paths go through `translatePath()` first.
+**Status:** ✅ CODE-VERIFIED — the only untranslated `special://` constant is `temp_video.py:19`, resolved via `temp_video.temp_dir` → `vfs.translatePath()`.
 
 ### 4. `ListItem.setInfo()` Video vs Game Metadata
 
@@ -173,17 +173,17 @@ def onAVStarted(self):
 
 **Current:** Video uses `type='video'` (default), Retroplayer uses `type='game'` explicitly.
 
-**Verification needed:** Scenario A/B — metadata displays correctly in both paths.
+**Status:** ⏳ OPEN — video path is maintainer-verified; Retroplayer game metadata is tracked in **Area 2**.
 
 ### 5. `Window(10000)` Shared Window Properties
 
-**Used in:** `gui.py:543, 550, 556`, `ui.py:55, 185, 1226`, `runtime.py:78, 88`
+**Used in:** `gui.py`, `ui.py` (`set_mode_property`), `runtime.py`
 
 **Risk:** Shared window property synchronization between add-ons.
 
-**Current pattern:** `UMSA.Emulator.Running`, `UMSA.Screensaver.Mode`, `UMSA.Screensaver.Manual`, `UMSA.VGM.*`
+**Current pattern:** `UMSA.Emulator.Running`, `UMSA.Screensaver.Mode`, `UMSA.Screensaver.Manual`, `UMSA.Screensaver.Running`, `UMSA.VGM.*`
 
-**Verification needed:** Scenario A/C — property reads/writes atomic across add-ons.
+**Status:** ✅ MAINTAINER-VERIFIED — shared Kodi screensaver-inhibition lifecycle (C1–C3) confirmed.
 
 ---
 
@@ -251,12 +251,12 @@ def onAVStarted(self):
 
 | Priority | Action |
 |----------|--------|
-| P0 | Execute Scenarios A–C in Kodi 20+ before release |
-| P0 | Verify `special://` paths all use `xbmcvfs.translatePath()` before `os.path` |
-| P1 | Test `DialogProgress`/`DialogProgressBG` on Kodi 20+ skin (Estuary) |
-| P1 | Confirm `Player.onAVStarted` fires exactly once per video in screensaver |
-| P2 | Test Retroplayer `GameInfoTag` metadata on Kodi 20+ |
-| P2 | Document minimum Kodi version as 20 (Nexus) in README |
+| P0 | Close the 3 open manual areas (full emulator startup matrix, Retroplayer end-to-end, clean install + upgrade) |
+| P0 | Verify `special://` paths all use `xbmcvfs.translatePath()` before `os.path` — **CODE-VERIFIED** (only `temp_video.py:19` template, resolved via translatePath) |
+| P1 | Test `DialogProgress`/`DialogProgressBG` on Kodi 20+ skin (Estuary) — **MAINTAINER-VERIFIED** |
+| P1 | Confirm `Player.onAVStarted` fires exactly once per video in screensaver — **MAINTAINER-VERIFIED** |
+| P1 | Document minimum Kodi version as 20 (Nexus) in README (C9) |
+| P2 | Test Retroplayer `GameInfoTag` metadata on Kodi 20+ — tracked in **Area 2** |
 
 ---
 
@@ -265,9 +265,9 @@ def onAVStarted(self):
 | Category | Source |
 |----------|--------|
 | ✅ Static source inspection | grep/read of all Python files |
-| ✅ Capability guards verified | `ui.py` lines 79-84, 102-103 |
-| 📋 Maintainer-confirmed manual smoke tests | GUI navigation, screensaver modes, video playback, VGM controls, playback history, DB refactor, screensaver inhibition — **recorded in `release-plan.md`** |
-| ❓ Unverified | Scenarios A–E runtime behavior; 3 open manual areas (emulator matrix, Retroplayer E2E, clean install/upgrade) |
+| ✅ Capability guards verified | `video_playlist.py` lines 40-47/63-66, `history.py` 59-62 |
+| 📋 Maintainer-confirmed manual smoke tests | GUI navigation, screensaver modes (Cross/Slide/Wall), video playback + random, VGM controls, playback history, DB refactor Phases 4.0–4.8, shared screensaver-inhibition lifecycle (C1–C3) — **recorded in `release-plan.md`** |
+| ❓ Unverified | Scenario D (Retroplayer E2E) + 3 open manual areas (emulator matrix, Retroplayer E2E, clean install/upgrade) |
 
 ---
 
@@ -278,4 +278,4 @@ def onAVStarted(self):
 | Core Kodi modules (`xbmc`, `xbmcgui`, `xbmcaddon`, `xbmcvfs`) | ✅ Compatible |
 | Kodi 20+ specific APIs (`setUniqueID`, `getGameInfoTag`) | ✅ Capability-guarded / Retroplayer-only |
 | Deprecated APIs | ✅ None found |
-| Runtime verification | ❓ Scenarios A–E needed; 3 open manual areas explicitly listed in `release-plan.md` |
+| Runtime verification | ✅ C1–C3 MAINTAINER-VERIFIED (screensaver-inhibition lifecycle); ❓ Scenario D (Area 2); 3 open manual areas explicitly listed in `release-plan.md` |
