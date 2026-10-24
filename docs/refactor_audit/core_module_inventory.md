@@ -87,7 +87,7 @@ All 38 modules under `lib/umsa_core/` **pass** the architecture boundary test: z
 ## Summary
 
 - **35/38 modules** are clean, single-responsibility, Kodi-free, with clear boundaries
-- **3 modules** need attention: `database.py` (~1857 lines, Phase 4.9 target), `emulation.py` (592 lines, facade with delegates), `artwork_scanner.py`/`dat_scanner.py`/`exodos_scanner.py`/`gb64_scanner.py` (similar pattern, could share base class but not urgent)
+- **3 modules** need attention: `database.py` (~1797 lines after Phase 4.9.2/4.9.3a; was ~1857), `emulation.py` (592 lines, facade with delegates), `artwork_scanner.py`/`dat_scanner.py`/`exodos_scanner.py`/`gb64_scanner.py` (similar pattern, could share base class but not urgent)
 - No duplicate abstractions found — existing modules cover all Core domains
 - Package layout respects Kodi-addon packaging (flat `lib/umsa_core/`); no subdirectories needed
 
@@ -97,14 +97,13 @@ All 38 modules under `lib/umsa_core/` **pass** the architecture boundary test: z
 
 This section records current-state verification; it does not replace the catalog above.
 
-- `database.py` remains ~1857 lines with no Phase 4.9 extraction beyond 4.9a.
+- `database.py` remains large; Phase 4.9a completed. Phase 4.9.2 comment cleanup completed (no behavior change). Phase 4.9.3a extracted `_scan_state_ownership()` and `run_scan_with_progress()` to `umsa_core/scan_progress.py` with `database.py` re-exports.
 - `umsa_db_download.py` was verified in the current tree and the row above was corrected:
   it imports only `pathlib`, `zipfile`, `io.BytesIO` and `urllib.request`; it contains no
   SQL or `data_paths` import. Its production caller is `umsa_gui/scan_orchestrator.py`
   through the `umsa_core.database` re-export.
-- `scan_progress.py`, `game_labels.py` and `cmdline.py` **do not exist** at this HEAD.
-- Candidate verdicts: `scan_progress.py` (justified, pure move plus re-export),
-  `split_gamename` into `game_labels.py` (justified), `create_cmdline` into `cmdline.py`
+- Remaining proposed targets: `game_labels.py` (`split_gamename`, optional `make_time_nice`), `cmdline.py` (`create_cmdline`). `get_best_machine_for_set` and `COUNTRIES` stay in `database.py`. `parse_recommended_games`, `build_filter_lists`, `get_cmd_line_options` stay in `database.py`.
+- Candidate verdicts: `scan_progress.py` done, `split_gamename` into `game_labels.py` (justified), `create_cmdline` into `cmdline.py`
   (justified), `get_best_machine_for_set` / `get_cmd_line_options` / mixed queries
   (keep in `DBMod`), `parse_recommended_games` / `build_filter_lists` (defer).
 - Focused verification: 87 tests passed (`test_database`, `test_run_scan_with_progress`,

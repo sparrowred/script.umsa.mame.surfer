@@ -32,7 +32,6 @@ TODO
 
 import os
 import sqlite3  # connect, Row, OperationalError
-import threading
 import time
 from contextlib import contextmanager
 from re import findall, search
@@ -67,6 +66,8 @@ from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
 from .status_repository import StatusRepository
+
+from .scan_progress import _scan_state_ownership, run_scan_with_progress  # noqa: F401
 
 
 def _core_data_paths(db_path):
@@ -118,93 +119,6 @@ def build_filter_lists(filter_lists, category, db):
     return {'active': active, 'inactive': inactive}
 
 
-@contextmanager
-def _scan_state_ownership(db, start_what):
-    """Own ``db``'s shared scan status/progress fields for one scan.
-
-    ``scan_perc``/``scan_what``/``scan_status`` describe the single active scan,
-    so the process-wide scan lock is taken *before* any of them is touched. The
-    context yields ``True`` once the lock is owned; only then does it initialise
-    the fields and clear ``scan_status`` again on exit. When another scan already
-    owns the lock the context yields ``False`` and never touches the fields, so a
-    competing invocation can neither overwrite the active scan's progress nor
-    clear (and thereby cancel) its status.
-
-    The lock is re-entrant per thread, so the lock-aware scan methods called
-    from inside the block re-acquire it harmlessly.
-    """
-
-    lock_ctx = ScanLockContext(scan_coordinator)
-    try:
-        lock_ctx.__enter__()
-    except ScanBusyError:
-        yield False
-        return
-
-    try:
-        db.scan_perc = 0
-        db.scan_what = start_what
-        db.scan_status = True
-        try:
-            yield True
-        finally:
-            db.scan_status = False
-    finally:
-        lock_ctx.__exit__(None, None, None)
-
-
-def run_scan_with_progress(db, scan_method, scan_args, progress, title, sleep):
-    """Run a DBMod scan method in a thread while reporting progress.
-
-    ``sleep`` is invoked as ``sleep(1000)`` for each poll (the GUI passes
-    ``xbmc.sleep``). ``progress`` is called as ``progress(percent, title,
-    message)``.
-
-    The worker takes the shared scan lock *before* it initialises
-    ``scan_perc``/``scan_what``/``scan_status``, so only the invocation that
-    genuinely owns the scan may set them. A competing invocation that cannot
-    take the lock calls the scan method anyway - the lock-aware methods return
-    their ``busy`` summary without touching the shared fields - and returns that
-    result without resetting the active scan's progress or cancellation signal.
-
-    Returns the scan method's return value (for example the scanner summary
-    dictionary), or ``None`` when the worker failed. Existing callers that
-    ignore the result are unaffected.
-    """
-
-    scan_func = getattr(db, scan_method)
-
-    result = {}
-    finished = threading.Event()
-
-    def worker():
-        try:
-            # Only the owner of the shared scan lock initialises/clears the
-            # progress and status fields; a rejected invocation leaves them
-            # exactly as the active scan left them.
-            with _scan_state_ownership(db, ''):
-                result['value'] = scan_func(*scan_args)
-        except Exception as exc:  # noqa: BLE001 - a scan must never stay stuck
-            log(f"UMSA scan: '{scan_method}' worker failed: {exc}",
-                level='error')
-        finally:
-            finished.set()
-
-    scan_thread = threading.Thread(target=worker)
-    scan_thread.start()
-    try:
-        # The completion event (not ``db.scan_status``) stops the loop, so a
-        # rejected scan returns immediately even while the active scan keeps
-        # its own ``scan_status`` set.
-        while not finished.is_set():
-            sleep(1000)
-            if finished.is_set():
-                break
-            progress(db.scan_perc, title, f'scanning {db.scan_what}')
-    finally:
-        scan_thread.join()
-    progress(100, title, 'saving')
-    return result.get('value')
 
 COUNTRIES = {
     '1NTSC' : ('ntsc',),
@@ -339,7 +253,7 @@ class DBMod:
 
         Delegates to the authoritative DAT schema definition in the DAT
         repository. The signature is preserved for compatibility with existing
-        callers.
+        callers; the helper also handles the origin column upgrade/backfill.
         """
 
         create_dat_tables(db_cursor)
@@ -409,7 +323,11 @@ class DBMod:
         self.close_umsa_db()
 
     def _ensure_source_databases(self):
-        """Ensure artwork.db and dat.db exist with authoritative schemas."""
+        """Ensure artwork.db and dat.db exist with authoritative schemas.
+
+        Creates missing schemas and upgrades existing artwork.db and dat.db
+        schemas without truncating or repopulating existing data.
+        """
 
         if not self.db_paths.artwork_db.exists():
             conn = connect_sqlite(self.db_paths.artwork_db, row_factory=sqlite3.Row)
