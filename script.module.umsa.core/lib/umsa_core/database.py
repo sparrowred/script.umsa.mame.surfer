@@ -877,17 +877,15 @@ class DBMod:
         if not i:
             return None
 
-        minute = divmod(i[2], 60)[0]
-        hour, minute = divmod(minute, 60)
-        time_played = "%d:%02d" % (hour, minute)
+        time_played = self.make_time_nice(i[2])
 
         status = {
-            'last_played'   : i[1],
-            'time_played'   : time_played,
-            'time_played2'  : i[2],
-            'play_count'    : i[3],
-            'options'       : i[4],
-            'last_nice'     : self.make_time_nice(i[1], now=True),
+            'last_played': i[1],
+            'time_played': time_played,
+            'time_played2': i[2],
+            'play_count': i[3],
+            'options': i[4],
+            'last_nice': self.make_time_nice(i[1], now=True),
         }
         return status
 
@@ -1208,9 +1206,7 @@ class DBMod:
         for software_id, status in reversed(
                 sorted(software_dict.items(), key=lambda t: t[1][order])):
 
-            minute = divmod(status["time_played"], 60)[0]
-            hour, minute = divmod(minute, 60)
-            time_played = "%d:%02d" % (hour, minute)
+            time_played = self.make_time_nice(status["time_played"])
 
             last_nice = self.make_time_nice(status['last_played'], now=True)
 

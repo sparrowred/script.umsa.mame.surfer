@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from re import findall, search
+import time
 
 
 def split_gamename(complete_name):
@@ -30,25 +31,59 @@ def split_gamename(complete_name):
 
 
 def make_time_nice(timestamp, now=None):
-    """Return a human-readable age string for a timestamp."""
+    """Format elapsed time."""
 
-    if timestamp is None:
+    if timestamp is None or timestamp == '':
         return ''
-    if now is None:
-        import time
 
-        now = time.time()
-    try:
-        seconds = int(now) - int(timestamp)
-    except Exception:
-        return ''
-    if seconds < 60:
-        return str(seconds) + ' s'
-    if seconds < 3600:
-        minutes = seconds // 60
-        return str(minutes) + ' min'
-    if seconds < 86400:
-        hours = seconds // 3600
-        return str(hours) + ' h'
-    days = seconds // 86400
-    return str(days) + ' d'
+    if now is True:
+        try:
+            timestamp_seconds = time.mktime(time.strptime(str(timestamp), "%Y-%m-%d %H:%M"))
+            elapsed = int(time.time() - timestamp_seconds)
+        except Exception:
+            return ''
+    else:
+        try:
+            elapsed = int(timestamp)
+        except Exception:
+            return ''
+
+    if elapsed < 0:
+        elapsed = 0
+
+    # Match legacy format used by existing tests
+    if now is False or now is None:
+        minute = divmod(elapsed, 60)[0]
+        hour, minute_rem = divmod(minute, 60)
+        return "%d:%02d" % (hour, minute_rem)
+
+    if elapsed < 60:
+        return f'0:{elapsed:02d}'
+
+    if elapsed < 3600:
+        total_minutes = elapsed // 60
+        seconds = elapsed % 60
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        if hours > 0:
+            return f'{hours}:{minutes:02d}'
+        return f'{total_minutes}:{seconds:02d}'
+
+    if elapsed < 86400:
+        hours = elapsed // 3600
+        minutes = (elapsed % 3600) // 60
+        return f'{hours}:{minutes:02d}'
+
+    if elapsed < 30 * 86400:
+        days = elapsed // 86400
+        hours = (elapsed % 86400) // 3600
+        return f'{days}:{hours:02d}'
+
+    if elapsed < 365 * 86400:
+        months = elapsed // (30 * 86400)
+        hours = (elapsed % (30 * 86400)) // 3600
+        return f'{months}:{hours:02d}'
+
+    years = elapsed // (365 * 86400)
+    months = (elapsed % (365 * 86400)) // (30 * 86400)
+    return f'{years}:{months:02d}'
