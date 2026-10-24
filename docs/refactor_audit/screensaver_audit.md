@@ -147,7 +147,7 @@ present and are listed so nobody changes them by accident:
 
 - The render loop leaves through `while saver.running != 'no'`. Cleanup is guaranteed by the `finally` block in `RenderSession.run()` and by `Saver.get_art_and_call_saver`, not by an unreachable post-loop block.
 - Video mode returns before the artwork loop; the loop therefore only renders image modes.
-- `Saver.settings['type']` is a mutable list and `Saver.wall` a plain dict — the monitor removes and re-appends `'videos'` while audio is playing.
+- `Saver.wall` is a plain dict. `Monitor._mode_candidates` builds a filtered copy of `Saver.settings['type']` when audio is playing; the stored settings list is not mutated.
 - `settings.ScreensaverSettings.from_addon` raises `ValueError` on an empty numeric add-on setting (`int('')`) — same as the original `read_settings`.
 
 The following defects were fixed and are **not** preserved quirks:

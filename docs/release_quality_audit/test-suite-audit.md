@@ -1,6 +1,7 @@
 # Test Suite Audit
 
 **Audited:** 2026-10-23  
+**Test run:** 2026-10-21  
 **Baseline (after fixes):** 1081 passed, 5 skipped, 18 subtests passed  
 **Environment:** `.venv-debian-vm/bin/python -m pytest tests/ -q`  
 **Python:** 3.14.7, pytest 9.1.1
@@ -66,7 +67,7 @@
 
 ---
 
-## Verification Results (2026-10-21)
+## Verification Results (test run 2026-10-21)
 
 ```
 # Full suite
