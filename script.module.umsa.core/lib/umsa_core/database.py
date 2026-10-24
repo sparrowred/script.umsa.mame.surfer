@@ -206,19 +206,6 @@ def run_scan_with_progress(db, scan_method, scan_args, progress, title, sleep):
     progress(100, title, 'saving')
     return result.get('value')
 
-# new db for pics
-# listdir recursive for progettosnaps
-# get set and swl from path
-# write into db: path, swl_id and set_id
-# select all -> for each set id check pics and attach
-
-# new db for dats
-# scan dats, put text into db with p_id
-# second table with p_id and swl_id, set_id
-# as one dat entry can have more than one set
-# select all > for each set check dat, when finished, split dat entries
-
-# dict for best machine
 COUNTRIES = {
     '1NTSC' : ('ntsc',),
     '2PAL'  : ('pal',),
@@ -228,7 +215,6 @@ COUNTRIES = {
     '6EU'   : ('euro', 'pal'),
     '7KR'   : ('kor',),
     '8BR'   : ('bra',),
-    #'uk', 'ger', 'fra', 'spa', 'ita', 'ned', 'aus'],
 }
 
 def split_gamename(complete_name):
@@ -238,18 +224,13 @@ def split_gamename(complete_name):
     """
 
     gamename, detail, details = '', '', []
-    # dont be greedy, exlucde ( from detail
     for name, detail in findall(r'(.*?) (\([^(]*?\))', complete_name):
         gamename += name.strip()
-        details.append(detail[1:-1]) # remove ()
+        details.append(detail[1:-1])
     detail = ', '.join(details)
-    # check as above does not match when () is missing
     if not gamename:
         gamename = complete_name
 
-    # TODO rework finding version in gamename
-    # might need version finding without v or V
-    # find versions like 1.1 at the end of gamename
     version = search(r'([vV]\d+\.\d+)', gamename)
     if version:
         if not detail:
@@ -292,31 +273,20 @@ class DBMod:
 
         self.db_paths = _core_data_paths(db_path)
 
-        # Ensure source databases exist with authoritative schemas before attaching
         self._ensure_source_databases()
 
-        # Open persistent umsa.db read-only for normal operation
         self.gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
         self.gdbc = self.gdb.cursor()
 
-        # Attach artwork.db as 'art' and dat.db as 'dat' (read-only)
         self._attach_source_databases()
 
-        # connect to status db
         self.sdb = connect_sqlite(self.db_paths.status_db)
         self.sdb.row_factory = sqlite3.Row
         self.sdbc = self.sdb.cursor()
 
-        # defines filter with self.filter_tables, self.filter_where
         self.define_filter(filter_lists)
 
-        # create/upgrade the status.db layout (first run and future
-        # versions); the schemas live with their repositories (`sets` →
-        # status_repository, `emu`/`emu_conn` → emulator_repository, the
-        # history/meta tables → history_repository) and the single
-        # `PRAGMA user_version` migration in `status_migrations` declares
-        # them in one transaction (steps 4.5/4.6/4.6.1). Migration failure
-        # propagates and leaves the connection in its pre-migration state.
+        # Migrate status.db via repositories in one transaction; failure propagates.
         apply_migrations(self.sdb)
 
     def open_db(self, db_path):
@@ -329,15 +299,12 @@ class DBMod:
         No artwork/DAT data is copied into umsa.db.
         """
 
-        # Never replace an active umsa.db connection without closing it first.
         self.close_umsa_db()
 
         self.db_paths = _core_data_paths(db_path)
 
-        # Ensure source databases exist with authoritative schemas
         self._ensure_source_databases()
 
-        # Open new umsa.db read-only
         gdb = None
         gdbc = None
         attached = set()
@@ -345,7 +312,6 @@ class DBMod:
             gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
             gdbc = gdb.cursor()
 
-            # Attach source databases as read-only schemas
             art_uri = f'file:{pathname2url(os.fspath(self.db_paths.artwork_db))}?mode=ro'
             dat_uri = f'file:{pathname2url(os.fspath(self.db_paths.dat_db))}?mode=ro'
             gdbc.execute(f"ATTACH DATABASE '{art_uri}' AS art")
@@ -353,11 +319,9 @@ class DBMod:
             gdbc.execute(f"ATTACH DATABASE '{dat_uri}' AS dat")
             attached.add('dat')
 
-            # Assign to instance only after successful attachment
             self.gdb = gdb
             self.gdbc = gdbc
         except Exception:
-            # Clean up on failure
             if gdbc is not None:
                 try:
                     for alias in ('art', 'dat'):
@@ -375,8 +339,7 @@ class DBMod:
 
         Delegates to the authoritative DAT schema definition in the DAT
         repository. The signature is preserved for compatibility with existing
-        callers; the helper also upgrades old databases in place by adding and
-        backfilling the ``origin`` column.
+        callers.
         """
 
         create_dat_tables(db_cursor)
@@ -446,13 +409,8 @@ class DBMod:
         self.close_umsa_db()
 
     def _ensure_source_databases(self):
-        """Ensure artwork.db and dat.db exist with authoritative schemas.
+        """Ensure artwork.db and dat.db exist with authoritative schemas."""
 
-        Creates the databases and their schemas if they don't exist.
-        Validates and upgrades existing databases to the current schema.
-        Does not truncate or repopulate existing databases.
-        """
-        # Ensure artwork.db exists with schema, upgrade if needed
         if not self.db_paths.artwork_db.exists():
             conn = connect_sqlite(self.db_paths.artwork_db, row_factory=sqlite3.Row)
             try:
@@ -461,7 +419,6 @@ class DBMod:
             finally:
                 conn.close()
         else:
-            # Validate and upgrade existing artwork.db
             conn = connect_sqlite(self.db_paths.artwork_db, row_factory=sqlite3.Row)
             try:
                 create_artwork_tables(conn.cursor())
@@ -469,7 +426,6 @@ class DBMod:
             finally:
                 conn.close()
 
-        # Ensure dat.db exists with schema (including origin column upgrade/backfill)
         if not self.db_paths.dat_db.exists():
             conn = connect_sqlite(self.db_paths.dat_db, row_factory=sqlite3.Row)
             try:
@@ -478,7 +434,6 @@ class DBMod:
             finally:
                 conn.close()
         else:
-            # Validate and upgrade existing dat.db (origin column migration/backfill)
             conn = connect_sqlite(self.db_paths.dat_db, row_factory=sqlite3.Row)
             try:
                 create_dat_tables(conn.cursor())
@@ -488,7 +443,6 @@ class DBMod:
 
     def _attach_source_databases(self):
         """Attach artwork.db as 'art' and dat.db as 'dat' (read-only)."""
-        # Use URI mode=ro for read-only attachment
         art_uri = f'file:{pathname2url(os.fspath(self.db_paths.artwork_db))}?mode=ro'
         dat_uri = f'file:{pathname2url(os.fspath(self.db_paths.dat_db))}?mode=ro'
         self.gdbc.execute(f"ATTACH DATABASE '{art_uri}' AS art")
@@ -1518,17 +1472,10 @@ class DBMod:
             cmd_options = [machine_name]+more_options+_cmd_options+[
                 '-statename', f'%g/%d_{first_device}', ]
 
-        # when we have no cmd_options then the machine needs a device
-        # in a slot so it can support the media, thus we have no hit within
-        # the devices and parts and therefore no cmd_options
-        # little hack: normally we would need to get devices from mame
-        # with the correct device in a slot: mame -slot xyz -lm
         elif swl_options:
             cmd_options = [machine_name] + swl_options + [set_name]
-        # last exit is to just start mame with the machine and set as options
         else:
             cmd_options = [machine_name, set_name]
-        # set snap dir to swl name
         cmd_options.extend(['-snapname', f'{swl_name}/{set_name}/%i'])
 
         return cmd_options
@@ -1560,17 +1507,9 @@ class DBMod:
         This remains in ``DBMod``: it joins the attached ``art.art_set`` with the
         game tables (``sets``/``swl``) and resolves the resulting path, so it is
         a mixed application query rather than artwork-table CRUD.
-
-        TODO
-        - an abbreviation for machine name would make text shorter
-        - should check first for a snap of machine in software
-        - first needs export of machine in software from umsa
         """
 
-        # get all machines
         all_machines = []
-        # get abbreviation
-        # TODO change sql to join and order by year.name
         self.gdbc.execute(
             "SELECT DISTINCT system_abbr FROM swl, sets \
                WHERE sets.softwarelink_id = ? AND sets.swllink_id = swl.id",
@@ -1579,7 +1518,6 @@ class DBMod:
         for j in self.gdbc.fetchall():
             all_machines.append(j[0])
 
-        # get set ids with artwork
         self.gdbc.execute(
             "SELECT sets.name, swl.name as swl_name, \
                    art.source, art.root_key, art.scan_unit, \
@@ -1593,8 +1531,6 @@ class DBMod:
              ORDER BY RANDOM() LIMIT 1",
             (software_id, artwork)
         )
-        # TODO ^ check machine from software table first
-        # TODO ^ get all and random one artwork?
         snap_info = self.gdbc.fetchone()
 
         art_path = ''
