@@ -23,7 +23,7 @@ Recorded here because they constrain this refactor directly (source:
    connections or reaches into `DBMod`'s `gdb`/`gdbc`/`sdb`/`sdbc`/`ggdb` internals.
 4. **Reuse Core services** in frontend/screensaver instead of re-implementing them.
 
-## Current status (all phases through 4.8 implemented; 4.9 proposal)
+## Current status (all phases through 4.8 implemented; 4.9.1 inventory complete)
 
 **Phase status:** Phase 4.0 complete. Phases 4.2, 4.2a, 4.2b, 4.3, 4.4 and 4.5
 complete. Phase 4.6 — `EmulatorRepository` work complete. Phase 4.7 — filter/query
@@ -31,8 +31,15 @@ refactor complete. Phase 4.6.1 — `status.db` history/filter migration complete
 including the corrective follow-up (D20/D21). Phase 4.6.2 — screensaver history
 implementation complete (committed as `e7cb00a`). **Phase 4.8 (row-leak closure)
 implemented (committed as `e4fd570`).** **Artwork/DAT source-of-truth refactor
-implemented (committed as `5a51461` + `238bb41` + `9a98cfe`).** Phase 4.9 is an
-optional/proposed `database.py` reorganisation, not implemented.
+implemented (committed as `5a51461` + `238bb41` + `9a98cfe`).** **Phase 4.9a**
+(`download_and_update_umsa_db` → `umsa_db_download.py`) implemented. **Phase 4.9.1**
+documentation-only inventory completed at HEAD `9b62f4b` (2026-10-24):
+`database.py` remains ~1857 lines with no further extraction; justified candidates are
+`scan_progress.py` (`_scan_state_ownership`, `run_scan_with_progress`),
+`game_labels.py` (`split_gamename`; optional `make_time_nice` body), and `cmdline.py`
+(`create_cmdline`). `get_best_machine_for_set`, `get_cmd_line_options`,
+and mixed queries remain in `DBMod`. See
+[`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md).
 
 The current database ownership model is:
 
@@ -207,7 +214,8 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 |---|---|
 | [`dbmod_audit.md`](dbmod_audit.md) | Complete inventory of every remaining SQL-bearing method/helper in `database.py`, grouped by responsibility: connection lifecycle, cross-database sync, scan facades, repository delegations, mixed application queries, game/set reads, filter composition, status.db play history, emulator config. Records tables, read/write behaviour, connection/transaction ownership, callers, result shapes, and the recommended future owner of each method. Referenced by method name (no line numbers). |
 | [`row_factory_audit.md`](row_factory_audit.md) | Result-shape and row-access audit: which connections are `sqlite3.Row` vs default tuples, which methods/callers use positional vs named row access (including mixed-style consumers), the implicit public contracts, and the staged strategy — now including the implemented `sqlite3.Row` input requirement for repositories (step 4.2b, done) and the fixed row-leak closure step (4.8). Read-only; nothing was converted by the audit itself. |
-| [`roadmap.md`](roadmap.md) | Prioritised, incremental implementation plan: boundary checks (4.0), decided removals (4.2a), the `sqlite3.Row` contract (4.2b), repository extensions (4.3-4.6), the history/legacy-file migration (4.6.1, implemented) and the screensaver history (4.6.2, implemented), the filter service (4.7), row-leak closure (4.8) and the database.py reorganisation proposal (4.9) — what each step extracts, contract, required tests, dependencies, risk, acceptance criteria, and what deliberately stays in `DBMod`. |
+| [`roadmap.md`](roadmap.md) | Prioritised, incremental implementation plan: boundary checks (4.0), decided removals (4.2a), the `sqlite3.Row` contract (4.2b), repository extensions (4.3-4.6), the history/legacy-file migration (4.6.1, implemented) and the screensaver history (4.6.2, implemented), the filter service (4.7), row-leak closure (4.8), Phase 4.9a (completed), and the database.py reorganisation proposal (4.9) with Phase 4.9.1 inventory — what each step extracts, contract, required tests, dependencies, risk, acceptance criteria, and what deliberately stays in `DBMod`. |
+| [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md) | **Phase 4.9.1 (2026-10-24, HEAD `9b62f4b`)** — documentation-only inventory of `database.py` (~1857 lines), verified call sites, `umsa_db_download.py` state, justified/deferred extraction candidates, `DBMod` facade review, and open questions. |
 | [`history_persistence_audit.md`](history_persistence_audit.md) | **Implemented (2026-10-18).** Phase 4.6.1a: the GUI `lastgames.txt` contract (path, format, ordering, pointer, five insert sites, exit-only save defect, failure handling) and the `filter_*.txt` contract (five-line format, id-string values, Load/Save dialogs, crash/silent-failure modes) with every call site; the precise `load_lastsaver()` status (live but always-empty consumer, no writer ever existed — not an import source); the screensaver lifecycle and the decided display boundaries (D16: images post-render, videos `onAVStarted`); four purpose-specific `status.db` tables covered by **one** `PRAGMA user_version` migration; the **one-time import + cleanup sequence** (per-file all-or-nothing validation, commit-before-delete, terminal marker states `completed`/`completed_discards`/`completed_no_source`/`failed`, no-reimport, cleanup-only recovery, unknown-file preservation); the verified Core userdata inventory; the Core/Kodi boundary, facade API and notification; the dependency on Phase 4.7, the confirmed 4.7 → 4.6.1 → 4.6.2 ordering (D11); and the six questions Q1–Q6 — **resolved 2026-10-18 as decisions D12–D19** (recorded in §1.1 and §16 of that document, including `gui_lastgames` retention of **100** and the strict five-line filter rule of D14); §16.2 records the evidence-based Kodi-runtime verification status — automated/mocked coverage and static inspection only, with no documented manual Kodi test run. |
 
 ## Phase checklist
@@ -374,15 +382,16 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 
 - [x] Step 4.8 — row-leak closure: facade returns only unambiguous shapes; named access only across add-on boundaries. **Implemented (committed as `e4fd570`)**.
 - [x] **Artwork/DAT source-of-truth refactor** — make `artwork.db` and `dat.db` the authoritative sources for scanned artwork and DAT data. Remove the redundant copy workflow (`add_art_to_db`, `add_dat_to_db`, and the copy operations in `open_db`). The persistent `umsa.db` connection is now read-only and attaches `artwork.db` as `art` and `dat.db` as `dat` schemas. Scanner workflows continue to write to their respective source databases through their own writable connections. Mixed game/artwork/DAT queries in `DBMod` now use schema-qualified table names (`art.art_set`, `dat.dat`, `dat.dat_set`). `ArtworkRepository` and `DatRepository` support schema qualification via a `schema` parameter (`"main"` for scanner connections, `"art"`/`"dat"` for DBMod reads). Legacy copied tables in existing `umsa.db` files remain unused but are not dropped; a fresh database download naturally removes them. **Implemented (committed as `5a51461` + `238bb41` + `9a98cfe`)**.
-- [x] **Phase 4.9a: Extract `download_and_update_umsa_db()`** — moved the standalone database download helper from `umsa_core/database.py` to `umsa_core/umsa_db_download.py`. The function retains its exact public signature and behavior. `DBMod` re-exports the name for backward compatibility. New module is Kodi-free and passes architecture boundary tests. New regression tests added in `tests/test_umsa_db_download.py` (7 tests). **Implemented (committed as `...`)**.
+- [x] **Phase 4.9a: Extract `download_and_update_umsa_db()`** — moved the standalone database download helper from `umsa_core/database.py` to `umsa_core/umsa_db_download.py`. The function retains its exact public signature and behavior. `DBMod` re-exports the name for backward compatibility. New module is Kodi-free and passes architecture boundary tests. New regression tests added in `tests/test_umsa_db_download.py` (7 tests). **Implemented**.
+- [x] **Phase 4.9.1: Inventory and documentation update** — documentation-only review of `database.py` at HEAD `9b62f4b` (2026-10-24); updated audit/plan/release docs; no source changes. Verified 87 tests passed. See [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md).
 
 ### Planned / not yet implemented (see roadmap)
 
-- [ ] Step 4.9 (proposal) — move remaining non-DB code out of `database.py` (scan progress, labels/selection helpers, cmdline helpers). Optional/planned, not implemented.
+- [ ] Step 4.9 (optional) — move remaining non-DB code out of `database.py` (justified: `scan_progress.py`, `game_labels.py` for `split_gamename`, `cmdline.py` for `create_cmdline`). Deferred pending decision; no modules created at HEAD `9b62f4b`.
 
 ### Next planned step
 
-**Phase 4.9 (optional `database.py` reorganisation) is the next possible implementation phase.** All phases through 4.8 are complete, including the artwork/DAT source-of-truth refactor and its follow-up fixes (read-only `umsa.db`, source-database initialization/upgrades, scanner mapping connections, attachment failure cleanup, legacy migration notification fix). The next step would be a deliberate decision about whether to proceed with Phase 4.9 `database.py` reorganisation, which is an optional proposal. See [`roadmap.md`](roadmap.md) for the full contracts.
+**Phase 4.9 remains optional.** All phases through 4.8 are complete. A Phase 4.9.1 inventory has been recorded; whether to proceed with extraction is a deliberate decision. See [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md) and [`roadmap.md`](roadmap.md).
 
 ## Boundary guards (step 4.0 implemented)
 

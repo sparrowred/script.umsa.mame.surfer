@@ -907,24 +907,28 @@ dicts/dataclasses — never `row[i]`. Add-on tests assert the consumed shapes.
 
 ---
 
-## Step 4.9 (proposal) — database.py module reorganisation: move non-DB code out
+## Step 4.9 (proposal / inventory complete) — database.py module reorganisation: move non-DB code out
 
-**Status: optional/proposed — not implemented.** It is not a prerequisite for 4.8.
+**Status: optional — Phase 4.9a implemented; Phase 4.9.1 inventory completed at HEAD `9b62f4b` (2026-10-24), no further extraction.** Not a prerequisite for 4.8.
 
 **Responsibility:** `database.py` mixes database access with pure application helpers.
-Candidates to move as **pure import moves** (Kodi-free already; `progress`/`sleep`/
-`dialog` are injected callbacks — the GUI passes `xbmc.sleep` and dialog updaters):
+Phase 4.9.1 verified the current tree (`database.py` ~1857 lines) and corrected older
+stale claims (no `scan_progress.py`/`game_labels.py`/`cmdline.py` exist; `umsa_db_download.py`
+imports only `pathlib`, `zipfile`, `io.BytesIO`, `urllib.request`, no SQL).
 
-| Candidate | Suggested target |
-|---|---|
-| `download_and_update_umsa_db` | `umsa_core/umsa_db_download.py` |
-| `_scan_state_ownership`, `run_scan_with_progress` | `umsa_core/scan_progress.py` |
-| `split_gamename`, `COUNTRIES`, `make_time_nice`, `get_best_machine_for_set`, `parse_recommended_games`, `build_filter_lists` | `umsa_core/game_labels.py` (or split further) |
-| `create_cmdline`, `get_cmd_line_options` assembly helpers | step 4.4 clarified the boundary (reads → repository, assembly stays); consider `umsa_core/cmdline.py` after 4.6 |
+Candidates (from inventory):
+
+| Candidate | Suggested target | Verdict |
+|---|---|---|
+| `download_and_update_umsa_db` | `umsa_core/umsa_db_download.py` | ✅ **Done (4.9a)** — `DBMod` re-exports for backward compatibility; production caller `umsa_gui/scan_orchestrator.py` still imports from `umsa_core.database`. |
+| `_scan_state_ownership`, `run_scan_with_progress` | `umsa_core/scan_progress.py` | **Justified** — pure move + `database.py` re-export; preserve `scan_perc`/`scan_what`/`scan_status` and callback signatures (`progress`, `sleep`). |
+| `split_gamename` | `umsa_core/game_labels.py` | **Justified** — pure string helper, used by GUI modules. Optional: `make_time_nice` body with `DBMod.make_time_nice` facade. `COUNTRIES`/`get_best_machine_for_set` — **keep in `DBMod`** (no external caller, delicate selection rules). |
+| `parse_recommended_games`, `build_filter_lists` | (defer) | **Defer** — duck-type `DBMod` query APIs; low line-count benefit. |
+| `create_cmdline` | `umsa_core/cmdline.py` | **Justified** — pure assembly, no external caller found; keep compatibility facade. `get_cmd_line_options` — **keep in `DBMod`** (repository orchestration). |
 
 **Rules:** `DBMod` re-exports the names it still exposes to callers, so public imports
 keep working; no Kodi import may appear in any moved module (verify against the step 4.0
-guard); no behaviour change. Not urgent — schedule after 4.6.
+guard); no behaviour change. Full details: [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md).
 
 ---
 

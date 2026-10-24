@@ -190,19 +190,20 @@ Following the A4 screensaver module split, five remaining correctness issues wer
 
 ---
 
-## Step 5: Reassess `umsa_core` Layout — Phase 4.9 `database.py` Reorganisation (Optional / Deferred)
+## Step 5: Reassess `umsa_core` Layout — Phase 4.9 `database.py` Reorganisation (Inventory Complete / Extraction Deferred)
 
 | Aspect | Detail |
 |--------|--------|
 | **Goal** | Move non-DB helpers out of `database.py` (~1857 lines, down from 69k) per Phase 4.9 proposal |
 | **Files** | `script.module.umsa.core/lib/umsa_core/database.py` → new modules |
-| **Proposed moves** (from `roadmap.md`) | <ul><li>`download_and_update_umsa_db` → `umsa_db_download.py` ✅ **Done (4.9a)**</li><li>`_scan_state_ownership`, `run_scan_with_progress` → `scan_progress.py`</li><li>`split_gamename`, `COUNTRIES`, `make_time_nice`, `get_best_machine_for_set`, `parse_recommended_games`, `build_filter_lists` → `game_labels.py` (or split)</li><li>`create_cmdline`, `get_cmd_line_options` assembly helpers → `cmdline.py` (after Step 2 clarifies ownership)</li></ul> |
+| **Status** | **Inventory complete at HEAD `9b62f4b` (2026-10-24); no extraction implemented.** Phase 4.9a (`download_and_update_umsa_db` → `umsa_db_download.py`) remains the only completed extraction. See [`database_refactor/phase_4_9_1_inventory.md`](../database_refactor/phase_4_9_1_inventory.md). |
+| **Verified moves** | <ul><li>`download_and_update_umsa_db` → `umsa_db_download.py` ✅ **Done (4.9a)**; production caller still imports it through `umsa_core.database`</li><li>`_scan_state_ownership`, `run_scan_with_progress` → `scan_progress.py` — **justified** (pure move + `database.py` re-export; keep the `scan_perc`/`scan_what`/`scan_status` contract)</li><li>`split_gamename` → `game_labels.py` — **justified**; optional body of `make_time_nice` with a `DBMod` method facade. `COUNTRIES`/`get_best_machine_for_set` — **keep** (no external caller, delicate selection rules). `parse_recommended_games`/`build_filter_lists` — **defer** (duck-type `DBMod` queries; low benefit)</li><li>`create_cmdline` → `cmdline.py` — **justified**; `get_cmd_line_options` — **keep in `DBMod`** (repository orchestration)</li></ul> |
 | **Responsibility moved** | Pure application helpers, scan progress, cmdline assembly — **out of `DBMod`** |
-| **Contracts unchanged** | `DBMod` re-exports names; `run_scan_with_progress` callback signature; `get_cmd_line_options`/`create_cmdline` signatures |
-| **Tests** | `tests/test_database.py`, `tests/test_scan_coordinator.py`, `tests/test_run_scan_with_progress.py`, `tests/test_cmd_line_options.py` |
-| **Risk** | Low — pure moves, no behavior change; boundary tests enforce no Kodi imports |
+| **Contracts unchanged** | `DBMod` re-exports names; `run_scan_with_progress` callback signature; `get_cmd_line_options`/`create_cmdline` signatures; `DBMod.make_time_nice` remains callable if its body moves |
+| **Tests** | `tests/test_database.py`, `tests/test_scan_coordinator.py`, `tests/test_run_scan_with_progress.py`, `tests/test_cmd_line_options.py`; Phase 4.9.1 focused run: 87 passed |
+| **Risk** | Low for the justified pure moves; moderate for `get_best_machine_for_set` (no direct characterisation test) — do not move it without new tests |
 | **Dependencies** | Steps 2–4 (launch prep + GUI extraction clarify what `DBMod` actually needs to keep) |
-| **Acceptance** | <ul><li>`database.py` < 30k lines (facades + lifecycle + mixed queries only)</li><li>All re-exports work; no import breaks in GUI/Screensaver</li><li>Boundary tests pass</li></ul> |
+| **Acceptance** | <ul><li>`database.py` < 30k lines (facades + lifecycle + mixed queries only)</li><li>All re-exports work; no import breaks in GUI/Screensaver</li><li>Boundary tests pass</li><li>For each moved helper, a test exists at the new module boundary</li></ul> |
 
 ---
 
@@ -263,7 +264,7 @@ Step 1 (dead code removal)
 - [x] Step 2: `emulation.py` split, all preparer/finder/extractor/VGM tests added, suite green
 - [x] Step 3: `UMSA` < 1000 lines, workflow modules extracted, suite green, manual smoke pass
 - [x] Step 4: `Saver`/`Player`/`Monitor` split, rendering/history modules extracted, suite green
-- [ ] Step 5: `database.py` non-DB helpers moved, re-exports work, boundary tests pass
+- [ ] Step 5: `database.py` non-DB helpers moved, re-exports work, boundary tests pass — **inventory complete (4.9.1), extraction not started**
 - [x] All architecture boundary tests pass throughout (`test_architecture_boundaries.py` — 7 tests)
 - [x] Full suite green at the audited HEAD (1081 passed, 5 skipped)
 - [x] No Kodi imports in `umsa_core/` (except `umsa_core_kodi.py`)

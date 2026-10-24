@@ -12,7 +12,7 @@
 | `artwork.py` | Artwork type constants, categorization, aspect-ratio check, path resolution helpers | `IMAGE_ART_TYPES`, `LEFT_IMAGELIST`, `RIGHT_IMAGELIST`, `build_artwork_path`, `categorize_art_type`, `check_image_aspect`, `find_local_snapshots`, `get_machine_artwork_path`, `resolve_artwork_path`, `root_key_for_path` | `os`, `pathlib` | FS (path building), Parse (aspect from DB) | No | Core: `artwork_repository`, `artwork_scanner`, `exodos_artwork`; GUI: `gui.py`; Screensaver: `ui.py` | ✅ Cohesive — pure path/type helpers |
 | `artwork_repository.py` | Authoritative `artwork.db` schema + CRUD (`ArtworkRepository`) | `create_artwork_tables`, `ArtworkRepository.get_art_types`, `get_artwork_for_set`, `get_artwork_for_sets`, `get_scan_unit_status`, `list_scan_units`, `update_scan_unit_status` | `sqlite3`, `umsa_core.sqlite` | DB (read/write `artwork.db`), Schema | No | Core: `artwork_scanner`, `exodos_scanner`, `exodos_artwork`, `database.py` (facade) | ✅ Cohesive — single DB domain |
 | `artwork_scanner.py` | Scan workflow for artwork folders (Progetto Snaps, own) | `ArtworkScanner.scan`, `ArtworkScanner.__init__` | `os`, `zipfile`, `umsa_core.artwork`, `artwork_repository`, `scan_coordinator` | FS (walk dirs, read zips), DB (write `artwork.db`), ScanLock | No | GUI: `gui.py` via `DBMod.scan_artwork` facade | ✅ Cohesive — self-contained scan |
-| `database.py` | `DBMod` — compatibility facade, connection lifecycle, cross-db sync, mixed queries, orchestration | `DBMod.__init__`, `open_db`, `close*`, `scan_*` facades, `get_*` facades (repos), `define_filter`/`execute_statement`/`get_by_*` (filter), `get_cmd_line_options`, `create_cmdline`, `get_all_for_software`, `get_last_played`, `get_random_id`, `get_random_art`, `get_artwork_by_software_id`, `get_random_vgm_batch`, `load_lastgames`/`save_lastgames`, `load_filter_selections`/`save_filter_selections`/`list_filter_names`/`get_import_marker`/`run_legacy_import`/`retry_legacy_import`/`discover_legacy_paths`, `record_screensaver_display`/`get_screensaver_history` | All Core modules | DB (persistent `umsa.db`/`status.db`, `ATTACH`), FS (download), Net (download), Orchestrate | **No** (enforced by boundary tests) | GUI: `gui.py` (`self.ggdb`); Screensaver: `runtime.py` (`self.umsa.ggdb`); Core: internal | ⚠️ Large (~1857 lines, down from 69k) — Phase 4.9 proposes splitting non-DB helpers out (`scan_progress.py`, `game_labels.py`, `cmdline.py`) |
+| `database.py` | `DBMod` — compatibility facade, connection lifecycle, cross-db sync, mixed queries, orchestration | `DBMod.__init__`, `open_db`, `close*`, `scan_*` facades, `get_*` facades (repos), `define_filter`/`execute_statement`/`get_by_*` (filter), `get_cmd_line_options`, `create_cmdline`, `get_all_for_software`, `get_last_played`, `get_random_id`, `get_random_art`, `get_artwork_by_software_id`, `get_random_vgm_batch`, `load_lastgames`/`save_lastgames`, `load_filter_selections`/`save_filter_selections`/`list_filter_names`/`get_import_marker`/`run_legacy_import`/`retry_legacy_import`/`discover_legacy_paths`, `record_screensaver_display`/`get_screensaver_history`; module helpers `split_gamename`, `parse_recommended_games`, `build_filter_lists`, `run_scan_with_progress` | All Core modules | DB (persistent `umsa.db`/`status.db`, `ATTACH`), Orchestrate | **No** (enforced by boundary tests) | GUI: `gui.py` (`self.ggdb`), `umsa_gui/scan_orchestrator.py`, `umsa_gui/filter_ui.py`, `umsa_gui/media_list.py`, `umsa_gui/gamelist_actions.py`, `umsa_gui/software_selector.py`; Screensaver: `runtime.py` (`self.umsa.ggdb`); Core: internal | ⚠️ Large (~1857 lines, down from 69k) — Phase 4.9.1 inventory complete (2026-10-24, HEAD `9b62f4b`); no extraction implemented. See [`database_refactor/phase_4_9_1_inventory.md`](../database_refactor/phase_4_9_1_inventory.md) |
 | `data_paths.py` | Core profile/data directory resolution (`CoreDataPaths`) | `CoreDataPaths` (dataclass with `data_dir`, `umsa_db`, `status_db`, `dat_db`, `artwork_db`, `filters_dir`, `lastgames_file`, `lastsaver_file`, `filter_file`) | `pathlib`, `xbmcvfs` (via adapter only) | FS (paths) | **No** (`xbmcvfs` only in `umsa_core_kodi.py`) | Core: all modules needing paths; GUI/Screensaver: via `get_core_data_paths()` adapter | ✅ Cohesive — pure path logic |
 | `dat_parser.py` | Parse DAT files (clrmamepro, Logiqx) | `DatParser.parse`, `DatParser.__init__` | `xml.etree.ElementTree`, `gzip` | Parse (XML), FS (read) | No | Core: `dat_scanner.py` | ✅ Cohesive — single parser |
 | `dat_repository.py` | Authoritative `dat.db` schema + reads (`DatRepository`) | `create_dat_tables`, `DatRepository.get_dat_for_set`, `get_dat_for_sets`, `get_dat_set` | `sqlite3`, `umsa_core.sqlite` | DB (read `dat.db`), Schema | No | Core: `dat_scanner`, `database.py` (facade), `game_repository` (for `get_machines`) | ✅ Cohesive — single DB domain |
@@ -44,7 +44,7 @@
 | `status_migrations.py` | `status.db` schema migration (v0→1) | `CURRENT_VERSION`, `MIGRATIONS`, `apply_migrations` | `sqlite3`, `status_repository`, `emulator_repository`, `history_repository` | DB (DDL, `PRAGMA user_version`) | **No** | Core: `database.py` (`_open_persistent_databases`) | ✅ Cohesive — single migration |
 | `status_repository.py` | `status.db` play history + media (`StatusRepository`) | `create_status_tables`, `StatusRepository.get_status_for_set`, `get_further_media`, `get_latest_by_set_ids`, `write_status_after_play`, `save_further_media` | `sqlite3`, `umsa_core.sqlite` | DB (read/write `status.db`), Schema | **No** | Core: `database.py` (facade), `gui.py` (via `ggdb`) | ✅ Cohesive — single DB domain |
 | `support.py` | External search helpers | `marp_search`, `marp_download`, `youtube_search` | `urllib.request`, `json`, `gzip`, `xml.etree.ElementTree` | Net (HTTP), Parse (XML/JSON) | **No** | GUI: `gui.py`, `emulation.py` | ✅ Cohesive — external APIs |
-| `umsa_db_download.py` | Database download + extraction (Phase 4.9a) | `download_and_update_umsa_db` | `urllib.request`, `zipfile`, `os`, `shutil`, `sqlite3`, `data_paths` | Net (download), FS (extract), DB (sanity DDL) | **No** | Core: `database.py` (facade), GUI: `gui.py` (update flow) | ✅ Cohesive — standalone download |
+| `umsa_db_download.py` | Database download + extraction (Phase 4.9a) | `download_and_update_umsa_db` | `pathlib`, `zipfile`, `io.BytesIO`, `urllib.request` | Net (download), FS (extract) | **No** | Core: `database.py` (re-export); GUI: `umsa_gui/scan_orchestrator.py` (via `umsa_core.database`); tests import the module directly | ✅ Cohesive — standalone download; no SQL |
 | `vgm_header.py` | VGM header parsing + playback plan | `VGMHeader`, `PlaybackPlan`, `parse_vgm_header`, `calculate_playback_plan` | `struct`, `gzip`, `io`, `dataclasses` | Parse (binary VGM/VGZ) | **No** | Core: `emulation.py`, `database.py` (facade), GUI: `gui.py` | ✅ Cohesive — pure parser |
 
 ---
@@ -90,3 +90,25 @@ All 38 modules under `lib/umsa_core/` **pass** the architecture boundary test: z
 - **3 modules** need attention: `database.py` (~1857 lines, Phase 4.9 target), `emulation.py` (592 lines, facade with delegates), `artwork_scanner.py`/`dat_scanner.py`/`exodos_scanner.py`/`gb64_scanner.py` (similar pattern, could share base class but not urgent)
 - No duplicate abstractions found — existing modules cover all Core domains
 - Package layout respects Kodi-addon packaging (flat `lib/umsa_core/`); no subdirectories needed
+
+---
+
+## Phase 4.9.1 re-audit (2026-10-24, HEAD `9b62f4b`)
+
+This section records current-state verification; it does not replace the catalog above.
+
+- `database.py` remains ~1857 lines with no Phase 4.9 extraction beyond 4.9a.
+- `umsa_db_download.py` was verified in the current tree and the row above was corrected:
+  it imports only `pathlib`, `zipfile`, `io.BytesIO` and `urllib.request`; it contains no
+  SQL or `data_paths` import. Its production caller is `umsa_gui/scan_orchestrator.py`
+  through the `umsa_core.database` re-export.
+- `scan_progress.py`, `game_labels.py` and `cmdline.py` **do not exist** at this HEAD.
+- Candidate verdicts: `scan_progress.py` (justified, pure move plus re-export),
+  `split_gamename` into `game_labels.py` (justified), `create_cmdline` into `cmdline.py`
+  (justified), `get_best_machine_for_set` / `get_cmd_line_options` / mixed queries
+  (keep in `DBMod`), `parse_recommended_games` / `build_filter_lists` (defer).
+- Focused verification: 87 tests passed (`test_database`, `test_run_scan_with_progress`,
+  `test_scan_coordinator`, `test_cmd_line_options`, `test_umsa_db_download`,
+  `test_architecture_boundaries`).
+
+Full detail: [`docs/database_refactor/phase_4_9_1_inventory.md`](../database_refactor/phase_4_9_1_inventory.md).
