@@ -194,16 +194,16 @@ Following the A4 screensaver module split, five remaining correctness issues wer
 
 | Aspect | Detail |
 |--------|--------|
-| **Goal** | Move non-DB helpers out of `database.py` (~1857 → ~1797 lines) per Phase 4.9 proposal |
+| **Goal** | Move non-DB helpers out of `database.py` (~1857 → ~1673 lines) per Phase 4.9 proposal |
 | **Files** | `script.module.umsa.core/lib/umsa_core/database.py` → new modules |
-| **Status** | **Phase 4.9.1 inventory complete. Phase 4.9.2 comment cleanup complete. Phase 4.9.3a:** `_scan_state_ownership`, `run_scan_with_progress` moved to `umsa_core/scan_progress.py` with `database.py` re-exports. Remaining: `split_gamename` → `game_labels.py` (and optional `make_time_nice` wrapper), `create_cmdline` → `cmdline.py`. `get_best_machine_for_set` + `COUNTRIES`, `parse_recommended_games`, `build_filter_lists`, `get_cmd_line_options` remain in `database.py`. See [`database_refactor/phase_4_9_1_inventory.md`](../database_refactor/phase_4_9_1_inventory.md). |
-| **Verified moves** | <ul><li>`download_and_update_umsa_db` → `umsa_db_download.py` ✅ **Done (4.9a)**; production caller still imports it through `umsa_core.database`</li><li>`_scan_state_ownership`, `run_scan_with_progress` → `scan_progress.py` ✅ **Done (4.9.3a)** with re-exports and unchanged contracts</li><li>`split_gamename` → `game_labels.py` — **pending**; optional body of `make_time_nice` with a `DBMod` method facade. `COUNTRIES`/`get_best_machine_for_set` — **keep**. `parse_recommended_games`/`build_filter_lists` — **defer**.</li><li>`create_cmdline` → `cmdline.py` — **pending**; `get_cmd_line_options` — **keep in `DBMod`**</li></ul> |
+| **Status** | **Phase 4.9.1 inventory complete. Phase 4.9.2 comment cleanup complete. Phase 4.9.3 complete:** `scan_progress.py` extracted (4.9.3a), `split_gamename` and `make_time_nice` moved to `game_labels.py` with `DBMod`/module wrappers preserved (4.9.3b), `create_cmdline` moved to `cmdline.py` with `DBMod` wrapper preserved (4.9.3c). `COUNTRIES`/`get_best_machine_for_set`, `parse_recommended_games`, `build_filter_lists`, `get_cmd_line_options` remain in `database.py`. See [`database_refactor/phase_4_9_1_inventory.md`](../database_refactor/phase_4_9_1_inventory.md). |
+| **Verified moves** | <ul><li>`download_and_update_umsa_db` → `umsa_db_download.py` ✅ **Done (4.9a)**</li><li>`_scan_state_ownership`, `run_scan_with_progress` → `scan_progress.py` ✅ **Done (4.9.3a)**</li><li>`split_gamename`, `make_time_nice` → `game_labels.py` ✅ **Done (4.9.3b)** with compatibility wrappers</li><li>`create_cmdline` → `cmdline.py` ✅ **Done (4.9.3c)** with `DBMod` wrapper; `get_cmd_line_options` remains in `DBMod`</li></ul> |
 | **Responsibility moved** | Pure application helpers, scan progress, cmdline assembly — **out of `DBMod`** |
-| **Contracts unchanged** | `DBMod` re-exports names; `run_scan_with_progress` callback signature; `get_cmd_line_options`/`create_cmdline` signatures; `DBMod.make_time_nice` remains callable if its body moves |
-| **Tests** | `tests/test_database.py`, `tests/test_scan_coordinator.py`, `tests/test_run_scan_with_progress.py`, `tests/test_cmd_line_options.py`; 87 passed after 4.9.3a |
-| **Risk** | Low for the justified pure moves; moderate for `get_best_machine_for_set` — do not move it without new tests |
+| **Contracts unchanged** | `DBMod` re-exports names where needed; `run_scan_with_progress` callback signature unchanged; `get_cmd_line_options`/`create_cmdline` signatures preserved |
+| **Tests** | `tests/test_database.py`, `tests/test_scan_coordinator.py`, `tests/test_run_scan_with_progress.py`, `tests/test_cmd_line_options.py`; 87 passed after 4.9.3 |
+| **Risk** | Low for the justified pure moves; `get_best_machine_for_set` not moved (delicate) |
 | **Dependencies** | Steps 2–4 (launch prep + GUI extraction clarify what `DBMod` actually needs to keep) |
-| **Acceptance** | <ul><li>`database.py` reduced by moving non-DB helpers (facades + lifecycle + mixed queries remain)</li><li>All re-exports work; no import breaks in GUI/Screensaver</li><li>Boundary tests pass</li><li>For each moved helper, a test exists at the new module boundary</li></ul> |
+| **Acceptance** | <ul><li>Justified helpers extracted; facades + lifecycle + mixed queries remain</li><li>All re-exports/wrappers work; no import breaks in GUI/Screensaver</li><li>Boundary tests pass</li></ul> |
 
 ---
 

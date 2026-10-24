@@ -907,25 +907,23 @@ dicts/dataclasses — never `row[i]`. Add-on tests assert the consumed shapes.
 
 ---
 
-## Step 4.9 (inventory + partial extraction) — database.py module reorganisation: move non-DB code out
+## Step 4.9 (complete) — database.py module reorganisation: move non-DB code out
 
-**Status: in progress — Phase 4.9a done; Phase 4.9.1 done; Phase 4.9.2 done; Phase 4.9.3a done.** Not a prerequisite for 4.8.
+**Status: complete — Phase 4.9a done; Phase 4.9.1 inventory done; Phase 4.9.2 comment cleanup done; Phase 4.9.3 done.** Not a prerequisite for 4.8.
 
-**Responsibility:** `database.py` mixes database access with pure application helpers.
-Phase 4.9.1 verified the current tree and corrected older stale claims; Phase 4.9.3a
-moved scan progress out.
+**Responsibility:** Justified pure/application helpers moved out of `database.py`; `DBMod` retains lifecycle, attached schemas, filters, mixed queries, and orchestration.
 
-| Candidate | Suggested target | Verdict |
+| Candidate | Target | Verdict |
 |---|---|---|
-| `download_and_update_umsa_db` | `umsa_core/umsa_db_download.py` | ✅ **Done (4.9a)** — `DBMod` re-exports for backward compatibility. |
-| `_scan_state_ownership`, `run_scan_with_progress` | `umsa_core/scan_progress.py` | ✅ **Done (4.9.3a)** — moved with `database.py` re-exports; contracts unchanged. |
-| `split_gamename` | `umsa_core/game_labels.py` | **Pending (4.9.3b)** — pure string helper; optional `make_time_nice` body with `DBMod.make_time_nice` facade. `COUNTRIES`/`get_best_machine_for_set` — **keep in `database.py`**. |
-| `parse_recommended_games`, `build_filter_lists` | (defer) | **Defer** — duck-type `DBMod` query APIs. |
-| `create_cmdline` | `umsa_core/cmdline.py` | **Pending (4.9.3c)** — pure assembly with compatibility facade. `get_cmd_line_options` — **keep in `DBMod`**. |
+| `download_and_update_umsa_db` | `umsa_core/umsa_db_download.py` | ✅ **Done (4.9a)** |
+| `_scan_state_ownership`, `run_scan_with_progress` | `umsa_core/scan_progress.py` | ✅ **Done (4.9.3a)** |
+| `split_gamename`, `make_time_nice` | `umsa_core/game_labels.py` | ✅ **Done (4.9.3b)** with `DBMod`/module wrappers preserved |
+| `create_cmdline` | `umsa_core/cmdline.py` | ✅ **Done (4.9.3c)** with `DBMod` wrapper preserved |
+| `get_cmd_line_options` | `database.py` | **Kept in `DBMod`** (repository orchestration) |
+| `get_best_machine_for_set`, `COUNTRIES` | `database.py` | **Kept** |
+| `parse_recommended_games`, `build_filter_lists` | `database.py` | **Deferred** per inventory |
 
-**Rules:** `DBMod` re-exports the names it still exposes to callers, so public imports
-keep working; no Kodi import may appear in any moved module (verify against the step 4.0
-guard); no behaviour change. Full details: [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md).
+**Rules:** Compatibility wrappers/re-exports preserved where required; no Kodi imports in moved modules; behavior unchanged. Full details: [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md).
 
 ---
 

@@ -383,18 +383,19 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
 - [x] Step 4.8 — row-leak closure: facade returns only unambiguous shapes; named access only across add-on boundaries. **Implemented (committed as `e4fd570`)**.
 - [x] **Artwork/DAT source-of-truth refactor** — make `artwork.db` and `dat.db` the authoritative sources for scanned artwork and DAT data. Remove the redundant copy workflow (`add_art_to_db`, `add_dat_to_db`, and the copy operations in `open_db`). The persistent `umsa.db` connection is now read-only and attaches `artwork.db` as `art` and `dat.db` as `dat` schemas. Scanner workflows continue to write to their respective source databases through their own writable connections. Mixed game/artwork/DAT queries in `DBMod` now use schema-qualified table names (`art.art_set`, `dat.dat`, `dat.dat_set`). `ArtworkRepository` and `DatRepository` support schema qualification via a `schema` parameter (`"main"` for scanner connections, `"art"`/`"dat"` for DBMod reads). Legacy copied tables in existing `umsa.db` files remain unused but are not dropped; a fresh database download naturally removes them. **Implemented (committed as `5a51461` + `238bb41` + `9a98cfe`)**.
 - [x] **Phase 4.9a: Extract `download_and_update_umsa_db()`** — moved the standalone database download helper from `umsa_core/database.py` to `umsa_core/umsa_db_download.py`. The function retains its exact public signature and behavior. `DBMod` re-exports the name for backward compatibility. New module is Kodi-free and passes architecture boundary tests. New regression tests added in `tests/test_umsa_db_download.py` (7 tests). **Implemented**.
-- [x] **Phase 4.9.1: Inventory and documentation update** — documentation-only review of `database.py` at HEAD `9b62f4b` (2026-10-24); updated audit/plan/release docs. Verified 87 tests passed. See [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md).
-- [x] **Phase 4.9.2: Comment cleanup in `database.py`** — removed redundant comments/docstrings only; no behavior changes; restored the two required operational facts. Verified 87 tests passed.
-- [x] **Phase 4.9.3a: Extract scan progress** — moved `_scan_state_ownership` and `run_scan_with_progress` to `umsa_core/scan_progress.py` with `database.py` re-exports; contracts unchanged. Verified 87 tests passed.
+- [x] **Phase 4.9.1: Inventory and documentation update** — documentation-only review; updated audit/plan/release docs. Verified 87 tests passed.
+- [x] **Phase 4.9.2: Comment cleanup in `database.py`** — removed redundant comments/docstrings only; restored required facts. Verified 87 tests passed.
+- [x] **Phase 4.9.3a: Extract scan progress** — moved `_scan_state_ownership` and `run_scan_with_progress` to `umsa_core/scan_progress.py` with `database.py` re-exports.
+- [x] **Phase 4.9.3b: Extract game labels** — moved `split_gamename` and `make_time_nice` to `umsa_core/game_labels.py`; `DBMod` and module wrappers preserved.
+- [x] **Phase 4.9.3c: Extract cmdline assembly** — moved `create_cmdline` to `umsa_core/cmdline.py`; `DBMod` wrapper preserved.
 
 ### Planned / not yet implemented (see roadmap)
 
-- [ ] Phase 4.9.3b — move `split_gamename` to `game_labels.py` (optionally `make_time_nice` with `DBMod` wrapper); keep `COUNTRIES` and `get_best_machine_for_set` in `database.py`.
-- [ ] Phase 4.9.3c — move `create_cmdline` to `cmdline.py`; keep `get_cmd_line_options` in `database.py`. `parse_recommended_games` and `build_filter_lists` remain deferred.
+- None — justified Phase 4.9 extractions complete per inventory. `COUNTRIES` and `get_best_machine_for_set` remain in `database.py`; `parse_recommended_games` and `build_filter_lists` remain deferred per inventory; `get_cmd_line_options` remains in `DBMod`.
 
-### Next planned step
+### Status
 
-**Phase 4.9.3b** next. See [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md) and [`roadmap.md`](roadmap.md).
+**Phase 4.9 complete** (4.9a + 4.9.1 + 4.9.2 + 4.9.3). See [`phase_4_9_1_inventory.md`](phase_4_9_1_inventory.md) and [`roadmap.md`](roadmap.md).
 
 ## Boundary guards (step 4.0 implemented)
 

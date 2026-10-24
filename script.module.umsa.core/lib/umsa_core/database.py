@@ -68,6 +68,7 @@ from .status_migrations import apply_migrations
 from .status_repository import StatusRepository
 
 from .scan_progress import _scan_state_ownership, run_scan_with_progress  # noqa: F401
+from .game_labels import make_time_nice, split_gamename  # noqa: F401
 
 
 def _core_data_paths(db_path):
@@ -131,28 +132,7 @@ COUNTRIES = {
     '8BR'   : ('bra',),
 }
 
-def split_gamename(complete_name):
-    """Split the complete name of a MAME description into the name and details plus version.
-
-    Return: gamename, detail
-    """
-
-    gamename, detail, details = '', '', []
-    for name, detail in findall(r'(.*?) (\([^(]*?\))', complete_name):
-        gamename += name.strip()
-        details.append(detail[1:-1])
-    detail = ', '.join(details)
-    if not gamename:
-        gamename = complete_name
-
-    version = search(r'([vV]\d+\.\d+)', gamename)
-    if version:
-        if not detail:
-            detail = version.group()
-        else:
-            detail = f'{version.group()} {detail}'
-
-    return gamename, detail
+from .game_labels import split_gamename  # noqa: F401
 
 class DBMod:
     """Database class for umsa.info sqlite3 database"""
@@ -886,27 +866,9 @@ class DBMod:
         Parameters: timestamp
         Optional: now = now-(Y-m-d H:M)
         """
+        from .game_labels import make_time_nice as _make_time_nice
 
-        if not timestamp:
-            return ""
-        if now:
-            minute = divmod(
-                int(time.time() - time.mktime(time.strptime(timestamp, "%Y-%m-%d %H:%M"))), 60
-            )[0]
-        else:
-            minute = divmod(int(timestamp), 60)[0]
-        hour, minute = divmod(minute, 60)
-        day, hour = divmod(hour, 24)
-        year, day = divmod(day, 365)
-        if year > 0 and day > 0:
-            last_nice = "%dy %dd" % (year, day)
-        elif day > 0:
-            last_nice = "%dd" % (day)
-        elif hour == 0:
-            last_nice = "%dm" % (minute)
-        else:
-            last_nice = "%d:%02dh" % (hour, minute)
-        return last_nice
+        return _make_time_nice(timestamp, now=now)
 
     def get_status_for_set(self, set_id):
         """Return play status for a set id"""
@@ -1289,35 +1251,9 @@ class DBMod:
 
     def create_cmdline(self, parts, devices, setname):
         """create command line to start a software list item in mame"""
+        from .cmdline import create_cmdline as _create_cmdline
 
-        cmd_options = []
-        first_device = None
-
-        hit = False
-        for device in devices:
-            # split the interface
-            # because interface="c64_cart,vic10_cart" for c128_cart and c64_cart
-            for interface in device[1].split(','):
-                for part in parts:
-                    if interface == part[1]:
-                        hit = True
-                        cmd_options.extend(
-                            [
-                                f'-{device[0]}',
-                                f'{setname}:{part[0]}'
-                            ]
-                        )
-                        # use device from first hit for snaps and states
-                        if not first_device:
-                            first_device = device[0]
-                        parts.remove(part)
-                        break
-            # only pack one part into a device
-            # TODO: make exception for x68000: -flop1 x -flop2 y
-            if hit:
-                break
-
-        return cmd_options, first_device
+        return _create_cmdline(parts, devices, setname)
 
     # create commandline options for mame
     def get_cmd_line_options(self, set_id, set_name, machine_name, swl_name):
