@@ -1166,33 +1166,44 @@ class UMSA(xbmcgui.WindowXMLDialog):
         Save last ten, stop video, close database
         """
 
-        self._save_lastgames()
+        try:
+            self._save_lastgames()
+        except Exception as exc:
+            xbmc.log(f"UMSA gui: exit: could not save last games: {exc}", xbmc.LOGERROR)
+
         if self.emulation.playvgm:
             self.emulation.playrandomvgm = None
-            self.emulation.send_vgmaction(b'exit')
+            try:
+                self.emulation.send_vgmaction(b'exit')
+            except Exception as exc:
+                xbmc.log(f"UMSA gui: exit: could not stop VGM playback: {exc}", xbmc.LOGERROR)
             try:
                 clear_vgm_info()
-            except Exception:
-                pass
+            except Exception as exc:
+                xbmc.log(f"UMSA gui: exit: could not clear VGM info: {exc}", xbmc.LOGERROR)
+
         try:
             if hasattr(self, 'ggdb') and self.ggdb and hasattr(self.ggdb, 'scan_status'):
                 self.ggdb.scan_status = False
                 xbmc.log('UMSA gui: exit: requested scan stop', xbmc.LOGDEBUG)
-        except Exception:
-            pass
+        except Exception as exc:
+            xbmc.log(f"UMSA gui: exit: could not request scan stop: {exc}", xbmc.LOGERROR)
+
         try:
-            if hasattr(self, 'scan_thread') and self.scan_thread and self.scan_thread.is_alive():
+            scan_thread = getattr(self, 'scan_thread', None)
+            if scan_thread and scan_thread.is_alive():
                 try:
-                    self.scan_thread.join(timeout=5)
-                except Exception:
-                    pass
-        except Exception:
-            # TODO output error to log
-            pass
+                    scan_thread.join(timeout=5)
+                except Exception as exc:
+                    xbmc.log(f"UMSA gui: exit: could not join scan thread: {exc}", xbmc.LOGERROR)
+        except Exception as exc:
+            xbmc.log(f"UMSA gui: exit: could not inspect scan thread: {exc}", xbmc.LOGERROR)
+
         try:
             self.ggdb.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            xbmc.log(f"UMSA gui: exit: could not close database: {exc}", xbmc.LOGERROR)
+
         self.close()
 
 

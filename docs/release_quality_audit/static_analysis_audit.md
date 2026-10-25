@@ -2,6 +2,7 @@
 
 **Audited:** 2026-10-23 (historical audit at HEAD `4186b5f5dd3479b19df84215d1fa21a4cbb38f29`)
 **P0 revalidation:** 2026-10-25 at HEAD `af3bd11598692943e9c8f8a3dbc5ef457a6f5f3f`
+**P0 round 2 (GUI shutdown cleanup):** 2026-10-25 at HEAD `a74976bf1a1145c61d7b43f01568ef6f33fbb64a`
 **Tools:** Ruff (primary), mypy (limited), Architecture boundary tests (AST-based)  
 **Scope:** All production Python in three add-ons
 
@@ -11,9 +12,9 @@
 
 | Tool | Version | Config | Status |
 |------|---------|--------|--------|
-| **Ruff** | 0.16.10 (via `.venv-debian-vm`) | default | ✅ Active — 227 baseline / 196 after P0 round 1 (default rules) |
+| **Ruff** | 0.16.10 (via `.venv-debian-vm`) | default | ✅ Active — 227 baseline / 196 after P0 round 1 / 193 after P0 round 2 (default rules) |
 | **mypy** | 1.x (via `.venv-debian-vm`) | `mypy.ini` / default | ⚠️ Partial — single modules only with `--follow-imports=skip` |
-| **pytest** | 9.x | default | ✅ Active — 1130 passed, 0 failed, 5 skipped (P0 round 1 rerun) |
+| **pytest** | 9.x | default | ✅ Active — P0 round 1 rerun: 1130 passed, 0 failed, 5 skipped; P0 round 2 focused GUI run: 94 passed; P0 round 2 full suite: 1141 passed, 5 skipped |
 | **Architecture boundary tests** | Custom (AST) | `tests/test_architecture_boundaries.py` | ✅ 7/7 passed |
 
 ### Configuration Files
@@ -29,7 +30,7 @@
 
 ## Ruff Findings
 
-### P0 round 1 — reproduced baseline and current result
+### P0 rounds 1-2 — reproduced baseline and current result
 
 Command (production roots only):
 
@@ -41,32 +42,40 @@ Command (production roots only):
     --select BLE001,S110,PLW1510 --statistics
 ```
 
-| Rule | Baseline at `af3bd11` | After round 1 |
-|------|----------------------|---------------|
-| **BLE001** | 108 | 105 |
-| **S110** | 54 | 29 |
-| **PLW1510** | 1 | **0** |
-| **Total reported rows** | **163** | **134** |
-| **Unique exception source locations** | **108** | **105** |
+| Rule | Baseline at `af3bd11` | After round 1 | After round 2 at `a74976b` |
+|------|----------------------|---------------|----------------------------|
+| **BLE001** | 108 | 105 | 107 |
+| **S110** | 54 | 29 | 24 |
+| **PLW1510** | 1 | **0** | **0** |
+| **Total reported rows** | **163** | **134** | **131** |
+| **Unique exception source locations** | **108** | **105** | **107** |
 
 **Counting note:** the baseline reported 162 `BLE001`+`S110` rows but only 108
 unique file/line locations, because every `S110` location was also a `BLE001`
 location. Do not add the two rule counts as if they were independent sites.
-After round 1, the 105 `BLE001` rows are 105 unique locations; `S110` remains a
+After round 2, the 107 `BLE001` rows are 107 unique locations; `S110` remains a
 subset of those locations.
+
+`BLE001` increased by 2 in round 2 because `UMSA.exit()` now catches and logs
+failures from two operations that previously had no handler at all
+(`_save_lastgames()` and the VGM stop request). The 5 `S110` sites in
+`gui.py`'s `exit()` were replaced with logged handlers, so `S110` fell by 5.
 
 The historical totals (BLE001=106, S110=54, PLW1510=1) were **not reproduced**
 at `af3bd11`; the reproduced baseline was BLE001=108, S110=54, PLW1510=1.
 Under Ruff's default rule set the reproduced baseline was 227 findings across
 19 codes (the historical audit recorded 225); after round 1 it is 196 findings
-across 18 codes.
+across 18 codes, and after round 2 it is 193 findings (rechecked at `a74976b`).
 
-### Current findings by rule (after round 1)
+### Current findings by rule (after round 2)
+
+Non-`BLE001`/`S110` counts were last rechecked in round 1 and were unchanged by
+the round 2 edit.
 
 | Code | Count | Description | Fixable |
 |------|-------|-------------|---------|
-| **BLE001** | 105 | Blind `except Exception:` — catches too broadly | ❌ |
-| **S110** | 29 | `try: ... except Exception: pass` — silent failure | ❌ |
+| **BLE001** | 107 | Blind `except Exception:` — catches too broadly | ❌ |
+| **S110** | 24 | `try: ... except Exception: pass` — silent failure | ❌ |
 | **F401** | 21 | Unused import | ✅ |
 | **UP031** | 10 | Legacy `%` formatting → prefer f-strings | ❌ |
 | **UP007** | 6 | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ❌ |
@@ -83,7 +92,7 @@ across 18 codes.
 | **C413** | 1 | Unnecessary `sorted()` call | ❌ |
 | **RUF046** | 1 | Unnecessary `int()` cast | ❌ |
 | **RUF059** | 1 | Unused unpacked variable | ❌ |
-| **Total** | **196** | | **25 safe fixes** |
+| **Total** | **193** | | **25 safe fixes** |
 
 > `E722` (bare `except:`), `B006` (mutable default) and `TRY203` were reported
 > by earlier audits; `E722`/`B006` are absent and the 2 `TRY203` findings were
@@ -91,7 +100,7 @@ across 18 codes.
 
 ### High-Priority Findings (Correctness Risk)
 
-#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 1)
+#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 2)
 
 Remaining findings grouped by module and functional risk. Counts are Ruff
 reported rows; the `S110` rows are the same source locations as `BLE001` rows,
@@ -100,7 +109,7 @@ so the unique location counts are the `BLE001` counts.
 | Module | BLE001 | S110 | Unique locations | Risk / status |
 |--------|--------|------|------------------|---------------|
 | `emulator_launcher.py` | 25 | 0 | 25 | Medium-low. Round 1 removed every silent pass and the high-risk startup paths. Remaining broad handlers are logged UI progress/close/notification, media pause, optional output, and best-effort status/artwork boundaries. |
-| `gui.py` | 5 | 5 | 5 | Medium. Shutdown/cleanup only (`exit()` path); failures are still silent and should be made diagnosable in a later focused round. |
+| `gui.py` | 7 | 0 | 7 | Low. Round 2 made every `exit()` cleanup step log its failure and continue; the 7 broad catches cover save, VGM stop/label, scan stop, thread check/join, and database close. |
 | `umsa_gui/emulator_setup.py` | 4 | 2 | 4 | Low-medium. Emulator output list and final notification UI; failures do not affect emulator execution. |
 | `umsa_gui/optional_plugins.py` | 1 | 0 | 1 | Low. Intentional optional PDF-plugin import fallback. |
 | `umsa_gui/scan_orchestrator.py` | 1 | 1 | 1 | Low. Progress-dialog close cleanup. |
@@ -125,6 +134,14 @@ Startup failures (`OSError`, including `ProcessLaunchError`) are logged at error
 level, close the progress dialog, clear the emulator-running property in the
 existing `finally`, and re-raise. Optional UI/cleanup handlers remain broad on
 purpose but are no longer silent.
+
+**Round 2 changes in `gui.py` (`UMSA.exit()`):** each best-effort shutdown step
+now has its own handler that logs a concise error and lets later cleanup run:
+`_save_lastgames()`, `send_vgmaction(b'exit')`, `clear_vgm_info()`, the scan-stop
+request, the scan-thread check and bounded `join(timeout=5)`, and `ggdb.close()`.
+The final `close()` is still unconditional. Current remaining locations at
+`a74976b` are `gui.py:1171`, `1178`, `1182`, `1189`, `1197`, `1199`, `1204` —
+all `BLE001` with zero `S110`.
 
 #### 2. PLW1510 — `subprocess.run()` without `check=True` (fixed in round 1)
 
@@ -211,6 +228,20 @@ Cannot type-check without Kodi stubs (`Kodistubs` package). Requires Kodi runtim
 
 ## Test Suite Status
 
+### P0 round 2 verification (2026-10-25, HEAD `a74976b`)
+
+| Command | Result |
+|---------|--------|
+| `pytest tests/test_gui_shutdown.py -v` | **11 passed** |
+| `pytest tests/test_gui_shutdown.py tests/test_gui_history_navigation.py tests/test_umsa_gui_workflows.py tests/test_gui_oninit_first_start.py tests/test_frontend_entrypoint.py tests/test_architecture_boundaries.py -q` | **94 passed** |
+| `pytest tests/ -q` | **1141 passed, 5 skipped, 18 subtests passed** |
+| `ruff check plugin.program.umsa.mame.surfer/resources/lib/gui.py --select BLE001,S110 --statistics` | **7 BLE001, 0 S110** |
+| `ruff check plugin.program.umsa.mame.surfer screensaver.umsa.mame.surfer script.module.umsa.core --select BLE001,S110,PLW1510 --statistics` | **107 BLE001, 24 S110, 0 PLW1510** (131 rows) |
+| `ruff check . --statistics` | **193 findings** (down from 196) |
+
+The round 2 GUI shutdown regression tests are local-only (`tests/` is
+gitignored, like the rest of the suite).
+
 ### P0 round 1 verification (2026-10-25, HEAD `af3bd11`)
 
 | Command | Result |
@@ -286,7 +317,9 @@ the table is kept only for chronology.
     --select BLE001,S110,PLW1510
 # → At HEAD af3bd11: baseline 163 reported rows (BLE001=108, S110=54,
 #   PLW1510=1; 108 unique locations); after round 1: 134 rows
-#   (BLE001=105, S110=29, PLW1510=0; 105 unique locations).
+#   (BLE001=105, S110=29, PLW1510=0; 105 unique locations);
+#   after round 2 at a74976b: 131 rows
+#   (BLE001=107, S110=24, PLW1510=0; 107 unique locations).
 ```
 
 ### Recommended (P1 — Should Pass)
@@ -322,7 +355,7 @@ done
 | Architecture boundary tests | 7/7 ✅ | 7/7 ✅ |
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
-| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0) | **No increase**; continue B1/B2 triage |
+| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0; +2 BLE001 from newly logged `exit()` operations, -5 S110) | **No new silent failures**; continue B1/B2 triage |
 | Ruff style issues | 62 (default rules minus BLE001/S110/PLW1510) | P1: UP031 → 0 |
 | Mypy (`vgm_header.py` only) | Clean | Clean |
 | Pre-existing test failures | 0 (13 historical resolved); one transient network failure in round 1, not reproducible | No new |
@@ -335,7 +368,7 @@ done
 | Priority | Action | Owner |
 |----------|--------|-------|
 | P0 | Close the 3 open manual areas (emulator matrix, Retroplayer, clean install/upgrade) | Maintainer |
-| P0 | Continue B1/B2 triage (remaining BLE001=105, S110=29 after round 1); `emulator_launcher.py` startup risks are fixed, its remaining 25 handlers are logged UI/cleanup boundaries | Dev |
+| P0 | Continue B1/B2 triage (remaining BLE001=107, S110=24 after round 2); `emulator_launcher.py` startup risks and `gui.py` shutdown cleanup are fixed and all their remaining broad handlers log; the rest are UI/scan/socket boundaries | Dev |
 | ~~P0~~ | ~~Fix PLW1510~~ ✅ **Fixed in round 1** at `emulation.py` terminal fallback with regression tests | Dev |
 | P1 | Convert UP031 (10 f-string candidates) | Dev |
 | P1 | Fix UP007 (6 union syntax), SIM115 (5 context managers) | Dev |
