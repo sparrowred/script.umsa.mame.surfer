@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from umsa_core import log
 from umsa_core.emulation import CHDExtractionCancelled, CHDExtractionError
 
 
@@ -48,8 +49,10 @@ def launch_emulator(ctx: LaunchCtx) -> None:
     if getattr(ctx.emulation, 'playvgm', False):
         try:
             ctx.emulation.send_vgmaction(b'exit')
-        except Exception:
-            pass
+        except Exception as error:
+            log(
+                f'UMSA gui: could not stop VGM before emulator launch: {error}',
+                level='warning')
         if getattr(ctx.emulation, 'playrandomvgm', None) is not None:
             ctx.emulation.playrandomvgm = None
         ctx.sleep(500)
@@ -57,8 +60,10 @@ def launch_emulator(ctx: LaunchCtx) -> None:
     # UI prep
     try:
         ctx.emu_dialog.create("Emulator: {}".format(emu_infos.get('name', '')), 'warm up...')
-    except Exception:
-        pass
+    except Exception as error:
+        log(
+            f'UMSA gui: could not create emulator progress dialog: {error}',
+            level='warning')
     ctx.stop_screensaver()
 
     # build emurun
@@ -83,12 +88,15 @@ def launch_emulator(ctx: LaunchCtx) -> None:
                 if i['disk']:
                     select.append(i['disk'])
                     select_index.append(idx)
-            except Exception:
-                pass
+            except (KeyError, IndexError, TypeError) as error:
+                log(
+                    f'UMSA gui: skipping invalid disk row {idx}: {error}',
+                    level='warning')
         if select:
             try:
                 which_disk = ctx.dialog.select('Select CHD:', select)
-            except Exception:
+            except Exception as error:
+                log(f'UMSA gui: CHD selection failed: {error}', level='warning')
                 which_disk = -1
             if which_disk > -1:
                 try:
@@ -96,8 +104,10 @@ def launch_emulator(ctx: LaunchCtx) -> None:
                     this_disk = emurun_disks[picked]
                     emurun_disks[picked] = emurun_disks[0]
                     emurun_disks[0] = this_disk
-                except Exception:
-                    pass
+                except (IndexError, TypeError) as error:
+                    log(
+                        f'UMSA gui: could not promote selected CHD: {error}',
+                        level='warning')
 
     exe = emu_infos.get('exe', '') or ''
 
@@ -105,15 +115,19 @@ def launch_emulator(ctx: LaunchCtx) -> None:
     if 'exodos' in exe:
         try:
             ctx.emu_dialog.update(10, 'searching shellscript...')
-        except Exception:
-            pass
+        except Exception as error:
+            log(
+                f'UMSA gui: could not update emulator progress: {error}',
+                level='debug')
         ctx.emulation.prepare_exodos_run(emu_infos)
     # marp
     elif exe == "marp":
         try:
             ctx.emu_dialog.update(20, 'download replay...')
-        except Exception:
-            pass
+        except Exception as error:
+            log(
+                f'UMSA gui: could not update emulator progress: {error}',
+                level='debug')
         ctx.emulation.prepare_marp_run(emu_infos)
     # mame
     elif exe == "mame":
@@ -128,41 +142,56 @@ def launch_emulator(ctx: LaunchCtx) -> None:
             ctx.stop_screensaver()
             try:
                 ctx.emu_dialog.close()
-            except Exception:
-                pass
+            except Exception as error:
+                log(
+                    f'UMSA gui: could not close emulator dialog after CHD '
+                    f'cancellation: {error}', level='warning')
             return
         except CHDExtractionError as error:
             ctx.stop_screensaver()
             try:
                 ctx.emu_dialog.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                log(
+                    f'UMSA gui: could not close emulator dialog after CHD '
+                    f'error: {close_error}', level='warning')
             try:
                 ctx.dialog.notification(
                     f'{emu_infos.get("name", "")} error', str(error),
                     xbmcgui.NOTIFICATION_ERROR, 3500)
-            except Exception:
-                pass
+            except Exception as notify_error:
+                log(
+                    f'UMSA gui: could not show CHD error notification: '
+                    f'{notify_error}', level='warning')
             return
-        except Exception:
+        except Exception as error:
             ctx.stop_screensaver()
             try:
                 ctx.emu_dialog.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                log(
+                    f'UMSA gui: could not close emulator dialog after '
+                    f'preparation error: {close_error}', level='warning')
+            log(
+                f'UMSA gui: emulator preparation failed: {error}',
+                level='error')
             raise
         if not error:
             ctx.stop_screensaver()
             try:
                 ctx.emu_dialog.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                log(
+                    f'UMSA gui: could not close emulator dialog after '
+                    f'missing ROM: {close_error}', level='warning')
             try:
                 ctx.dialog.notification(
                     f'{emu_infos.get("name", "")} error', 'rom not found',
                     xbmcgui.NOTIFICATION_ERROR, 3500)
-            except Exception:
-                pass
+            except Exception as notify_error:
+                log(
+                    f'UMSA gui: could not show missing ROM notification: '
+                    f'{notify_error}', level='warning')
             return
         # multiple extracted files
         if ('extract_files' in ctx.emulation.emurun and
@@ -170,7 +199,10 @@ def launch_emulator(ctx: LaunchCtx) -> None:
             try:
                 which_file = ctx.dialog.select(
                     'Select file: ', ctx.emulation.emurun['extract_files'])
-            except Exception:
+            except Exception as error:
+                log(
+                    f'UMSA gui: extracted file selection failed: {error}',
+                    level='warning')
                 which_file = -1
             if which_file > -1:
                 try:
@@ -178,8 +210,10 @@ def launch_emulator(ctx: LaunchCtx) -> None:
                         ctx.emulation.emurun['folder'],
                         ctx.emulation.emurun['extract_files'][which_file]
                     )
-                except Exception:
-                    pass
+                except (KeyError, IndexError, TypeError) as error:
+                    log(
+                        f'UMSA gui: could not select extracted file: {error}',
+                        level='warning')
 
     # pause media
     try:
@@ -187,14 +221,18 @@ def launch_emulator(ctx: LaunchCtx) -> None:
             ctx.player.stop()
         elif ctx.player.isPlayingAudio():
             ctx.player.pause()
-    except Exception:
-        pass
+    except Exception as error:
+        log(
+            f'UMSA gui: could not pause media before emulator launch: {error}',
+            level='warning')
 
     # execute
     try:
         ctx.emu_dialog.update(50, 'emulator running...')
-    except Exception:
-        pass
+    except Exception as error:
+        log(
+            f'UMSA gui: could not update emulator progress: {error}',
+            level='debug')
     import time
     ctx.sleep(100)
     emurun = ctx.emulation.emurun
@@ -204,18 +242,24 @@ def launch_emulator(ctx: LaunchCtx) -> None:
     err = ''
     start = time.time()
     try:
-        if uses_process_runner:
-            try:
+        try:
+            if uses_process_runner:
                 ctx.emulation.start_managed_process(
                     capture_output=(emurun.get('emulation_start') == 1)
                 )
-            except Exception:
-                raise
-        else:
-            try:
+            else:
                 ctx.emulation.run()
-            except Exception:
-                raise
+        except OSError as error:
+            log(
+                f'UMSA gui: {emu_infos.get("name", "")} launch failed: {error}',
+                level='error')
+            try:
+                ctx.emu_dialog.close()
+            except Exception as close_error:
+                log(
+                    f'UMSA gui: could not close emulator dialog after launch '
+                    f'failure: {close_error}', level='warning')
+            raise
         out, err = ctx.emulation.wait_for_completion(dialog=ctx.emu_dialog, sleep=ctx.sleep)
     finally:
         ctx.set_emulator_running(False)
@@ -223,15 +267,19 @@ def launch_emulator(ctx: LaunchCtx) -> None:
     end = time.time()
     try:
         ctx.emu_dialog.update(75, 'emulator stopped...')
-    except Exception:
-        pass
+    except Exception as error:
+        log(
+            f'UMSA gui: could not update emulator progress: {error}',
+            level='debug')
     notif = f"Played: {ctx.ggdb.make_time_nice(end - start) if ctx.ggdb else int(end - start)}"
     ctx.stop_screensaver()
     try:
         if ctx.player.isPlayingAudio():
             ctx.player.pause()
-    except Exception:
-        pass
+    except Exception as error:
+        log(
+            f'UMSA gui: could not pause media after emulator run: {error}',
+            level='warning')
 
     # average speed
     try:
@@ -241,10 +289,14 @@ def launch_emulator(ctx: LaunchCtx) -> None:
                 percent = rev[rev.find('( %') + 2:rev.find(' :deeps')][::-1]
                 if percent != "100.00%":
                     notif += f" - {percent}"
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except (IndexError, ValueError) as error:
+                log(
+                    f'UMSA gui: could not parse emulator average speed: {error}',
+                    level='debug')
+    except Exception as error:
+        log(
+            f'UMSA gui: could not inspect emulator average speed: {error}',
+            level='debug')
 
     # exit code + output
     exit_code = None
@@ -252,7 +304,10 @@ def launch_emulator(ctx: LaunchCtx) -> None:
         try:
             st = ctx.emulation.managed_process_status()
             exit_code = getattr(st, 'exit_code', None)
-        except Exception:
+        except Exception as error:
+            log(
+                f'UMSA gui: could not read emulator exit status: {error}',
+                level='warning')
             exit_code = None
     if exit_code is not None and exit_code != 0:
         try:
@@ -260,8 +315,10 @@ def launch_emulator(ctx: LaunchCtx) -> None:
             if isinstance(cmd_args, str):
                 cmd_args = [cmd_args]
             ctx.add_or_update_emu_output(out or '', err or '', int(exit_code), cmd_args)
-        except Exception:
-            pass
+        except Exception as error:
+            log(
+                f'UMSA gui: could not show emulator output: {error}',
+                level='warning')
         notif += "\nerror: see bottom left"
 
     # finalize status
@@ -270,24 +327,34 @@ def launch_emulator(ctx: LaunchCtx) -> None:
             if int(end - start) > 60:
                 try:
                     ctx.ggdb.write_status_after_play(ctx.actset.get('id'), int(end - start))
-                except Exception:
-                    pass
+                except Exception as error:
+                    log(
+                        f'UMSA gui: could not record emulator play time: {error}',
+                        level='warning')
             if emu_infos.get('exe') == "mame":
                 ctx.sleep(100)
                 try:
                     ctx.actset['localsnaps'] = ctx.search_snaps(ctx.actset)
-                except Exception:
-                    pass
+                except Exception as error:
+                    log(
+                        f'UMSA gui: could not search snapshots after emulator '
+                        f'run: {error}', level='warning')
                 try:
                     ctx.show_artwork('set')
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except Exception as error:
+                    log(
+                        f'UMSA gui: could not show artwork after emulator run: '
+                        f'{error}', level='warning')
+    except Exception as error:
+        log(
+            f'UMSA gui: could not finalize emulator status: {error}',
+            level='warning')
 
     # final notify
     try:
         mode = ctx.get_screensaver_mode()
         ctx.notify_final(notif, emu_infos.get('name', ''), mode)
-    except Exception:
-        pass
+    except Exception as error:
+        log(
+            f'UMSA gui: could not show final emulator notification: {error}',
+            level='warning')

@@ -7,6 +7,7 @@ from threading import Thread
 from time import sleep as time_sleep
 
 from umsa_core import (
+    ProcessLaunchError,
     ProcessRunner,
     ProcessState,
     ProcessStatus,
@@ -283,7 +284,19 @@ class Emulation:
                 run += f'"{i}" '
             torun = [self.terminal, '-e', run]
             log(f'UMSA Emulation run {torun}', level='debug')
-            subprocess.run(torun)
+            try:
+                completed = subprocess.run(torun, check=False)
+            except OSError as error:
+                log(
+                    f'UMSA Emulation: could not start terminal fallback '
+                    f'{torun!r}: {error}', level='error')
+                raise ProcessLaunchError(
+                    f'could not start terminal fallback {torun!r}: {error}'
+                ) from error
+            if completed.returncode != 0:
+                log(
+                    f'UMSA Emulation: terminal fallback exited with code '
+                    f'{completed.returncode}: {torun!r}', level='error')
 
     def _process_args(self):
         """Build the command used by direct process launches."""

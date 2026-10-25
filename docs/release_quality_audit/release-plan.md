@@ -3,7 +3,8 @@
 **Target:** Readiness-based (approx. 2 months)  
 **Generated:** 2026-10-23  
 **Based on:** Release quality audit (2026-10-23)  
-**HEAD inspected:** `4186b5f5dd3479b19df84215d1fa21a4cbb38f29`
+**HEAD inspected:** `4186b5f5dd3479b19df84215d1fa21a4cbb38f29` (historical audit)
+**P0 revalidation HEAD:** `af3bd11598692943e9c8f8a3dbc5ef457a6f5f3f` (2026-10-25)
 
 ---
 
@@ -39,26 +40,26 @@
 
 | # | Task | Status | Priority | Rationale | Acceptance Criteria | Related Files / Audit |
 |---|------|--------|----------|-----------|---------------------|----------------------|
-| B1 | Fix 106 `BLE001` (blind `except Exception:`) | `OPEN` | P0 | Hides real errors; 10 in `emulator_launcher.py` alone | All `except Exception:` replaced with specific types + logging | `static_analysis_audit.md`, `emulator_launcher.py`, `gui.py`, `ui.py` |
-| B2 | Fix 54 `S110` (`except Exception: pass`) | `OPEN` | P0 | Silent failures mask bugs | All silent catches replaced with logging or removed | `static_analysis_audit.md` |
+| B1 | Triage `BLE001` (blind `except Exception:`) | `IN PROGRESS` | P0 | Reproduced baseline at `af3bd11`: 108 (not historical 106). Round 1 fixed the high-risk `emulator_launcher.py` startup paths; 105 remain | Continue per-module triage; all remaining handlers justified and diagnosable; do not mass-replace | `static_analysis_audit.md`, `emulator_launcher.py`, `gui.py` |
+| B2 | Triage `S110` (`except Exception: pass`) | `IN PROGRESS` | P0 | Reproduced baseline at `af3bd11`: 54. Round 1 removed all 25 in `emulator_launcher.py`; 29 remain (all also BLE001 locations) | All silent catches replaced with logging/narrow catches or intentionally documented | `static_analysis_audit.md` |
 | B3 | Fix 1 `SIM118` (`key in dict.keys()`) | `OPEN` | P1 | Redundant `.keys()` call | Use `key in dict` | `static_analysis_audit.md` |
 | B4 | Fix 1 `SIM102` (collapsible nested `if`) | `OPEN` | P1 | Readability | Merge `if` conditions | `static_analysis_audit.md` |
-| B5 | Fix 1 `PLW1510` (`subprocess.run` without `check=True`) | `OPEN` | P0 | Failures not raised | Add `check=True` or explicit error handling | `static_analysis_audit.md` |
-| B6 | Convert 16 `UP031` (`%` formatting → f-strings) | `OPEN` | P1 | Consistency, readability | All clear candidates converted; SQL/MAME/logging exceptions preserved | `python_style_audit.md` |
+| B5 | Fix 1 `PLW1510` (`subprocess.run` without `check=True`) | ✅ **CODE-VERIFIED** | P0 | Location corrected: `umsa_core/emulation.py` terminal fallback (`emulation_start == 2`), not CHD extraction. Now `check=False` explicit, non-zero logged, `OSError` wrapped in `ProcessLaunchError` with cause | Success/non-zero/launch-failure regression tests pass; managed paths unchanged | `static_analysis_audit.md`, `tests/test_emulation_process.py`, `tests/test_emulator_launcher.py` |
+| B6 | Convert `UP031` (`%` formatting → f-strings) | `OPEN` | P1 | 10 remain at `af3bd11` (`gui.py` 1, `umsa_gui/` 9); historical count was 16 | All clear candidates converted; SQL/MAME/logging exceptions preserved | `python_style_audit.md` |
 | B6a | — `gamelist_strategies.py` (0 remaining; 8 were converted) | ✅ **CODE-VERIFIED** | P1 | | | `python_style_audit.md` |
 | B6b | — `gui.py` (1: line 516) | `OPEN` | P1 | | | `python_style_audit.md` |
 | B6c | — `emulator_launcher.py` (0 remaining) | ✅ **CODE-VERIFIED** | P1 | | | `python_style_audit.md` |
 | B6d | — screensaver `ui.py` (0 remaining) | ✅ **CODE-VERIFIED** | P1 | The screensaver add-on is `UP031`-clean | | `python_style_audit.md`, `screensaver_audit.md` |
 | B6e | — `emulation.py` (0 remaining) | ✅ **CODE-VERIFIED** | P1 | | | `python_style_audit.md` |
 | B6f | — `umsa_gui/` package (9: `artwork_presenter.py` 2, `filter_ui.py` 2, `media_list.py` 2, `software_selector.py` 3) | `OPEN` | P1 | | | `python_style_audit.md` |
-| B6g | — `database.py` (6: lines 1030, 1032, 1034, 1036, 1048, 1379) | `OPEN` | P1 | | | `python_style_audit.md` |
+| B6g | — `database.py` (0 remaining at `af3bd11`; historical 6) | ✅ **CODE-VERIFIED** | P1 | | | `python_style_audit.md` |
 | B7 | Fix 1 `UP030` (explicit `.format()` index) | `OPEN` | P1 | `launch_preparer.py:134` | Convert to f-string | `python_style_audit.md` |
 | B8 | Fix 6 `UP007` (union syntax `X \| Y`) | `OPEN` | P1 | Python 3.10+ | All `Union[X, Y]` → `X \| Y` | `static_analysis_audit.md` |
 | B9 | Fix 5 `SIM115` (context managers for `open()`) | `OPEN` | P1 | Resource leaks | All `open()` in `with` blocks | `static_analysis_audit.md` |
 | B10 | Fix 4 `F841` (unused variables) | `OPEN` | P1 | Dead code indicator | Remove or use variables | `static_analysis_audit.md` |
-| B11 | Fix 17 `F401` (unused imports) | `OPEN` | P1 | Clean code; most are intentional compat re-exports | Remove unused imports or add explicit re-export lists | `static_analysis_audit.md` |
-| B12 | Fix 2 `TRY203` (useless try/except) | `OPEN` | P1 | Redundant | Remove unnecessary try/except | `static_analysis_audit.md` |
-| B13 | Run Ruff `--fix` with review | `OPEN` | P2 | Automated cleanup | 19 safe fixes (`F401` 17, `I001` 2) reviewed; 17 further hidden fixes only with `--unsafe-fixes` | `static_analysis_audit.md` |
+| B11 | Fix `F401` (unused imports) | `OPEN` | P1 | 21 remain at `af3bd11`; most are intentional compat re-exports | Remove unused imports or add explicit re-export lists | `static_analysis_audit.md` |
+| B12 | Fix 2 `TRY203` (useless try/except) | ✅ **CODE-VERIFIED** | P1 | Both were redundant `except Exception: raise` wrappers in `emulator_launcher.py` | Removed; Ruff reports 0 `TRY203` after round 1 | `static_analysis_audit.md` |
+| B13 | Run Ruff `--fix` with review | `OPEN` | P2 | Automated cleanup | 25 safe fixes at `af3bd11` (`F401` 21, `I001` 3, `PLR1730` 1); further hidden fixes require `--unsafe-fixes` | `static_analysis_audit.md` |
 | B14 | Confirm no pre-existing test failures remain | ✅ **CODE-VERIFIED** | P0 | Regression guard | 0 failures; 5 skipped (real-MAME only) | `static_analysis_audit.md` |
 
 ---
@@ -87,7 +88,7 @@
 | D2 | Core regression test suite passes | ✅ **CODE-VERIFIED** | P0 | No Kodi needed | All Core tests pass: `test_database.py`, `test_game_repository.py`, `test_dat_repository.py`, `test_artwork_repository.py`, `test_emulator_repository.py`, `test_status_repository.py`, `test_history_repository.py`, `test_emulation_process.py`, `test_emulation_chd.py`, `test_emulation_vgm_callback.py`, `test_process.py`, `test_sqlite.py`, `test_scan_coordinator.py` | `test-suite-audit.md` |
 | D3 | Integration test suite passes (Kodi stubs) | ✅ **CODE-VERIFIED** | P0 | Frontend/Screensaver integration | All integration tests pass: `test_frontend_entrypoint.py`, `test_emulator_launcher.py`, `test_screensaver_addon.py`, `test_screensaver_history_hooks.py`, `test_screensaver_history_repository.py`, `test_gui_history_navigation.py` | `test-suite-audit.md` |
 | D4 | Architecture boundary tests pass | ✅ **CODE-VERIFIED** | P0 | Kodi-free Core | 7/7 tests pass | `test_architecture_boundaries.py` |
-| D5 | Full suite passes, no new failures | ✅ **CODE-VERIFIED** | P0 | Regression guard | **1081 passed, 5 skipped, 18 subtests** (verified 2026-10-23 at HEAD `4186b5f`); no known failures | `test-suite-audit.md` |
+| D5 | Full suite passes, no new failures | ✅ **CODE-VERIFIED** | P0 | Regression guard | Historical: 1081 passed, 5 skipped, 18 subtests (HEAD `4186b5f`). P0 round 1: **1130 passed, 5 skipped, 18 subtests** on rerun at `af3bd11`; the first run hit one transient DNS failure in local-only `test_umsa_db_download.py`, not reproducible | `test-suite-audit.md`, `static_analysis_audit.md` |
 | D6 | Unit tests for Emulation extraction (A2) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `test_emulation_process.py`, `test_emulation_chd.py`, `test_emulation_vgm_callback.py`, `test_vgmplay_preexit.py`, `test_lua_socket_log.py`, `test_vgm_player_entrypoints.py` (24 tests), `test_random_vgm_player.py`, `test_vgmplay_port.py` | `refactoring_plan.md` Step 2 |
 | D6 | Unit tests for GUI workflow modules (A3) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `tests/test_umsa_gui_workflows.py` (47 tests) covers all 15 `umsa_gui` modules; `tests/test_gui_oninit_first_start.py` (5 tests). **Local-only** (`tests/` gitignored) | `refactoring_plan.md` Step 3 |
 | D6 | Unit tests for Screensaver modules (A4) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `tests/test_screensaver_ui_modules.py` (62 tests) covers the extracted modules; existing Kodi-stub tests pass (139). **Local-only** (`tests/` gitignored) | `refactoring_plan.md` Step 4 |
@@ -139,7 +140,7 @@ A1 (done)
 
 A5 (Core reorg: scan_progress.py, game_labels.py, cmdline.py) → COMPLETE / optional
 
-B1-B2, B5 (Correctness fixes) → Can start immediately, independent
+B1-B2 (Correctness fixes) → IN PROGRESS; B5 fixed in P0 round 1
 B3-B4, B6-B13 (Style fixes) → Can run in parallel
 
 C1-C3 (Runtime scenarios) → MAINTAINER-VERIFIED (screensaver-inhibition lifecycle)
@@ -156,8 +157,8 @@ F1-F7 (Release prep) → Three open manual areas (emulator matrix, Retroplayer, 
 ## Recommended Next Actions (Ranked)
 
 1. **Close the 3 open manual areas** — (1) full emulator startup matrix, (2) Retroplayer end-to-end (incl. C7), (3) clean installation and upgrade — *Requires Kodi 20+ environment*
-2. **B1, B2, B5** — Fix robustness issues (BLE001 106, S110 54, PLW1510 1) — *Immediate, independent*
-3. **B6** — Convert f-string candidates (16 UP031: `gui.py` 1, `umsa_gui/` 9, `database.py` 6) — *Quick wins, low risk*
+2. **B1, B2** — Continue robustness triage. P0 round 1 result: BLE001 108→105, S110 54→29, PLW1510 1→0 (high-risk launcher startup paths fixed). B1/B2 remain open across `gui.py`, `umsa_gui/`, and Core scanners/sockets — *Small per-module rounds*
+3. **B6** — Convert f-string candidates (10 UP031 at `af3bd11`: `gui.py` 1, `umsa_gui/` 9; `database.py` is now clean) — *Quick wins, low risk*
 4. **E1-E4** — CLI example — *Post-release OK*
 5. **F1-F7** — Release prep — *After the manual areas and P0 fixes are complete*
 
@@ -167,12 +168,14 @@ F1-F7 (Release prep) → Three open manual areas (emulator matrix, Retroplayer, 
 
 | Category | Verified In This Audit |
 |----------|------------------------|
-| Architecture boundaries | 7/7 tests pass |
-| Core regression tests | All pass (verified 2026-10-23) |
-| Integration tests (stubs) | All pass (verified 2026-10-23) |
-| Full test suite | **1081 passed, 5 skipped, 18 subtests** (verified 2026-10-23 at HEAD `4186b5f`) |
-| Ruff (repo root) | **225 findings across 19 rule codes** (BLE001=106, S110=54, F401=17, UP031=16, UP007=6, SIM115=5, SIM113=4, F841=4, I001=2, TRY203=2, plus 9 singletons). No E722, no B006 |
-| Ruff auto-fixable | 19 safe (`F401` 17, `I001` 2); 17 further hidden fixes with `--unsafe-fixes` |
+| Architecture boundaries | 7/7 tests pass (P0 round 1 rerun at `af3bd11`) |
+| Core regression tests | All pass (historical 2026-10-23; P0 round 1 grouped run 64 passed) |
+| Integration tests (stubs) | All pass (historical 2026-10-23; P0 round 1 grouped run 78 passed) |
+| Full test suite | Historical: **1081 passed, 5 skipped, 18 subtests** (HEAD `4186b5f`). P0 round 1: **1130 passed, 5 skipped, 18 subtests** on rerun at `af3bd11` |
+| Ruff (production roots) | Reproduced baseline at `af3bd11`: **BLE001=108, S110=54, PLW1510=1** (163 rows / 108 unique exception locations). After round 1: **BLE001=105, S110=29, PLW1510=0** (134 rows / 105 locations). Default rules: 227→196 findings |
+| Ruff historical baseline | The 2026-10-23 audit's 225 findings / BLE001=106 / S110=54 totals were **not reproduced** at `af3bd11`; see `static_analysis_audit.md` |
+| `subprocess.run()` fix | Terminal fallback in `umsa_core/emulation.py`; non-zero logged, `OSError` wrapped in `ProcessLaunchError` with cause; 3 core regression tests + 2 launcher failure cases pass |
+| Ruff auto-fixable | 25 safe fixes at `af3bd11` (not reviewed/applied in this round) |
 | Mypy (`vgm_header.py`) | Clean (per-module, `--follow-imports=skip`) |
 | Kodi API audit | No deprecated/removed APIs found |
 | Kodi 20+ specific APIs | Capability-guarded (`setUniqueID`, `getGameInfoTag`) |
@@ -217,9 +220,9 @@ The maintainer explicitly stated these three areas have **not** been completed:
 - [ ] All P0 tasks complete
 - [ ] All P1 tasks complete or explicitly deferred with rationale (A5 complete; optional)
 - [x] Runtime scenarios C1-C3 verified (screensaver-inhibition lifecycle, maintainer-confirmed)
-- [x] No new test failures introduced (1081 passed, 5 skipped)
+- [x] No new test failures introduced (P0 round 1 rerun: 1130 passed, 5 skipped)
 - [x] Architecture boundary tests pass (7/7)
-- [ ] Ruff baseline reduced or unchanged (225 findings / 19 codes)
+- [x] Ruff baseline reduced (P0 round 1: default rules 227→196; BLE001 108→105, S110 54→29, PLW1510 1→0; B1/B2 still open)
 - [ ] Release notes prepared
 - [ ] Fresh install + upgrade tests pass (open manual area 3)
 - [ ] Full emulator startup matrix verified (open manual area 1)
