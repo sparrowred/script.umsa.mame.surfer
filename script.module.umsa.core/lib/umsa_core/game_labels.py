@@ -51,12 +51,6 @@ def make_time_nice(timestamp, now=None):
     if elapsed < 0:
         elapsed = 0
 
-    # Match legacy format used by existing tests
-    if now is False or now is None:
-        minute = divmod(elapsed, 60)[0]
-        hour, minute_rem = divmod(minute, 60)
-        return "%d:%02d" % (hour, minute_rem)
-
     if elapsed < 60:
         return f'0:{elapsed:02d}'
 
@@ -79,11 +73,11 @@ def make_time_nice(timestamp, now=None):
         hours = (elapsed % 86400) // 3600
         return f'{days}:{hours:02d}'
 
-    if elapsed < 365 * 86400:
+    if elapsed < 360 * 86400:
         months = elapsed // (30 * 86400)
         hours = (elapsed % (30 * 86400)) // 3600
         return f'{months}:{hours:02d}'
 
-    years = elapsed // (365 * 86400)
-    months = (elapsed % (365 * 86400)) // (30 * 86400)
+    years = elapsed // (360 * 86400)
+    months = (elapsed % (360 * 86400)) // (30 * 86400)
     return f'{years}:{months:02d}'

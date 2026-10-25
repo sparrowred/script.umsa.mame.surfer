@@ -34,7 +34,6 @@ import os
 import sqlite3  # connect, Row, OperationalError
 import time
 from contextlib import contextmanager
-from re import findall, search
 from urllib.request import pathname2url
 
 from .artwork import resolve_artwork_path
@@ -131,8 +130,6 @@ COUNTRIES = {
     '7KR'   : ('kor',),
     '8BR'   : ('bra',),
 }
-
-from .game_labels import split_gamename  # noqa: F401
 
 class DBMod:
     """Database class for umsa.info sqlite3 database"""
