@@ -29,6 +29,10 @@ from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 
 
+class _DatCancellationCheckError(Exception):
+    """Raised when the host cancellation predicate itself fails."""
+
+
 class DatScanner:
     """Scan support files into the DAT database.
 
@@ -66,8 +70,10 @@ class DatScanner:
             return True
         try:
             return bool(self._is_cancelled())
-        except Exception:
-            return False
+        except Exception as exc:
+            log(f"UMSA dat scan: cancellation predicate failed ({exc}); "
+                "aborting without publishing", level='error')
+            raise _DatCancellationCheckError(str(exc)) from exc
 
     def _load_set_mapping(self):
         """Load the ``"<swl>:<set>" -> set id`` mapping from ``umsa.db``."""
@@ -102,7 +108,8 @@ class DatScanner:
         A missing/unreadable ``umsa.db``, a missing input directory or any
         unreadable/unparseable input file aborts the scan without publishing,
         leaving the previously stored DAT rows untouched. Cancellation discards
-        the staged result and likewise keeps the previous rows.
+        the staged result and likewise keeps the previous rows. A cancellation
+        predicate that raises is treated as an abort, never as "keep going".
 
         The shared scan lock is acquired before any scan-specific preparation
         or destructive change and held until the final status updates have
@@ -175,7 +182,11 @@ class DatScanner:
                 else:
                     create_dat_tables(cursor)
             finally:
-                cursor.close()
+                try:
+                    cursor.close()
+                except Exception as exc:
+                    log(f"UMSA dat scan: could not close table-init cursor: "
+                        f"{exc}", level='error')
 
             repo = DatRepository(db_conn)
             repo.create_staging_tables()
@@ -187,9 +198,14 @@ class DatScanner:
 
             t_parse_start = time.time(); processed = 0
             for index, datfile in enumerate(entries):
-                if self._cancelled(cancel_event):
-                    summary['cancelled'] = True
-                    log("UMSA dat scan: cancelled before file")
+                try:
+                    if self._cancelled(cancel_event):
+                        summary['cancelled'] = True
+                        log("UMSA dat scan: cancelled before file")
+                        break
+                except _DatCancellationCheckError:
+                    summary['aborted'] = True
+                    summary['errors'] += 1
                     break
 
                 full_path = os.path.join(datdir, datfile)
@@ -226,6 +242,16 @@ class DatScanner:
                     self._report(
                         int(processed / total * 100) if total else 100, datfile
                     )
+                except _DatCancellationCheckError:
+                    summary['aborted'] = True
+                    summary['errors'] += 1
+                    try:
+                        db_conn.rollback()
+                    except Exception as rollback_exc:
+                        log(f"UMSA dat scan: rollback after cancellation "
+                            f"predicate failure on '{full_path}' also failed: "
+                            f"{rollback_exc}", level='error')
+                    break
                 except Exception as exc:
                     # An unreadable or unparseable input must not be treated as
                     # successfully processed; discard this file's staged rows
@@ -236,8 +262,10 @@ class DatScanner:
                     summary['errors'] += 1
                     try:
                         db_conn.rollback()
-                    except Exception:
-                        pass
+                    except Exception as rollback_exc:
+                        log(f"UMSA dat scan: rollback after failure on "
+                            f"'{full_path}' also failed: {rollback_exc}",
+                            level='error')
                     break
 
                 summary['files'] += 1
@@ -261,28 +289,31 @@ class DatScanner:
                     summary['errors'] += 1
 
             _phase["total_locked"] = time.time() - _t0
-            try:
-                log(f"UMSA dat scan timing: { {k: round(v,3) for k,v in _phase.items()} }", level="debug")
-            except Exception:
-                pass
+            log(f"UMSA dat scan timing: { {k: round(v,3) for k,v in _phase.items()} }", level="debug")
             return summary
         finally:
             if db_conn is not None:
                 if staged_cur is not None:
                     try:
                         staged_cur.close()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        log(f"UMSA dat scan: could not close staging cursor: "
+                            f"{exc}", level='error')
                 if repo is not None:
                     try:
                         repo.clear_staging()
                         db_conn.commit()
-                    except Exception:
+                    except Exception as exc:
+                        log(f"UMSA dat scan: staging cleanup failed: {exc}",
+                            level='error')
                         try:
                             db_conn.rollback()
-                        except Exception:
-                            pass
+                        except Exception as rollback_exc:
+                            log(f"UMSA dat scan: rollback during staging "
+                                f"cleanup also failed: {rollback_exc}",
+                                level='error')
                 try:
                     db_conn.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log(f"UMSA dat scan: could not close DAT database "
+                        f"connection: {exc}", level='error')

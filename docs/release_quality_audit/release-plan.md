@@ -41,8 +41,8 @@
 
 | # | Task | Status | Priority | Rationale | Acceptance Criteria | Related Files / Audit |
 |---|------|--------|----------|-----------|---------------------|----------------------|
-| B1 | Triage `BLE001` (blind `except Exception:`) | `IN PROGRESS` | P0 | Reproduced baseline at `af3bd11`: 108 (not historical 106). Round 1 fixed the high-risk `emulator_launcher.py` startup paths; 105 remained. Round 2 at `a74976b` logs every `gui.py` `exit()` cleanup step; 107 remain (+2 newly covered operations, no longer silent) | Continue per-module triage; all remaining handlers justified and diagnosable; do not mass-replace | `static_analysis_audit.md`, `emulator_launcher.py`, `gui.py` |
-| B2 | Triage `S110` (`except Exception: pass`) | `IN PROGRESS` | P0 | Reproduced baseline at `af3bd11`: 54. Round 1 removed all 25 in `emulator_launcher.py`; after round 2 removed the 5 in `gui.py` `exit()`, leaving 24 (all also BLE001 locations) | All silent catches replaced with logging/narrow catches or intentionally documented | `static_analysis_audit.md` |
+| B1 | Triage `BLE001` (blind `except Exception:`) | `IN PROGRESS` | P0 | Reproduced baseline at `af3bd11`: 108 (not historical 106). Round 1 fixed the high-risk `emulator_launcher.py` startup paths; 105 remained. Round 2 at `a74976b` logs every `gui.py` `exit()` cleanup step; 107 remained. Round 3 logs the DAT/artwork scanner cleanup and predicate boundaries; 109 remain (all catch-and-log, no silent handlers) | Continue per-module triage; all remaining handlers justified and diagnosable; do not mass-replace | `static_analysis_audit.md`, `emulator_launcher.py`, `gui.py`, `dat_scanner.py`, `artwork_scanner.py` |
+| B2 | Triage `S110` (`except Exception: pass`) | `IN PROGRESS` | P0 | Reproduced baseline at `af3bd11`: 54. Round 1 removed all 25 in `emulator_launcher.py`; round 2 removed the 5 in `gui.py` `exit()`; round 3 removed the 7 in `dat_scanner.py`/`artwork_scanner.py`, leaving 17 | All silent catches replaced with logging/narrow catches or intentionally documented | `static_analysis_audit.md` |
 | B3 | Fix 1 `SIM118` (`key in dict.keys()`) | `OPEN` | P1 | Redundant `.keys()` call | Use `key in dict` | `static_analysis_audit.md` |
 | B4 | Fix 1 `SIM102` (collapsible nested `if`) | `OPEN` | P1 | Readability | Merge `if` conditions | `static_analysis_audit.md` |
 | B5 | Fix 1 `PLW1510` (`subprocess.run` without `check=True`) | ✅ **CODE-VERIFIED** | P0 | Location corrected: `umsa_core/emulation.py` terminal fallback (`emulation_start == 2`), not CHD extraction. Now `check=False` explicit, non-zero logged, `OSError` wrapped in `ProcessLaunchError` with cause | Success/non-zero/launch-failure regression tests pass; managed paths unchanged | `static_analysis_audit.md`, `tests/test_emulation_process.py`, `tests/test_emulator_launcher.py` |
@@ -158,7 +158,7 @@ F1-F7 (Release prep) → Three open manual areas (emulator matrix, Retroplayer, 
 ## Recommended Next Actions (Ranked)
 
 1. **Close the 3 open manual areas** — (1) full emulator startup matrix, (2) Retroplayer end-to-end (incl. C7), (3) clean installation and upgrade — *Requires Kodi 20+ environment*
-2. **B1, B2** — Continue robustness triage. P0 round 1 result: BLE001 108→105, S110 54→29, PLW1510 1→0 (high-risk launcher startup paths fixed). P0 round 2 at `a74976b`: BLE001 105→107 (two formerly uncaught `exit()` operations now log), S110 29→24 (`gui.py` shutdown silent passes removed). B1/B2 remain open across `umsa_gui/` and Core scanners/sockets — *Small per-module rounds*
+2. **B1, B2** — Continue robustness triage. P0 round 1 result: BLE001 108→105, S110 54→29, PLW1510 1→0 (high-risk launcher startup paths fixed). P0 round 2 at `a74976b`: BLE001 105→107 (two formerly uncaught `exit()` operations now log), S110 29→24 (`gui.py` shutdown silent passes removed). P0 round 3: BLE001 107→109 (logged scanner cleanup boundaries), S110 24→17 (`dat_scanner.py`/`artwork_scanner.py` silent passes removed). B1/B2 remain open across `umsa_gui/` and Core scanners/sockets — *Small per-module rounds*
 3. **B6** — Convert f-string candidates (10 UP031 at `af3bd11`: `gui.py` 1, `umsa_gui/` 9; `database.py` is now clean) — *Quick wins, low risk*
 4. **E1-E4** — CLI example — *Post-release OK*
 5. **F1-F7** — Release prep — *After the manual areas and P0 fixes are complete*
@@ -172,8 +172,8 @@ F1-F7 (Release prep) → Three open manual areas (emulator matrix, Retroplayer, 
 | Architecture boundaries | 7/7 tests pass (P0 round 1 rerun at `af3bd11`) |
 | Core regression tests | All pass (historical 2026-10-23; P0 round 1 grouped run 64 passed) |
 | Integration tests (stubs) | All pass (historical 2026-10-23; P0 round 1 grouped run 78 passed) |
-| Full test suite | Historical: **1081 passed, 5 skipped, 18 subtests** (HEAD `4186b5f`). P0 round 1: **1130 passed, 5 skipped, 18 subtests** on rerun at `af3bd11`. P0 round 2: focused GUI/architecture run **94 passed**, full suite **1141 passed, 5 skipped, 18 subtests** at `a74976b` |
-| Ruff (production roots) | Reproduced baseline at `af3bd11`: **BLE001=108, S110=54, PLW1510=1** (163 rows / 108 unique exception locations). After round 1: **BLE001=105, S110=29, PLW1510=0** (134 rows / 105 locations). After round 2 at `a74976b`: **BLE001=107, S110=24, PLW1510=0** (131 rows / 107 locations). Default rules: 227→196→193 findings |
+| Full test suite | Historical: **1081 passed, 5 skipped, 18 subtests** (HEAD `4186b5f`). P0 round 1: **1130 passed, 5 skipped, 18 subtests** on rerun at `af3bd11`. P0 round 2: focused GUI/architecture run **94 passed**, full suite **1141 passed, 5 skipped, 18 subtests** at `a74976b`. P0 round 3: focused scanner/database run **70 passed**, full suite **1145 passed, 5 skipped, 18 subtests** |
+| Ruff (production roots) | Reproduced baseline at `af3bd11`: **BLE001=108, S110=54, PLW1510=1** (163 rows / 108 unique exception locations). After round 1: **BLE001=105, S110=29, PLW1510=0** (134 rows / 105 locations). After round 2 at `a74976b`: **BLE001=107, S110=24, PLW1510=0** (131 rows / 107 locations). After round 3: **BLE001=109, S110=17, PLW1510=0** (126 rows / 109 locations). Default rules: 227→196→193→188 findings |
 | Ruff historical baseline | The 2026-10-23 audit's 225 findings / BLE001=106 / S110=54 totals were **not reproduced** at `af3bd11`; see `static_analysis_audit.md` |
 | `subprocess.run()` fix | Terminal fallback in `umsa_core/emulation.py`; non-zero logged, `OSError` wrapped in `ProcessLaunchError` with cause; 3 core regression tests + 2 launcher failure cases pass |
 | Ruff auto-fixable | 25 safe fixes at `af3bd11` (not reviewed/applied in this round) |
@@ -221,9 +221,9 @@ The maintainer explicitly stated these three areas have **not** been completed:
 - [ ] All P0 tasks complete
 - [ ] All P1 tasks complete or explicitly deferred with rationale (A5 complete; optional)
 - [x] Runtime scenarios C1-C3 verified (screensaver-inhibition lifecycle, maintainer-confirmed)
-- [x] No new test failures introduced (P0 round 1 rerun: 1130 passed, 5 skipped; P0 round 2 focused run: 94 passed, full suite: 1141 passed, 5 skipped)
+- [x] No new test failures introduced (P0 round 1 rerun: 1130 passed, 5 skipped; P0 round 2 full suite: 1141 passed, 5 skipped; P0 round 3 full suite: 1145 passed, 5 skipped)
 - [x] Architecture boundary tests pass (7/7)
-- [x] Ruff silent-failure baseline reduced (P0 round 1: default rules 227→196; BLE001 108→105, S110 54→29, PLW1510 1→0. P0 round 2: default rules 196→193; BLE001 105→107 from two newly logged `exit()` operations, S110 29→24, PLW1510 0; B1/B2 still open)
+- [x] Ruff silent-failure baseline reduced (P0 round 1: default rules 227→196; BLE001 108→105, S110 54→29, PLW1510 1→0. P0 round 2: default rules 196→193; BLE001 105→107 from two newly logged `exit()` operations, S110 29→24. P0 round 3: default rules 193→188; BLE001 107→109 from logged scanner cleanup boundaries, S110 24→17; PLW1510 0; B1/B2 still open)
 - [ ] Release notes prepared
 - [ ] Fresh install + upgrade tests pass (open manual area 3)
 - [ ] Full emulator startup matrix verified (open manual area 1)

@@ -87,6 +87,10 @@ _WINERROR_TRANSIENT = frozenset({
 })
 
 
+class _ArtworkCancellationCheckError(Exception):
+    """Raised when the host cancellation predicate itself fails."""
+
+
 class _ArtworkScanResourceError(Exception):
     """Raised when listing keeps failing because file handles are exhausted."""
 
@@ -213,7 +217,10 @@ class ArtworkScanner:
 
         if cancel_event is not None and cancel_event.is_set():
             return True
-        return self._is_cancelled()
+        try:
+            return self._is_cancelled()
+        except Exception as exc:
+            raise _ArtworkCancellationCheckError(str(exc)) from exc
 
     def scan(self, paths=None, source=None, only_types=None, resume=True,
              cancel_event=None):
@@ -294,7 +301,9 @@ class ArtworkScanner:
         exhaustion (``EMFILE``/``ENFILE``, or the Windows equivalents) gets a
         single short recovery retry and then aborts the whole scan cleanly
         (``aborted`` is set): records already committed are kept, and the
-        unfinished unit is left not-``done`` so a later scan retries it.
+        unfinished unit is left not-``done`` so a later scan retries it. A
+        cancellation predicate that raises also aborts (``aborted``), rather
+        than being mistaken for "not cancelled".
         """
 
         if isinstance(paths, str):
@@ -312,6 +321,8 @@ class ArtworkScanner:
         # them (for example an unreadable umsa.db).
         db_conn = None
         gdb = None
+        dbc = None
+        gdbc = None
 
         listdir = self._listdir
 
@@ -391,6 +402,7 @@ class ArtworkScanner:
         errors = 0
         discovery_incomplete = False
         aborted = False
+        abort_reason = None
         total = 0
         processed = skipped = inserted = 0
         cancelled = False
@@ -404,10 +416,10 @@ class ArtworkScanner:
                 f"cancelled={cancelled} aborted={aborted} "
                 f"discovery_incomplete={discovery_incomplete}")
             if aborted:
-                log("UMSA artwork scan: scan aborted early because the filesystem "
-                    "ran out of file handles; artwork already recorded is kept "
-                    "and the unfinished unit stays eligible for a later retry",
-                    level='error')
+                log(f"UMSA artwork scan: scan aborted early because "
+                    f"{abort_reason or 'the scan could not continue'}; artwork "
+                    "already recorded is kept and the unfinished unit stays "
+                    "eligible for a later retry", level='error')
             elif discovery_incomplete:
                 log("UMSA artwork scan: discovery was incomplete, some "
                     "configured paths could not be listed; the scan result is "
@@ -639,20 +651,43 @@ class ArtworkScanner:
             # retry did not help. Stop opening more paths, keep every record
             # already committed, and leave the unfinished unit for a retry.
             aborted = True
+            abort_reason = "the filesystem ran out of file handles"
             errors += 1
             log(f"UMSA artwork scan: aborted after listing {exc.what} "
                 f"'{exc.path}' failed ({_format_os_error(exc.exc)}); "
                 "completed units kept, unfinished unit not marked done",
                 level='error')
             return finish()
+        except _ArtworkCancellationCheckError as exc:
+            aborted = True
+            abort_reason = "the cancellation predicate failed"
+            errors += 1
+            log(f"UMSA artwork scan: cancellation predicate failed ({exc}); "
+                "aborting without marking the unfinished unit done",
+                level='error')
+            return finish()
         finally:
+            if gdbc is not None:
+                try:
+                    gdbc.close()
+                except Exception as exc:
+                    log(f"UMSA artwork scan: could not close UMSA cursor: {exc}",
+                        level='error')
+            if dbc is not None:
+                try:
+                    dbc.close()
+                except Exception as exc:
+                    log(f"UMSA artwork scan: could not close artwork cursor: "
+                        f"{exc}", level='error')
             if gdb is not None:
                 try:
                     gdb.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log(f"UMSA artwork scan: could not close UMSA connection: "
+                        f"{exc}", level='error')
             if db_conn is not None:
                 try:
                     db_conn.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log(f"UMSA artwork scan: could not close artwork connection: "
+                        f"{exc}", level='error')
