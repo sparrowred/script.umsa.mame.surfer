@@ -126,11 +126,10 @@ class VgmPlayer:
         self.playintrovgm = intro
         if info:
             self._notify_vgm_info(info)
-        # Use plan.seconds_to_run if provided, else sec2run (backward compat)
         actual_sec = plan.seconds_to_run if plan else sec2run
-        vgm_args = ['-videodriver', 'dummy', '-video', 'none', '-volume', '1', '-seconds_to_run', str(int(actual_sec)),
-            '-autoboot_script', self.lua_script,
-            'vgmplay', '-quik', vgm]
+        vgm_args = ['-videodriver', 'dummy', '-video', 'none', '-nojoystick', '-writeconfig', '0',
+            '-seconds_to_run', str(int(actual_sec)), '-autoboot_script', self.lua_script,
+            '-volume', '1', 'vgmplay', '-quik', vgm]
         emurun.update({
             'args': vgm_args,
             'emu_exe': self.vgmplay_exe or self.mame_exe,
