@@ -12,8 +12,10 @@ duplicate messages"). Step 4.6.1 landed as `7c369a9`, with the D20/D21
 corrective follow-up in `fe5502b`; step 4.7 landed as `479e202` + `10f9fbd` + `da65a62`
 + `bc631eb` + `bd83a4d`. **Step 4.8 (row-leak closure) is implemented (committed as
 `e4fd570`).** **Artwork/DAT source-of-truth refactor and follow-up fixes are
-implemented (committed as `5a51461` + `238bb41` + `9a98cfe`)**. Phase 4.9 is an
-optional/proposed `database.py` reorganisation, not implemented.
+implemented (committed as `5a51461` + `238bb41` + `9a98cfe`)**. Phase 4.9 (the
+optional `database.py` reorganisation) is implemented and complete (4.9a, 4.9.1,
+4.9.2, 4.9.3a–c); the compatibility wrappers/re-exports intentionally retained in
+`database.py` are documented in the Step 4.9 table below.
 
 Each step is designed to be independently reviewable and testable; no step changes
 public method signatures, return values, `row_factory` defaults, or database schemas
@@ -909,7 +911,7 @@ dicts/dataclasses — never `row[i]`. Add-on tests assert the consumed shapes.
 
 ## Step 4.9 (complete) — database.py module reorganisation: move non-DB code out
 
-**Status: complete — Phase 4.9a done; Phase 4.9.1 inventory done; Phase 4.9.2 comment cleanup done; Phase 4.9.3 done.** Not a prerequisite for 4.8.
+**Status: complete — Phase 4.9a done; Phase 4.9.1 inventory done; Phase 4.9.2 comment cleanup done; Phase 4.9.3a–c done (`scan_progress.py`, `game_labels.py`, `cmdline.py`).** Not a prerequisite for 4.8.
 
 **Responsibility:** Justified pure/application helpers moved out of `database.py`; `DBMod` retains lifecycle, attached schemas, filters, mixed queries, and orchestration.
 
@@ -1003,7 +1005,8 @@ Artwork/DAT source-of-truth refactor ✅  (removed `add_art_to_db`/`add_dat_to_d
 Follow-up fixes ✅  (read-only umsa.db, source-db init/upgrades, scanner read-only
              connections, attachment failure cleanup, legacy import notification fix)
 4.8 ✅                     (row-leak closure; committed as `e4fd570`)
-4.9                         (optional proposal; not implemented)
+4.9 ✅                     (optional reorganisation complete: 4.9a, 4.9.3a–c;
+                            compatibility wrappers retained)
 ```
 
 Steps 4.2a/4.2b (`9f2fd40`), 4.3 (`9041812`), 4.4 (delegation + the two CHD
@@ -1024,9 +1027,10 @@ skipped, 18 subtests passed (plus 10 pre-existing test failures unrelated to dat
 refactor).
 
 Steps 4.5-4.6 (status.db) proceeded independently of the 4.2-4.4 chain; 4.7 was
-deliberately late. All phases through 4.8 are complete. The next step would be a
-deliberate decision about whether to proceed with Phase 4.9 `database.py` reorganisation,
-which is an optional proposal. Every step lands with:
+deliberately late. All phases through 4.9 are complete (4.9 was the optional
+`database.py` reorganisation; its compatibility wrappers/re-exports remain intentional,
+and the deferred candidates listed in the Step 4.9 table remain in `database.py`).
+Every step lands with:
 characterisation tests, facade delegation, unchanged public API, and a green full suite
 (`.venv-debian-vm/bin/python -m pytest tests/ -q`; **819 passed** after 4.6.2, **878
 passed** after 4.8, **716 passed** after the 4.6.1 corrective follow-up — **702 passed**

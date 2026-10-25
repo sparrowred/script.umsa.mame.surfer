@@ -2,13 +2,17 @@
 
 
 def create_cmdline(parts, devices, setname):
-    """create command line to start a software list item in mame"""
+    """Create command line options for a software-list item in MAME.
+
+    Returns ``(cmd_options, first_device)`` or ``([], None)`` when nothing
+    matches. The caller-provided ``parts`` list is never mutated.
+    """
 
     cmd_options = []
     first_device = None
 
     hit = False
-    # work on a copy to match original behavior
+    # Work on a local copy: never mutate the caller's list.
     parts_list = list(parts)
     for device in devices:
         for interface in device[1].split(','):

@@ -30,7 +30,7 @@
 | A2c | Fix VGM callback signatures and entry points | ✅ **CODE-VERIFIED** | P1 | Restored `play_random_vgm`, fixed thread arg forwarding, one-shot stopped callback | 24 VGM entry-point tests pass; no duplicate stopped notification | `refactoring_plan.md` Step 2f, `emulation_audit.md` |
 | A3 | Split `gui.py` `UMSA` into workflow modules | ✅ **CODE-VERIFIED** | P1 | 2600+ line god class; focus/navigation, gamelist, filter, artwork, scans, screensaver/VGM | 15 modules in `resources/lib/umsa_gui/`; `gui.py` remains the Kodi adapter; 1081 tests pass; public API unchanged; first-start DAT scan moved off calling thread | `refactoring_plan.md` Step 3, `gui_audit.md` |
 | A4 | Separate Screensaver `Saver`/`Player`/`Monitor` | ✅ **CODE-VERIFIED** | P1 | Monolithic `ui.py` mixed rendering, playback, lifecycle, history | 11 focused modules in `lib/umsa_screensaver/`; `ui.py` retains the Kodi window/playlist/callbacks; 1081 tests pass (62 new); public names re-exported; post-A4 fixes (2026-10-22): playback ownership, `onPlayBackStopped`/`onPlayBackError`, eXoDOS extraction failure handling, `onInit` playlist clear documented, `try/finally` rendering cleanup | `refactoring_plan.md` Step 4, `screensaver_audit.md` |
-| A5 | Phase 4.9 `database.py` reorganisation | `COMPLETE` (optional) | P1 | ~1857 → ~1673 lines. 4.9.1 inventory complete; 4.9.2 comment cleanup complete; 4.9.3 done (`scan_progress.py`, `game_labels.py`, `cmdline.py` extracted with wrappers). `COUNTRIES`/`get_best_machine_for_set`, `parse_recommended_games`, `build_filter_lists`, `get_cmd_line_options` remain in `database.py` per inventory. | Justified extractions complete; re-exports/wrappers preserved; boundary tests pass | `refactoring_plan.md` Step 5, `database_refactor/roadmap.md`, `database_refactor/phase_4_9_1_inventory.md` |
+| A5 | Phase 4.9 `database.py` reorganisation | ✅ **CODE-VERIFIED** (optional) | P1 | ~1857 → ~1673 lines. 4.9.1 inventory complete; 4.9.2 comment cleanup complete; 4.9.3 done (`scan_progress.py`, `game_labels.py`, `cmdline.py` extracted with wrappers). `COUNTRIES`/`get_best_machine_for_set`, `parse_recommended_games`, `build_filter_lists`, `get_cmd_line_options` remain in `database.py` per inventory. | Justified extractions complete; re-exports/wrappers preserved; focused Core tests and boundary tests pass | `refactoring_plan.md` Step 5, `database_refactor/roadmap.md`, `database_refactor/phase_4_9_1_inventory.md` |
 | A6 | Optional further `DBMod` decomposition | `DEFERRED` | Post-release | Mixed queries (`get_random_id`, `get_random_art`), cross-db `open_db` | Only if maintenance burden grows | `refactoring_plan.md` Step 6, `dbmod_audit.md` |
 
 ---
@@ -91,7 +91,7 @@
 | D6 | Unit tests for Emulation extraction (A2) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `test_emulation_process.py`, `test_emulation_chd.py`, `test_emulation_vgm_callback.py`, `test_vgmplay_preexit.py`, `test_lua_socket_log.py`, `test_vgm_player_entrypoints.py` (24 tests), `test_random_vgm_player.py`, `test_vgmplay_port.py` | `refactoring_plan.md` Step 2 |
 | D6 | Unit tests for GUI workflow modules (A3) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `tests/test_umsa_gui_workflows.py` (47 tests) covers all 15 `umsa_gui` modules; `tests/test_gui_oninit_first_start.py` (5 tests). **Local-only** (`tests/` gitignored) | `refactoring_plan.md` Step 3 |
 | D6 | Unit tests for Screensaver modules (A4) | ✅ **CODE-VERIFIED** | P1 | New modules need coverage | `tests/test_screensaver_ui_modules.py` (62 tests) covers the extracted modules; existing Kodi-stub tests pass (139). **Local-only** (`tests/` gitignored) | `refactoring_plan.md` Step 4 |
-| D6 | Unit tests for Core reorg modules (A5) | `OPEN` (inventory done; modules not created) | P1 | New modules need coverage if extracted (Phase 4.9.1 recommends `scan_progress.py`, `game_labels.py` for `split_gamename`, `cmdline.py` for `create_cmdline`) | `scan_progress.py`, `game_labels.py`, `cmdline.py` each have tests | `refactoring_plan.md` Step 5, `database_refactor/phase_4_9_1_inventory.md` |
+| D6 | Unit tests for Core reorg modules (A5) | ✅ **CODE-VERIFIED** | P1 | Extracted modules are covered by local Core tests | `test_run_scan_with_progress.py` (`scan_progress.py`), `test_game_labels.py` (`game_labels.py`), `test_cmd_line_options.py` (`cmdline.py`, including the non-mutating `parts` contract), `test_umsa_db_download.py` (4.9a); **Local-only** (`tests/` gitignored) | `refactoring_plan.md` Step 5, `database_refactor/phase_4_9_1_inventory.md` |
 
 ---
 
@@ -137,7 +137,7 @@ A1 (done)
         │
         └─ D6 (A4 unit tests)
 
-A5 (Core reorg: cmdline.py) → DEFERRED / optional
+A5 (Core reorg: scan_progress.py, game_labels.py, cmdline.py) → COMPLETE / optional
 
 B1-B2, B5 (Correctness fixes) → Can start immediately, independent
 B3-B4, B6-B13 (Style fixes) → Can run in parallel
@@ -158,9 +158,8 @@ F1-F7 (Release prep) → Three open manual areas (emulator matrix, Retroplayer, 
 1. **Close the 3 open manual areas** — (1) full emulator startup matrix, (2) Retroplayer end-to-end (incl. C7), (3) clean installation and upgrade — *Requires Kodi 20+ environment*
 2. **B1, B2, B5** — Fix robustness issues (BLE001 106, S110 54, PLW1510 1) — *Immediate, independent*
 3. **B6** — Convert f-string candidates (16 UP031: `gui.py` 1, `umsa_gui/` 9, `database.py` 6) — *Quick wins, low risk*
-4. **D6 (A5)** — Add unit tests for A5 modules — *Only if A5 is un-deferred*
-5. **E1-E4** — CLI example — *Post-release OK*
-6. **F1-F7** — Release prep — *After the manual areas and P0 fixes are complete*
+4. **E1-E4** — CLI example — *Post-release OK*
+5. **F1-F7** — Release prep — *After the manual areas and P0 fixes are complete*
 
 ---
 
@@ -216,7 +215,7 @@ The maintainer explicitly stated these three areas have **not** been completed:
 ## Sign-Off Checklist for Release
 
 - [ ] All P0 tasks complete
-- [ ] All P1 tasks complete or explicitly deferred with rationale (A5 deferred)
+- [ ] All P1 tasks complete or explicitly deferred with rationale (A5 complete; optional)
 - [x] Runtime scenarios C1-C3 verified (screensaver-inhibition lifecycle, maintainer-confirmed)
 - [x] No new test failures introduced (1081 passed, 5 skipped)
 - [x] Architecture boundary tests pass (7/7)
