@@ -43,18 +43,18 @@ Command (production roots only):
     --select BLE001,S110,PLW1510 --statistics
 ```
 
-| Rule | Baseline at `af3bd11` | After round 1 | After round 2 at `a74976b` | After round 3 |
-|------|----------------------|---------------|----------------------------|---------------|
-| **BLE001** | 108 | 105 | 107 | 109 |
-| **S110** | 54 | 29 | 24 | 17 |
-| **PLW1510** | 1 | **0** | **0** | **0** |
-| **Total reported rows** | **163** | **134** | **131** | **126** |
-| **Unique exception source locations** | **108** | **105** | **107** | **109** |
+| Rule | Baseline at `af3bd11` | After round 1 | After round 2 at `a74976b` | After round 3 | After round 4 |
+|------|----------------------|---------------|----------------------------|---------------|---------------|
+| **BLE001** | 108 | 105 | 107 | 109 | 112 |
+| **S110** | 54 | 29 | 24 | 17 | 15 |
+| **PLW1510** | 1 | **0** | **0** | **0** | **0** |
+| **Total reported rows** | **163** | **134** | **131** | **126** | **127** |
+| **Unique exception source locations** | **108** | **105** | **107** | **109** | **112** |
 
 **Counting note:** the baseline reported 162 `BLE001`+`S110` rows but only 108
 unique file/line locations, because every `S110` location was also a `BLE001`
 location. Do not add the two rule counts as if they were independent sites.
-After round 3, the 109 `BLE001` rows are 109 unique locations; `S110` remains a
+After round 4, the 112 `BLE001` rows are 112 unique locations; `S110` remains a
 subset of those locations.
 
 `BLE001` increased by 2 in round 2 because `UMSA.exit()` now catches and logs
@@ -67,22 +67,28 @@ In round 3, the 7 `except Exception: pass` sites in `dat_scanner.py` and
 7. `BLE001` rose by 2 because the newly instrumented close/rollback handlers in
 those two scanners are themselves broad catch-and-log boundaries.
 
+In round 4, the 2 `except Exception: pass` sites in `gb64_scanner.py` now log
+their final connection-close failures, so `S110` fell by 2. Four new logged
+cleanup boundaries were added (UMSA mapping cursor/connection and DAT/artwork
+schema cursors), and the cancellation-predicate handler now re-raises instead of
+swallowing, so it is no longer a `BLE001` site; net `BLE001` +3.
+
 The historical totals (BLE001=106, S110=54, PLW1510=1) were **not reproduced**
 at `af3bd11`; the reproduced baseline was BLE001=108, S110=54, PLW1510=1.
 Under Ruff's default rule set the reproduced baseline was 227 findings across
 19 codes (the historical audit recorded 225); after round 1 it is 196 findings
-across 18 codes, after round 2 it is 193 findings (rechecked at `a74976b`), and
-after round 3 it is 188 findings.
+across 18 codes, after round 2 it is 193 findings (rechecked at `a74976b`),
+after round 3 it is 188 findings, and after round 4 it is 189 findings.
 
-### Current findings by rule (after round 3)
+### Current findings by rule (after round 4)
 
 Non-`BLE001`/`S110` counts were last rechecked in round 1 and were unchanged by
 the round 2/3 edits.
 
 | Code | Count | Description | Fixable |
 |------|-------|-------------|---------|
-| **BLE001** | 109 | Blind `except Exception:` — catches too broadly | ❌ |
-| **S110** | 17 | `try: ... except Exception: pass` — silent failure | ❌ |
+| **BLE001** | 112 | Blind `except Exception:` — catches too broadly | ❌ |
+| **S110** | 15 | `try: ... except Exception: pass` — silent failure | ❌ |
 | **F401** | 21 | Unused import | ✅ |
 | **UP031** | 10 | Legacy `%` formatting → prefer f-strings | ❌ |
 | **UP007** | 6 | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ❌ |
@@ -99,7 +105,7 @@ the round 2/3 edits.
 | **C413** | 1 | Unnecessary `sorted()` call | ❌ |
 | **RUF046** | 1 | Unnecessary `int()` cast | ❌ |
 | **RUF059** | 1 | Unused unpacked variable | ❌ |
-| **Total** | **188** | | **25 safe fixes** |
+| **Total** | **189** | | **25 safe fixes** |
 
 > `E722` (bare `except:`), `B006` (mutable default) and `TRY203` were reported
 > by earlier audits; `E722`/`B006` are absent and the 2 `TRY203` findings were
@@ -107,7 +113,7 @@ the round 2/3 edits.
 
 ### High-Priority Findings (Correctness Risk)
 
-#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 3)
+#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 4)
 
 Remaining findings grouped by module and functional risk. Counts are Ruff
 reported rows; the `S110` rows are the same source locations as `BLE001` rows,
@@ -128,7 +134,7 @@ so the unique location counts are the `BLE001` counts.
 | `umsa_core/exodos_artwork.py` | 9 | 0 | 9 | Low-medium. Cleanup/status failures are logged and surfaced in scan summaries. |
 | `umsa_core/exodos_scanner.py` | 4 | 0 | 4 | Low-medium. Cancellation/progress callback boundaries. |
 | `umsa_core/game_labels.py` | 2 | 0 | 2 | Low. Bad timestamp/input normalization. |
-| `umsa_core/gb64_scanner.py` | 11 | 2 | 11 | Medium. Scan logging and cleanup boundaries. |
+| `umsa_core/gb64_scanner.py` | 14 | 0 | 14 | Medium. Round 4 makes predicate failures abort, logs mapping/schema/final close failures, and preserves primary errors. |
 | `umsa_core/vgm_player.py` | 3 | 1 | 3 | Low. Callback failures are logged; one optional label update is silent. |
 | `umsa_core/vgm_socket.py` | 14 | 6 | 14 | Low. Socket shutdown/close cleanup and logging on connection failure. |
 | `screensaver` add-on | 0 | 0 | 0 | Clean for BLE001/S110. |
@@ -158,6 +164,15 @@ raising predicate as an abort with the established summary shape, closes both
 cursors and both connections on every exit path, and logs each final cleanup
 failure without masking an active exception. Both scanners have zero `S110`
 locations after round 3.
+
+**Round 4 changes in `gb64_scanner.py`:** a raising cancellation predicate now
+logs and raises a private sentinel. `_scan_locked()` converts it to the existing
+aborted summary shape (`aborted=True`, one error), does not process another
+archive, and leaves legacy `Screenshots` retirement untouched; already committed
+units remain committed. UMSA mapping cursor/connection closes, DAT/artwork schema
+cursor closes, and the final DAT/artwork connection closes are independently
+logged so cleanup failures cannot mask a primary exception or turn a successful
+scan into an error. `S110` is now zero for this module.
 
 #### 2. PLW1510 — `subprocess.run()` without `check=True` (fixed in round 1)
 
@@ -243,6 +258,19 @@ Cannot type-check without Kodi stubs (`Kodistubs` package). Requires Kodi runtim
 ---
 
 ## Test Suite Status
+
+### P0 round 4 verification (2026-10-25, GB64 scan hardening)
+
+| Command | Result |
+|---------|--------|
+| `pytest tests/test_gb64_scanner.py tests/test_gb64_parser.py tests/test_dat_repository.py tests/test_artwork_repository.py tests/test_sqlite.py tests/test_scan_coordinator.py tests/test_architecture_boundaries.py -q` | **119 passed** |
+| `pytest tests/ -q` | **1150 passed, 5 skipped, 18 subtests passed** |
+| `ruff check .../gb64_scanner.py --select BLE001,S110 --statistics` | **14 BLE001, 0 S110** |
+| `ruff check plugin.program.umsa.mame.surfer screensaver.umsa.mame.surfer script.module.umsa.core --select BLE001,S110,PLW1510 --statistics` | **112 BLE001, 15 S110, 0 PLW1510** (127 rows / 112 unique locations) |
+| `ruff check . --statistics` | **189 findings** (up from 188; net +1 after +3 BLE001 and -2 S110) |
+
+The round 4 GB64 tests are local-only (`tests/` is gitignored, like the rest of
+the suite).
 
 ### P0 round 3 verification (2026-10-25, server-side scan hardening)
 
@@ -350,7 +378,9 @@ the table is kept only for chronology.
 #   after round 2 at a74976b: 131 rows
 #   (BLE001=107, S110=24, PLW1510=0; 107 unique locations);
 #   after round 3: 126 rows
-#   (BLE001=109, S110=17, PLW1510=0; 109 unique locations).
+#   (BLE001=109, S110=17, PLW1510=0; 109 unique locations);
+#   after round 4: 127 rows
+#   (BLE001=112, S110=15, PLW1510=0; 112 unique locations).
 ```
 
 ### Recommended (P1 — Should Pass)
@@ -386,11 +416,11 @@ done
 | Architecture boundary tests | 7/7 ✅ | 7/7 ✅ |
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
-| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0); after round 3 126 rows / 109 locations (BLE001=109, S110=17, PLW1510=0; +2 BLE001 from logged scanner cleanup, -7 S110) | **No new silent failures**; continue B1/B2 triage |
+| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0); after round 3 126 rows / 109 locations (BLE001=109, S110=17, PLW1510=0); after round 4 127 rows / 112 locations (BLE001=112, S110=15, PLW1510=0; +3 BLE001, -2 S110) | **No new silent failures**; continue B1/B2 triage |
 | Ruff style issues | 62 (default rules minus BLE001/S110/PLW1510) | P1: UP031 → 0 |
 | Mypy (`vgm_header.py` only) | Clean | Clean |
 | Pre-existing test failures | 0 (13 historical resolved); one transient network failure in round 1, not reproducible | No new |
-| Full suite | 1130 passed, 5 skipped, 18 subtests (round 1 rerun) | ≥ 1130, no new failures |
+| Full suite | 1150 passed, 5 skipped, 18 subtests (round 4) | ≥ 1150, no new failures |
 
 ---
 
@@ -399,7 +429,7 @@ done
 | Priority | Action | Owner |
 |----------|--------|-------|
 | P0 | Close the 3 open manual areas (emulator matrix, Retroplayer, clean install/upgrade) | Maintainer |
-| P0 | Continue B1/B2 triage (remaining BLE001=109, S110=17 after round 3); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup and the DAT/artwork scanner cleanup paths are fixed and their broad handlers log; the rest are UI/scan/socket boundaries | Dev |
+| P0 | Continue B1/B2 triage (remaining BLE001=112, S110=15 after round 4); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, and the DAT/artwork/GB64 scanner cleanup paths are fixed and their broad handlers log; the rest are UI/scan/socket boundaries | Dev |
 | ~~P0~~ | ~~Fix PLW1510~~ ✅ **Fixed in round 1** at `emulation.py` terminal fallback with regression tests | Dev |
 | P1 | Convert UP031 (10 f-string candidates) | Dev |
 | P1 | Fix UP007 (6 union syntax), SIM115 (5 context managers) | Dev |

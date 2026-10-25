@@ -41,6 +41,10 @@ LEGACY_SCREENSHOT_UNIT = "Screenshots"
 GAMES_DIR = "Games"
 
 
+class _GB64CancellationCheckError(Exception):
+    """Raised when the host cancellation predicate itself fails."""
+
+
 class GB64Scanner:
     """Import GameBase64 metadata and artwork into the UMSA databases.
 
@@ -92,8 +96,11 @@ class GB64Scanner:
             return True
         try:
             return bool(self._is_cancelled())
-        except Exception:
-            return False
+        except Exception as exc:
+            log(f"UMSA gb64 scan: cancellation predicate failed ({exc}); "
+                "aborting scan without processing another archive",
+                level='error')
+            raise _GB64CancellationCheckError(str(exc)) from exc
 
     # -- discovery helpers ----------------------------------------------
 
@@ -180,9 +187,17 @@ class GB64Scanner:
                         gb64_name[gamename] = set_id
                 return gb64_sets, gb64_name
             finally:
-                cursor.close()
+                try:
+                    cursor.close()
+                except Exception as exc:
+                    log(f"UMSA gb64 scan: could not close UMSA mapping "
+                        f"cursor: {exc}", level='error')
         finally:
-            gdb.close()
+            try:
+                gdb.close()
+            except Exception as exc:
+                log(f"UMSA gb64 scan: could not close UMSA mapping "
+                    f"connection: {exc}", level='error')
 
     @staticmethod
     def _normalize_screenshot_ref(ref) -> tuple:
@@ -567,17 +582,22 @@ class GB64Scanner:
                     log(f"UMSA gb64 scan: could not retire legacy screenshot "
                         f"unit: {exc}", level='error')
                     summary['errors'] += 1
+        except _GB64CancellationCheckError:
+            summary['aborted'] = True
+            summary['errors'] += 1
         finally:
             if art_conn is not None:
                 try:
                     art_conn.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log(f"UMSA gb64 scan: could not close artwork database "
+                        f"connection: {exc}", level='error')
             if dat_conn is not None:
                 try:
                     dat_conn.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log(f"UMSA gb64 scan: could not close DAT database "
+                        f"connection: {exc}", level='error')
 
         self._report(100, 'gamebase64 finished!')
         log(f"UMSA gb64 scan: finished sets={summary['sets']} "
@@ -602,7 +622,11 @@ class GB64Scanner:
             else:
                 create_dat_tables(cursor)
         finally:
-            cursor.close()
+            try:
+                cursor.close()
+            except Exception as exc:
+                log(f"UMSA gb64 scan: could not close DAT schema cursor: "
+                    f"{exc}", level='error')
         conn.commit()
 
     def _init_art_schema(self, conn):
@@ -615,7 +639,11 @@ class GB64Scanner:
             else:
                 create_artwork_tables(cursor)
         finally:
-            cursor.close()
+            try:
+                cursor.close()
+            except Exception as exc:
+                log(f"UMSA gb64 scan: could not close artwork schema cursor: "
+                    f"{exc}", level='error')
         conn.commit()
 
     @staticmethod
