@@ -1161,15 +1161,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         return scan_orchestrator.update(self, what, CORE_DATA_PATHS)
 
     def exit(self):
-        """Exit add-on
-
-        Save last ten, stop video, close database
-        """
-
-        try:
-            self._save_lastgames()
-        except Exception as exc:
-            xbmc.log(f"UMSA gui: exit: could not save last games: {exc}", xbmc.LOGERROR)
+        """Exit add-on: stop video, close database."""
 
         if self.emulation.playvgm:
             self.emulation.playrandomvgm = None
