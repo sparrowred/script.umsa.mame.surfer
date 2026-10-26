@@ -93,5 +93,7 @@ def update(gui, what, core_data_paths):
         # (artwork.db, dat.db). No post-scan synchronization copy is needed.
         try:
             gui.progress_dialog.close()
-        except Exception:
-            pass
+        except Exception as error:
+            xbmc.log(
+                f'UMSA gui: could not close scan progress dialog: {error}',
+                xbmc.LOGWARNING)

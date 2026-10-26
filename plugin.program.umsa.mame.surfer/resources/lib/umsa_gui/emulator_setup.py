@@ -141,20 +141,34 @@ def add_or_update_emu_output(gui, out, err, exit_code, cmd_args):
         emu_out_item.setProperty(
             'text', f'cmd: {cmd_str}\nerr {exit_code}: {err}\nout: {out}')
         gui.getControl(TEXTLIST).selectItem(gui.getControl(TEXTLIST).size() - 1)
-    except Exception:
-        pass
+    except Exception as error:
+        xbmc.log(
+            f'UMSA gui: could not update emulator output: {error}',
+            xbmc.LOGDEBUG)
 
 
 def notify_final_launch(gui, notif_text, emu_name, mode):
     """Tell the user that the emulator stopped."""
 
-    try:
-        if mode != 'no':
+    if mode != 'no':
+        try:
             gui.emu_dialog.update(
                 90, f"{notif_text}\nScreensaver active. Press a button to escape!")
-        else:
+        except Exception as error:
+            xbmc.log(
+                f'UMSA gui: could not update emulator dialog: {error}',
+                xbmc.LOGWARNING)
+    else:
+        try:
             gui.emu_dialog.close()
+        except Exception as error:
+            xbmc.log(
+                f'UMSA gui: could not close emulator dialog: {error}',
+                xbmc.LOGWARNING)
+        try:
             gui.dialog.notification(f'{emu_name} stopped', f'{notif_text}',
                                     xbmcgui.NOTIFICATION_INFO, 3000, False)
-    except Exception:
-        pass
+        except Exception as error:
+            xbmc.log(
+                f'UMSA gui: could not show final launch notification: {error}',
+                xbmc.LOGWARNING)
