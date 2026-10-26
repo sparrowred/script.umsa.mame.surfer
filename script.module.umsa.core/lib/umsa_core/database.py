@@ -188,6 +188,9 @@ class DBMod:
         status.db connection is left untouched. Any previous umsa.db
         connection is closed first so it can never be silently overwritten.
         No artwork/DAT data is copied into umsa.db.
+
+        If opening or attaching fails, every cleanup step is attempted
+        independently and logged; the original exception is re-raised.
         """
 
         self.close_umsa_db()
@@ -214,15 +217,26 @@ class DBMod:
             self.gdbc = gdbc
         except Exception:
             if gdbc is not None:
+                for alias in ('art', 'dat'):
+                    if alias not in attached:
+                        continue
+                    try:
+                        gdbc.execute(f"DETACH DATABASE '{alias}'")
+                    except Exception as exc:
+                        log(f"UMSA database open_db: could not detach "
+                            f"'{alias}' schema during cleanup: {exc}",
+                            level='error')
                 try:
-                    for alias in ('art', 'dat'):
-                        if alias in attached:
-                            gdbc.execute(f"DETACH DATABASE '{alias}'")
-                except Exception:
-                    pass
-                gdbc.close()
+                    gdbc.close()
+                except Exception as exc:
+                    log(f"UMSA database open_db: could not close umsa cursor "
+                        f"during cleanup: {exc}", level='error')
             if gdb is not None:
-                gdb.close()
+                try:
+                    gdb.close()
+                except Exception as exc:
+                    log(f"UMSA database open_db: could not close umsa "
+                        f"connection during cleanup: {exc}", level='error')
             raise
 
     def create_dat_tables(self, db_cursor):
@@ -251,43 +265,76 @@ class DBMod:
         Safe to call more than once and even if __init__ failed before the
         connection was opened. The connection objects are left in a closed
         state rather than cleared so callers holding a reference see the
-        connection they closed.
+        connection they closed. Cursor and connection cleanup are independent;
+        failures are logged without preventing the other close attempt.
+        Successfully closed handle pairs are not retried.
         """
 
         gdbc = getattr(self, 'gdbc', None)
+        gdb = getattr(self, 'gdb', None)
+        closed_handles = getattr(self, '_umsa_closed_handles', None)
+        if (closed_handles is not None
+                and closed_handles[0] is gdbc
+                and closed_handles[1] is gdb):
+            return
+
+        cleanup_failed = False
         if gdbc is not None:
             try:
                 gdbc.close()
-            except Exception:
-                pass
-        gdb = getattr(self, 'gdb', None)
+            except Exception as exc:
+                cleanup_failed = True
+                log(f"UMSA database close_umsa_db: could not close umsa "
+                    f"cursor: {exc}", level='error')
         if gdb is not None:
             try:
                 gdb.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                cleanup_failed = True
+                log(f"UMSA database close_umsa_db: could not close umsa "
+                    f"connection: {exc}", level='error')
+        if not cleanup_failed:
+            self._umsa_closed_handles = (gdbc, gdb)
 
     def close(self):
         """Close every persistent database connection owned by DBMod.
 
         Safe to call more than once and even if __init__ failed before both
-        connections were opened.
+        connections were opened. Cleanup is best-effort: failures are logged
+        without preventing the remaining resources from being closed.
         """
 
-        self.close_umsa_db()
+        try:
+            self.close_umsa_db()
+        except Exception as exc:
+            log(f"UMSA database close: umsa cleanup failed: {exc}",
+                level='error')
 
         sdbc = getattr(self, 'sdbc', None)
+        sdb = getattr(self, 'sdb', None)
+        closed_handles = getattr(self, '_status_closed_handles', None)
+        if (closed_handles is not None
+                and closed_handles[0] is sdbc
+                and closed_handles[1] is sdb):
+            return
+
+        cleanup_failed = False
         if sdbc is not None:
             try:
                 sdbc.close()
-            except Exception:
-                pass
-        sdb = getattr(self, 'sdb', None)
+            except Exception as exc:
+                cleanup_failed = True
+                log(f"UMSA database close: could not close status cursor: "
+                    f"{exc}", level='error')
         if sdb is not None:
             try:
                 sdb.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                cleanup_failed = True
+                log(f"UMSA database close: could not close status connection: "
+                    f"{exc}", level='error')
+        if not cleanup_failed:
+            self._status_closed_handles = (sdbc, sdb)
 
     def close_db(self):
         """Compatibility wrapper: close only the umsa.db connection.
