@@ -43,19 +43,19 @@ Command (production roots only):
     --select BLE001,S110,PLW1510 --statistics
 ```
 
-| Rule | Baseline at `af3bd11` | After round 1 | After round 2 at `a74976b` | After round 3 | After round 4 | After round 5 |
-|------|----------------------|---------------|----------------------------|---------------|---------------|---------------|
-| **BLE001** | 108 | 105 | 107 | 109 | 112 | 115 |
-| **S110** | 54 | 29 | 24 | 17 | 15 | 10 |
-| **PLW1510** | 1 | **0** | **0** | **0** | **0** | **0** |
-| **Total reported rows** | **163** | **134** | **131** | **126** | **127** | **125** |
-| **Unique exception source locations** | **108** | **105** | **107** | **109** | **112** | **115** |
+| Rule | Baseline at `af3bd11` | After round 1 | After round 2 at `a74976b` | After round 3 | After round 4 | After round 5 | After round 6 (from `c02e77b`) |
+|------|----------------------|---------------|----------------------------|---------------|---------------|---------------|-----------------------------|
+| **BLE001** | 108 | 105 | 107 | 109 | 112 | 115 | 121 |
+| **S110** | 54 | 29 | 24 | 17 | 15 | 10 | 4 |
+| **PLW1510** | 1 | **0** | **0** | **0** | **0** | **0** | **0** |
+| **Total reported rows** | **163** | **134** | **131** | **126** | **127** | **125** | **125** |
+| **Unique exception source locations** | **108** | **105** | **107** | **109** | **112** | **115** | **121** |
 
 **Counting note:** the baseline reported 162 `BLE001`+`S110` rows but only 108
 unique file/line locations, because every `S110` location was also a `BLE001`
 location. Do not add the two rule counts as if they were independent sites.
-After round 5, the 115 `BLE001` rows are 115 unique locations; `S110` remains a
-subset of those locations.
+After round 6, the 121 `BLE001` rows are 121 unique locations; the 4 remaining
+`S110` rows are a subset of those locations.
 
 `BLE001` increased by 2 in round 2 because `UMSA.exit()` now catches and logs
 failures from two operations that previously had no handler at all
@@ -81,23 +81,33 @@ gained an outer UMSA-cleanup guard, so `BLE001` rose by 3 net. The reported-row
 total fell by 2 because the five silent sites each previously contributed both
 a `BLE001` and an `S110` row.
 
+In round 6, all 6 `except Exception: pass` sites in `vgm_socket.py` were replaced
+with contextual logging and independent cleanup, so `S110` fell by 6. The new
+logged boundaries cover listener timeout restoration, client/listener socket
+cleanup, reader start/stop/join/state checks, and process-exit callback failure;
+merging the duplicated client/listener close handlers kept the net `BLE001`
+increase to 6. The reported-row total stayed at 125, while unique locations rose
+from 115 to 121 because the former silent rows were already counted as
+`BLE001`.
+
 The historical totals (BLE001=106, S110=54, PLW1510=1) were **not reproduced**
 at `af3bd11`; the reproduced baseline was BLE001=108, S110=54, PLW1510=1.
 Under Ruff's default rule set the reproduced baseline was 227 findings across
 19 codes (the historical audit recorded 225); after round 1 it is 196 findings
 across 18 codes, after round 2 it is 193 findings (rechecked at `a74976b`),
-after round 3 it is 188 findings, after round 4 it is 189 findings, and after
-round 5 it is 187 findings.
+after round 3 it is 188 findings, after round 4 it is 189 findings, after round
+5 it is 187 findings, and after round 6 it remains 187 findings (BLE001 +6,
+S110 -6).
 
-### Current findings by rule (after round 5)
+### Current findings by rule (after round 6)
 
 Non-`BLE001`/`S110` counts were last rechecked in round 1 and were unchanged by
-the round 2-5 edits.
+the round 2-6 edits.
 
 | Code | Count | Description | Fixable |
 |------|-------|-------------|---------|
-| **BLE001** | 115 | Blind `except Exception:` — catches too broadly | ❌ |
-| **S110** | 10 | `try: ... except Exception: pass` — silent failure | ❌ |
+| **BLE001** | 121 | Blind `except Exception:` — catches too broadly | ❌ |
+| **S110** | 4 | `try: ... except Exception: pass` — silent failure | ❌ |
 | **F401** | 21 | Unused import | ✅ |
 | **UP031** | 10 | Legacy `%` formatting → prefer f-strings | ❌ |
 | **UP007** | 6 | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ❌ |
@@ -122,7 +132,7 @@ the round 2-5 edits.
 
 ### High-Priority Findings (Correctness Risk)
 
-#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 5)
+#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 6)
 
 Remaining findings grouped by module and functional risk. Counts are Ruff
 reported rows; the `S110` rows are the same source locations as `BLE001` rows,
@@ -145,7 +155,7 @@ so the unique location counts are the `BLE001` counts.
 | `umsa_core/game_labels.py` | 2 | 0 | 2 | Low. Bad timestamp/input normalization. |
 | `umsa_core/gb64_scanner.py` | 14 | 0 | 14 | Medium. Round 4 makes predicate failures abort, logs mapping/schema/final close failures, and preserves primary errors. |
 | `umsa_core/vgm_player.py` | 3 | 1 | 3 | Low. Callback failures are logged; one optional label update is silent. |
-| `umsa_core/vgm_socket.py` | 14 | 6 | 14 | Low. Socket shutdown/close cleanup and logging on connection failure. |
+| `umsa_core/vgm_socket.py` | 20 | 0 | 20 | Low. Round 6 logs listener timeout restoration, socket shutdown/close, reader start/stop/join, buffer drain, process-exit callback, and send failures while keeping cleanup independent. |
 | `screensaver` add-on | 0 | 0 | 0 | Clean for BLE001/S110. |
 
 **Round 1 changes in `emulator_launcher.py`:** all `except Exception: pass`
@@ -194,6 +204,17 @@ cursor and connection independently, so a failure in one resource never skips
 the rest; cleanup-only failures remain non-fatal during ordinary shutdown.
 Repeated successful `close()` calls do not retry the status pair. `S110` is now
 zero for this module.
+
+**Round 6 changes in `vgm_socket.py`:** `_close_client()` and `_close_all()` now
+use one logged socket-cleanup helper, close the client and listener
+independently, clear state even when shutdown/close fails, and avoid repeating
+errors on repeated close calls. Reader stop/join/state-check failures and
+process-exit callback failures are logged without aborting cleanup. Listener
+timeout restoration, startup failure cleanup, reader start failure, drain
+read/select errors, and send failures are logged with operation context.
+Expected `OSError` socket conditions remain at debug level; unexpected failures
+log at warning. Logger callback failures cannot escape or skip cleanup, and
+`S110` is now zero for this module.
 
 #### 2. PLW1510 — `subprocess.run()` without `check=True` (fixed in round 1)
 
@@ -279,6 +300,20 @@ Cannot type-check without Kodi stubs (`Kodistubs` package). Requires Kodi runtim
 ---
 
 ## Test Suite Status
+
+### P0 round 6 verification (2026-10-26, VGM socket cleanup hardening)
+
+| Command | Result |
+|---------|--------|
+| `pytest tests/test_vgm_socket_cleanup.py tests/test_lua_socket_log.py tests/test_vgmplay_port.py -q` | **55 passed, 18 subtests passed** |
+| `pytest tests/test_vgm_socket_cleanup.py tests/test_lua_socket_log.py tests/test_vgmplay_port.py tests/test_emulation_process.py tests/test_emulation_vgm_callback.py tests/test_emulation_chd.py tests/test_process.py tests/test_vgm_player_entrypoints.py tests/test_random_vgm_player.py tests/test_vgm_random_batch.py tests/test_vgmplay_preexit.py tests/test_architecture_boundaries.py -q` | **149 passed, 18 subtests passed** |
+| `pytest tests/ -q` | **1171 passed, 5 skipped, 18 subtests passed** |
+| `ruff check .../vgm_socket.py --select BLE001,S110 --statistics` | **20 BLE001, 0 S110** (was 14 BLE001, 6 S110 at `c02e77b`) |
+| `ruff check plugin.program.umsa.mame.surfer screensaver.umsa.mame.surfer script.module.umsa.core --select BLE001,S110,PLW1510 --statistics` | **121 BLE001, 4 S110, 0 PLW1510** (125 rows / 121 unique locations) |
+| `ruff check . --statistics` | **187 findings** (unchanged; BLE001 +6, S110 -6) |
+
+The round 6 VGM socket tests are local-only (`tests/` is gitignored, like the
+rest of the suite).
 
 ### P0 round 5 verification (2026-10-25, DBMod cleanup hardening)
 
@@ -417,7 +452,9 @@ the table is kept only for chronology.
 #   after round 4: 127 rows
 #   (BLE001=112, S110=15, PLW1510=0; 112 unique locations);
 #   after round 5: 125 rows
-#   (BLE001=115, S110=10, PLW1510=0; 115 unique locations).
+#   (BLE001=115, S110=10, PLW1510=0; 115 unique locations);
+#   after round 6 (baseline c02e77b): 125 rows
+#   (BLE001=121, S110=4, PLW1510=0; 121 unique locations).
 ```
 
 ### Recommended (P1 — Should Pass)
@@ -453,11 +490,11 @@ done
 | Architecture boundary tests | 7/7 ✅ | 7/7 ✅ |
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
-| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0); after round 3 126 rows / 109 locations (BLE001=109, S110=17, PLW1510=0); after round 4 127 rows / 112 locations (BLE001=112, S110=15, PLW1510=0); after round 5 125 rows / 115 locations (BLE001=115, S110=10, PLW1510=0; +3 BLE001, -5 S110) | **No new silent failures**; continue B1/B2 triage |
+| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0); after round 3 126 rows / 109 locations (BLE001=109, S110=17, PLW1510=0); after round 4 127 rows / 112 locations (BLE001=112, S110=15, PLW1510=0); after round 5 125 rows / 115 locations (BLE001=115, S110=10, PLW1510=0); after round 6 (baseline `c02e77b`) 125 rows / 121 locations (BLE001=121, S110=4, PLW1510=0; +6 BLE001, -6 S110) | **No new silent failures**; continue B1/B2 triage |
 | Ruff style issues | 62 (default rules minus BLE001/S110/PLW1510) | P1: UP031 → 0 |
 | Mypy (`vgm_header.py` only) | Clean | Clean |
 | Pre-existing test failures | 0 (13 historical resolved); one transient network failure in round 1, not reproducible | No new |
-| Full suite | 1159 passed, 5 skipped, 18 subtests (round 5) | ≥ 1159, no new failures |
+| Full suite | 1171 passed, 5 skipped, 18 subtests (round 6) | ≥ 1171, no new failures |
 
 ---
 
@@ -466,7 +503,7 @@ done
 | Priority | Action | Owner |
 |----------|--------|-------|
 | P0 | Close the 3 open manual areas (emulator matrix, Retroplayer, clean install/upgrade) | Maintainer |
-| P0 | Continue B1/B2 triage (remaining BLE001=115, S110=10 after round 5); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, and `DBMod` open/close cleanup are fixed and their broad handlers log; the rest are UI/scan/socket boundaries | Dev |
+| P0 | Continue B1/B2 triage (remaining BLE001=121, S110=4 after round 6); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, and VGM socket lifecycle cleanup are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
 | ~~P0~~ | ~~Fix PLW1510~~ ✅ **Fixed in round 1** at `emulation.py` terminal fallback with regression tests | Dev |
 | P1 | Convert UP031 (10 f-string candidates) | Dev |
 | P1 | Fix UP007 (6 union syntax), SIM115 (5 context managers) | Dev |

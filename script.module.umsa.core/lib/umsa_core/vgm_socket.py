@@ -108,6 +108,23 @@ class VgmSocketServer:
         self._bound_port: int | None = None
         self._lock = threading.Lock()
 
+    def _log(self, message: str, level: str = 'debug'):
+        """Forward one diagnostic without allowing logger failures to escape."""
+        try:
+            self._logger(message, level=level)
+        except Exception:
+            if self._logger is log:
+                return
+            try:
+                log(message, level=level)
+            except Exception:
+                return
+
+    def _log_socket_error(self, operation: str, err: Exception):
+        """Log socket shutdown/read failures, quieting expected OSError cases."""
+        level = 'debug' if isinstance(err, OSError) else 'warning'
+        self._log(f"UMSA VGM: {operation}: {err}", level=level)
+
     def start_server(self, port_env: str | None = None) -> bool:
         """Create and start the listening socket.
 
@@ -127,7 +144,7 @@ class VgmSocketServer:
                 # Explicit port configuration - must be valid
                 port = _parse_vgmplay_port(port_env)
                 if port is None:
-                    self._logger("UMSA VGM: socket disabled (invalid port)", level='debug')
+                    self._log("UMSA VGM: socket disabled (invalid port)", level='debug')
                     return False
 
             try:
@@ -136,10 +153,10 @@ class VgmSocketServer:
                 self._listener.bind(("127.0.0.1", port))
                 self._listener.listen(1)
                 self._bound_port = port
-                self._logger(f"UMSA VGM: listening on 127.0.0.1:{port}", level='debug')
+                self._log(f"UMSA VGM: listening on 127.0.0.1:{port}", level='debug')
                 return True
             except Exception as err:
-                self._logger(f"UMSA VGM: failed to start socket server: {err}", level='warning')
+                self._log(f"UMSA VGM: failed to start socket server: {err}", level='warning')
                 self._close_all()
                 return False
 
@@ -164,28 +181,41 @@ class VgmSocketServer:
 
         try:
             while time.monotonic() < deadline:
-                if self._process_exited():
-                    self._logger("UMSA VGM: process exited before Lua connection", level='debug')
+                try:
+                    process_exited = self._process_exited()
+                except Exception as err:
+                    self._log(f"UMSA VGM: process exit check failed: {err}",
+                              level='warning')
+                    return False
+                if process_exited:
+                    self._log("UMSA VGM: process exited before Lua connection", level='debug')
                     return False
                 try:
                     conn, _ = listener.accept()
                 except TimeoutError:
                     continue
                 except Exception as err:
-                    self._logger(f"UMSA VGM: accept failed: {err}", level='debug')
+                    self._log(f"UMSA VGM: accept failed: {err}", level='debug')
                     return False
 
                 with self._lock:
                     if self._client:
                         self._close_client()
                     self._client = conn
-                    self._start_reader(conn)
+                    try:
+                        self._start_reader(conn)
+                    except Exception as err:
+                        self._log(f"UMSA VGM: reader start failed: {err}",
+                                  level='warning')
+                        self._close_client()
+                        return False
                 return True
         finally:
             try:
                 listener.settimeout(None)
-            except Exception:
-                pass
+            except Exception as err:
+                self._log(f"UMSA VGM: could not restore listener timeout: "
+                          f"{err}", level='warning')
 
         return False
 
@@ -196,7 +226,12 @@ class VgmSocketServer:
         self._reader_stop = stop
         thread = threading.Thread(target=self._reader_loop, args=(conn, stop), daemon=True)
         self._reader_thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            self._reader_thread = None
+            self._reader_stop = None
+            raise
         return thread
 
     def _stop_reader(self):
@@ -208,10 +243,22 @@ class VgmSocketServer:
         if not thread:
             return
         if stop:
-            stop.set()
-        thread.join(LUA_READER_JOIN_TIMEOUT)
-        if thread.is_alive():
-            self._logger("UMSA VGM: reader thread still alive after join", level='debug')
+            try:
+                stop.set()
+            except Exception as err:
+                self._log(f"UMSA VGM: reader stop signal failed: {err}",
+                          level='warning')
+        stage = 'join'
+        try:
+            thread.join(LUA_READER_JOIN_TIMEOUT)
+            stage = 'state check'
+            alive = thread.is_alive()
+        except Exception as err:
+            self._log(f"UMSA VGM: reader thread {stage} failed: {err}",
+                      level='warning')
+            return
+        if alive:
+            self._log("UMSA VGM: reader thread still alive after join", level='debug')
 
     def _reader_loop(self, conn, stop):
         """Drain LOG frames sent by vgmplay.lua. Never raises into the caller."""
@@ -221,14 +268,14 @@ class VgmSocketServer:
                 try:
                     readable = select.select([conn], [], [], LUA_READ_POLL_TIMEOUT)[0]
                 except Exception as err:
-                    self._logger(f"UMSA VGM: reader select error: {err}", level='debug')
+                    self._log_socket_error("reader select error", err)
                     return
                 if not readable:
                     continue
                 try:
                     data = conn.recv(4096)
                 except Exception as err:
-                    self._logger(f"UMSA VGM: reader recv error: {err}", level='debug')
+                    self._log_socket_error("reader recv error", err)
                     return
                 if not data:
                     # Lua closed its side
@@ -238,17 +285,17 @@ class VgmSocketServer:
                     line, _, buf = buf.partition(b'\n')
                     self._forward_log_frame(line)
                 if len(buf) > LUA_LOG_MAX_LINE_BYTES:
-                    self._logger("UMSA VGM: log line too long, buffer dropped", level='warning')
+                    self._log("UMSA VGM: log line too long, buffer dropped", level='warning')
                     buf = b''
             # Shutdown requested: last drain
             self._drain_buffer(conn, buf)
         except Exception as err:
-            self._logger(f"UMSA VGM: reader loop error: {err}", level='warning')
+            self._log(f"UMSA VGM: reader loop error: {err}", level='warning')
         finally:
             try:
                 conn.close()
-            except OSError as err:
-                self._logger(f"UMSA VGM: reader close error: {err}", level='debug')
+            except Exception as err:
+                self._log_socket_error("reader close error", err)
 
     def _drain_buffer(self, conn, buf=b''):
         """Read frames already buffered by the kernel, non-blocking and bounded."""
@@ -256,13 +303,15 @@ class VgmSocketServer:
         while True:
             try:
                 readable = select.select([conn], [], [], 0)[0]
-            except Exception:
+            except Exception as err:
+                self._log_socket_error("drain select error", err)
                 return logged
             if not readable:
                 return logged
             try:
                 data = conn.recv(4096)
-            except Exception:
+            except Exception as err:
+                self._log_socket_error("drain recv error", err)
                 return logged
             if not data:
                 return logged
@@ -279,24 +328,24 @@ class VgmSocketServer:
         if not parsed:
             return False
         level, text = parsed
-        self._logger(f'{LUA_LOG_MSG_PREFIX}: {text}', level=level)
+        self._log(f'{LUA_LOG_MSG_PREFIX}: {text}', level=level)
         return True
 
     def send_command(self, data: bytes) -> bool:
         """Send a command to the Lua script over the accepted connection."""
-        self._logger("UMSA VGM: sending command", level='debug')
+        self._log("UMSA VGM: sending command", level='debug')
         with self._lock:
             if not self._client:
-                self._logger("UMSA Emu: no lua socket connection (not accepted)", level='warning')
+                self._log("UMSA Emu: no lua socket connection (not accepted)", level='warning')
                 return False
             if not data.endswith(b'\n'):
                 data = data + b'\n'
             try:
                 self._client.sendall(data)
-                self._logger(f"UMSA VGM: command sent: {data!r}", level='debug')
+                self._log(f"UMSA VGM: command sent: {data!r}", level='debug')
                 return True
             except Exception as err:
-                self._logger(f"UMSA VGM: send failed: {err}", level='warning')
+                self._log(f"UMSA VGM: send failed: {err}", level='warning')
                 return False
 
     def close_client(self):
@@ -306,17 +355,15 @@ class VgmSocketServer:
 
     def _close_client(self):
         """Internal: close client connection without lock."""
-        self._stop_reader()
-        if self._client:
-            try:
-                self._client.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-            try:
-                self._client.close()
-            except Exception:
-                pass
-            self._client = None
+        try:
+            self._stop_reader()
+        except Exception as err:
+            self._log(f"UMSA VGM: client reader cleanup failed: {err}",
+                      level='warning')
+        client = self._client
+        self._client = None
+        if client is not None:
+            self._close_socket(client, 'client', shut_down=True)
 
     def close_server(self):
         """Close the listening socket and any client connection."""
@@ -325,24 +372,29 @@ class VgmSocketServer:
 
     def _close_all(self):
         """Internal: close all sockets without lock."""
-        self._stop_reader()
-        if self._client:
-            try:
-                self._client.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-            try:
-                self._client.close()
-            except Exception:
-                pass
-            self._client = None
-        if self._listener:
-            try:
-                self._listener.close()
-            except Exception:
-                pass
-            self._listener = None
+        try:
+            self._close_client()
+        except Exception as err:
+            self._log(f"UMSA VGM: client cleanup failed before listener "
+                      f"close: {err}", level='warning')
+        listener = self._listener
+        self._listener = None
         self._bound_port = None
+        if listener is not None:
+            self._close_socket(listener, 'listener', shut_down=False)
+
+    def _close_socket(self, sock, resource: str, *, shut_down: bool):
+        """Close one socket, logging shutdown and close failures independently."""
+        if shut_down:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except Exception as err:
+                self._log_socket_error(f"{resource} shutdown failed", err)
+        try:
+            sock.close()
+        except Exception as err:
+            self._log(f"UMSA VGM: {resource} close failed: {err}",
+                      level='warning')
 
     @property
     def bound_port(self) -> int | None:
