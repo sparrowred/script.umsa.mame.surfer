@@ -238,13 +238,12 @@ class VgmPlayer:
                     level='debug')
                 vgm_nice = format_vgm_info(
                     vgm_tracklist[random_track - 1], random_vgm["gamename"], header, plan)
-                if self.vgm_info_callback:
-                    self.vgm_info_callback(vgm_nice)
+                self._notify_vgm_info(vgm_nice)
                 if textinfo:
                     try:
                         textinfo.setLabel(vgm_nice)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        log(f'UMSA Emu: VGM label update failed: {error}', level='debug')
                 consecutive_unplayable = 0
                 if run_func:
                     run_func(play_vgm, sleep=sleep, close_server=False, plan=plan)

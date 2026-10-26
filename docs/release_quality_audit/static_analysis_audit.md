@@ -43,18 +43,18 @@ Command (production roots only):
     --select BLE001,S110,PLW1510 --statistics
 ```
 
-| Rule | Baseline at `af3bd11` | After round 1 | After round 2 at `a74976b` | After round 3 | After round 4 | After round 5 | After round 6 (from `c02e77b`) |
-|------|----------------------|---------------|----------------------------|---------------|---------------|---------------|-----------------------------|
-| **BLE001** | 108 | 105 | 107 | 109 | 112 | 115 | 121 |
-| **S110** | 54 | 29 | 24 | 17 | 15 | 10 | 4 |
-| **PLW1510** | 1 | **0** | **0** | **0** | **0** | **0** | **0** |
-| **Total reported rows** | **163** | **134** | **131** | **126** | **127** | **125** | **125** |
-| **Unique exception source locations** | **108** | **105** | **107** | **109** | **112** | **115** | **121** |
+| Rule | Baseline at `af3bd11` | After round 1 | After round 2 at `a74976b` | After round 3 | After round 4 | After round 5 | After round 6 (from `c02e77b`) | After round 7 (from `d8d8cfa`) |
+|------|----------------------|---------------|----------------------------|---------------|---------------|---------------|-----------------------------|-----------------------------|
+| **BLE001** | 108 | 105 | 107 | 109 | 112 | 115 | 121 | 121 |
+| **S110** | 54 | 29 | 24 | 17 | 15 | 10 | 4 | 3 |
+| **PLW1510** | 1 | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
+| **Total reported rows** | **163** | **134** | **131** | **126** | **127** | **125** | **125** | **124** |
+| **Unique exception source locations** | **108** | **105** | **107** | **109** | **112** | **115** | **121** | **121** |
 
 **Counting note:** the baseline reported 162 `BLE001`+`S110` rows but only 108
 unique file/line locations, because every `S110` location was also a `BLE001`
 location. Do not add the two rule counts as if they were independent sites.
-After round 6, the 121 `BLE001` rows are 121 unique locations; the 4 remaining
+After round 7, the 121 `BLE001` rows are 121 unique locations; the 3 remaining
 `S110` rows are a subset of those locations.
 
 `BLE001` increased by 2 in round 2 because `UMSA.exit()` now catches and logs
@@ -90,24 +90,32 @@ increase to 6. The reported-row total stayed at 125, while unique locations rose
 from 115 to 121 because the former silent rows were already counted as
 `BLE001`.
 
+In round 7, the remaining silent optional label update in
+`vgm_player.py:play_random_vgm_thread()` now logs its failure at `debug`, so
+`S110` fell by 1. The random-playback info notification now uses the existing
+`_notify_vgm_info()` boundary, so a failing info callback is logged once at
+`warning` and cannot stop the track from reaching its runner. `BLE001` is
+unchanged at 121 because the callback helper already owned that broad catch and
+the label handler remains a broad optional-UI boundary.
+
 The historical totals (BLE001=106, S110=54, PLW1510=1) were **not reproduced**
 at `af3bd11`; the reproduced baseline was BLE001=108, S110=54, PLW1510=1.
 Under Ruff's default rule set the reproduced baseline was 227 findings across
 19 codes (the historical audit recorded 225); after round 1 it is 196 findings
 across 18 codes, after round 2 it is 193 findings (rechecked at `a74976b`),
 after round 3 it is 188 findings, after round 4 it is 189 findings, after round
-5 it is 187 findings, and after round 6 it remains 187 findings (BLE001 +6,
-S110 -6).
+5 it is 187 findings, after round 6 it remains 187 findings (BLE001 +6,
+S110 -6), and after round 7 it is 186 findings (S110 -1).
 
-### Current findings by rule (after round 6)
+### Current findings by rule (after round 7)
 
 Non-`BLE001`/`S110` counts were last rechecked in round 1 and were unchanged by
-the round 2-6 edits.
+the round 2-7 edits.
 
 | Code | Count | Description | Fixable |
 |------|-------|-------------|---------|
 | **BLE001** | 121 | Blind `except Exception:` — catches too broadly | ❌ |
-| **S110** | 4 | `try: ... except Exception: pass` — silent failure | ❌ |
+| **S110** | 3 | `try: ... except Exception: pass` — silent failure | ❌ |
 | **F401** | 21 | Unused import | ✅ |
 | **UP031** | 10 | Legacy `%` formatting → prefer f-strings | ❌ |
 | **UP007** | 6 | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ❌ |
@@ -124,7 +132,7 @@ the round 2-6 edits.
 | **C413** | 1 | Unnecessary `sorted()` call | ❌ |
 | **RUF046** | 1 | Unnecessary `int()` cast | ❌ |
 | **RUF059** | 1 | Unused unpacked variable | ❌ |
-| **Total** | **187** | | **25 safe fixes** |
+| **Total** | **186** | | **25 safe fixes** |
 
 > `E722` (bare `except:`), `B006` (mutable default) and `TRY203` were reported
 > by earlier audits; `E722`/`B006` are absent and the 2 `TRY203` findings were
@@ -132,7 +140,7 @@ the round 2-6 edits.
 
 ### High-Priority Findings (Correctness Risk)
 
-#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 6)
+#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 7)
 
 Remaining findings grouped by module and functional risk. Counts are Ruff
 reported rows; the `S110` rows are the same source locations as `BLE001` rows,
@@ -154,7 +162,7 @@ so the unique location counts are the `BLE001` counts.
 | `umsa_core/exodos_scanner.py` | 4 | 0 | 4 | Low-medium. Cancellation/progress callback boundaries. |
 | `umsa_core/game_labels.py` | 2 | 0 | 2 | Low. Bad timestamp/input normalization. |
 | `umsa_core/gb64_scanner.py` | 14 | 0 | 14 | Medium. Round 4 makes predicate failures abort, logs mapping/schema/final close failures, and preserves primary errors. |
-| `umsa_core/vgm_player.py` | 3 | 1 | 3 | Low. Callback failures are logged; one optional label update is silent. |
+| `umsa_core/vgm_player.py` | 3 | 0 | 3 | Low. Round 7 logs optional random-playback label failures at debug and routes info notifications through the logged callback boundary. The remaining broad handlers are the optional info/stopped callback boundaries and the thread-start reset that re-raises. |
 | `umsa_core/vgm_socket.py` | 20 | 0 | 20 | Low. Round 6 logs listener timeout restoration, socket shutdown/close, reader start/stop/join, buffer drain, process-exit callback, and send failures while keeping cleanup independent. |
 | `screensaver` add-on | 0 | 0 | 0 | Clean for BLE001/S110. |
 
@@ -215,6 +223,14 @@ read/select errors, and send failures are logged with operation context.
 Expected `OSError` socket conditions remain at debug level; unexpected failures
 log at warning. Logger callback failures cannot escape or skip cleanup, and
 `S110` is now zero for this module.
+
+**Round 7 changes in `vgm_player.py`:** random playback now reports a failed
+optional `textinfo.setLabel()` update at `debug` and continues to the track
+runner. The direct `vgm_info_callback` invocation was replaced by
+`_notify_vgm_info()`, preserving the existing one-layer `warning` logging and
+continuing playback when the callback raises. The stopped-callback one-shot
+guard, `Thread.start()` failure reset/re-raise, and the playback `finally` state
+reset are unchanged. `S110` is now zero for this module.
 
 #### 2. PLW1510 — `subprocess.run()` without `check=True` (fixed in round 1)
 
@@ -300,6 +316,24 @@ Cannot type-check without Kodi stubs (`Kodistubs` package). Requires Kodi runtim
 ---
 
 ## Test Suite Status
+
+### P0 round 7 verification (2026-10-26, VGM player callback diagnostics)
+
+| Command | Result |
+|---------|--------|
+| `pytest tests/test_vgm_player_entrypoints.py tests/test_emulation_vgm_callback.py tests/test_random_vgm_player.py -q` | **39 passed** |
+| `pytest tests/test_vgm_player_entrypoints.py -q` | **25 passed** |
+| `pytest tests/test_emulation_vgm_callback.py -q` | **6 passed** |
+| `pytest tests/test_random_vgm_player.py -q` | **8 passed** |
+| `pytest tests/test_lua_socket_log.py tests/test_vgm_socket_cleanup.py tests/test_vgmplay_port.py tests/test_emulation_process.py tests/test_emulation_chd.py tests/test_process.py tests/test_vgm_random_batch.py tests/test_vgmplay_preexit.py -q` | **106 passed, 18 subtests passed** |
+| `pytest tests/test_architecture_boundaries.py -q` | **7 passed** |
+| `pytest tests/ -q` | **1174 passed, 5 skipped, 18 subtests passed** |
+| `ruff check .../vgm_player.py --select BLE001,S110 --statistics` | **3 BLE001, 0 S110** (was 3 BLE001, 1 S110 at `d8d8cfa`) |
+| `ruff check plugin.program.umsa.mame.surfer screensaver.umsa.mame.surfer script.module.umsa.core --select BLE001,S110,PLW1510 --statistics` | **121 BLE001, 3 S110, 0 PLW1510** (124 rows / 121 unique locations) |
+| `ruff check . --statistics` | **186 findings** (down from 187; S110 -1) |
+
+The round 7 VGM player tests are local-only (`tests/` is gitignored, like the
+rest of the suite).
 
 ### P0 round 6 verification (2026-10-26, VGM socket cleanup hardening)
 
@@ -454,7 +488,9 @@ the table is kept only for chronology.
 #   after round 5: 125 rows
 #   (BLE001=115, S110=10, PLW1510=0; 115 unique locations);
 #   after round 6 (baseline c02e77b): 125 rows
-#   (BLE001=121, S110=4, PLW1510=0; 121 unique locations).
+#   (BLE001=121, S110=4, PLW1510=0; 121 unique locations);
+#   after round 7 (baseline d8d8cfa): 124 rows
+#   (BLE001=121, S110=3, PLW1510=0; 121 unique locations).
 ```
 
 ### Recommended (P1 — Should Pass)
@@ -490,11 +526,11 @@ done
 | Architecture boundary tests | 7/7 ✅ | 7/7 ✅ |
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
-| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0); after round 3 126 rows / 109 locations (BLE001=109, S110=17, PLW1510=0); after round 4 127 rows / 112 locations (BLE001=112, S110=15, PLW1510=0); after round 5 125 rows / 115 locations (BLE001=115, S110=10, PLW1510=0); after round 6 (baseline `c02e77b`) 125 rows / 121 locations (BLE001=121, S110=4, PLW1510=0; +6 BLE001, -6 S110) | **No new silent failures**; continue B1/B2 triage |
+| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0); after round 3 126 rows / 109 locations (BLE001=109, S110=17, PLW1510=0); after round 4 127 rows / 112 locations (BLE001=112, S110=15, PLW1510=0); after round 5 125 rows / 115 locations (BLE001=115, S110=10, PLW1510=0); after round 6 (baseline `c02e77b`) 125 rows / 121 locations (BLE001=121, S110=4, PLW1510=0); after round 7 (baseline `d8d8cfa`) 124 rows / 121 locations (BLE001=121, S110=3, PLW1510=0; -1 S110) | **No new silent failures**; continue B1/B2 triage |
 | Ruff style issues | 62 (default rules minus BLE001/S110/PLW1510) | P1: UP031 → 0 |
 | Mypy (`vgm_header.py` only) | Clean | Clean |
 | Pre-existing test failures | 0 (13 historical resolved); one transient network failure in round 1, not reproducible | No new |
-| Full suite | 1171 passed, 5 skipped, 18 subtests (round 6) | ≥ 1171, no new failures |
+| Full suite | 1174 passed, 5 skipped, 18 subtests (round 7) | ≥ 1174, no new failures |
 
 ---
 
@@ -503,7 +539,7 @@ done
 | Priority | Action | Owner |
 |----------|--------|-------|
 | P0 | Close the 3 open manual areas (emulator matrix, Retroplayer, clean install/upgrade) | Maintainer |
-| P0 | Continue B1/B2 triage (remaining BLE001=121, S110=4 after round 6); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, and VGM socket lifecycle cleanup are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
+| P0 | Continue B1/B2 triage (remaining BLE001=121, S110=3 after round 7); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, VGM socket lifecycle cleanup, and VGM player callback diagnostics are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
 | ~~P0~~ | ~~Fix PLW1510~~ ✅ **Fixed in round 1** at `emulation.py` terminal fallback with regression tests | Dev |
 | P1 | Convert UP031 (10 f-string candidates) | Dev |
 | P1 | Fix UP007 (6 union syntax), SIM115 (5 context managers) | Dev |
