@@ -52,32 +52,31 @@ def make_time_nice(timestamp, now=None):
         elapsed = 0
 
     if elapsed < 60:
-        return f'0:{elapsed:02d}'
+        return f'{elapsed:02d}s'
 
     if elapsed < 3600:
         total_minutes = elapsed // 60
-        seconds = elapsed % 60
         hours = total_minutes // 60
         minutes = total_minutes % 60
         if hours > 0:
-            return f'{hours}:{minutes:02d}'
-        return f'{total_minutes}:{seconds:02d}'
+            return f'{hours}:{minutes:2d}'
+        return f'{total_minutes}m'
 
     if elapsed < 86400:
         hours = elapsed // 3600
         minutes = (elapsed % 3600) // 60
-        return f'{hours}:{minutes:02d}'
+        return f'{hours}:{minutes:2d}'
 
     if elapsed < 30 * 86400:
         days = elapsed // 86400
         hours = (elapsed % 86400) // 3600
-        return f'{days}:{hours:02d}'
+        return f'{days}:{hours:02d}d'
 
     if elapsed < 360 * 86400:
         months = elapsed // (30 * 86400)
-        hours = (elapsed % (30 * 86400)) // 3600
-        return f'{months}:{hours:02d}'
+        days = (elapsed % (30 * 86400)) // 86400
+        return f'{months}:{days:02d}m'
 
     years = elapsed // (360 * 86400)
     months = (elapsed % (360 * 86400)) // (30 * 86400)
-    return f'{years}:{months:02d}'
+    return f'{years}:{months:02d}Y'

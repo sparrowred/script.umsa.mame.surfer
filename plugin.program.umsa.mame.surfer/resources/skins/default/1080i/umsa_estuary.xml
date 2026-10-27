@@ -22,7 +22,7 @@
       <width>1013</width>
       <height>27</height>
       <viewtype>list</viewtype>
-      <autoscroll delay="5000" time="1000" repeat="5000">true</autoscroll>
+      <autoscroll delay="5000" time="7000" repeat="5000">true</autoscroll>
       <itemlayout/>
       <focusedlayout>
         <control type="label">
@@ -346,7 +346,7 @@
       <width>399</width>
       <height>27</height>
       <viewtype>list</viewtype>
-      <autoscroll delay="3000" time="1000" repeat="3000">true</autoscroll>
+      <autoscroll delay="3000" time="2500" repeat="3000">true</autoscroll>
       <itemlayout/>
       <focusedlayout>
         <control type="label">
