@@ -131,7 +131,7 @@ class LaunchPreparer:
             if found:
                 params.extend([
                     f'-run={section.lower()}',
-                    '-rom={0}'.format(emurun['set_name'])
+                    f'-rom={emurun["set_name"]}'
                 ])
             else:
                 err = "Can't find rom in Demul's rom list."

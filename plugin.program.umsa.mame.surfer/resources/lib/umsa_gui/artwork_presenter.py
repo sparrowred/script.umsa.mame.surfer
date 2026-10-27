@@ -128,7 +128,7 @@ def create_artworklist(gui):
     gui.vidman = (vid, man)
     minutes = divmod(gui.played['played'], 60)[0]
     hours, minutes = divmod(minutes, 60)
-    gui.played['played'] = "%d:%02d" % (hours, minutes)
+    gui.played['played'] = f'{hours}:{minutes:02d}'
 
 
 def show_artwork(gui, howmuch='all'):
@@ -214,10 +214,9 @@ def show_artwork(gui, howmuch='all'):
             played_text = gui.actset['last_played']['last_nice'] + ' ago'
         else:
             played_text = "never"
-        stattext = "%s, %sh, %sx[CR]" % (
-            played_text,
-            gui.played['played'],
-            gui.played['count']
+        stattext = (
+            f"{played_text}, {gui.played['played']}h, "
+            f"{gui.played['count']}x[CR]"
         )
 
     list_items = []

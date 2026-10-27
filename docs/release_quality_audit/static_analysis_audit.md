@@ -5,6 +5,7 @@
 **P0 round 2 (GUI shutdown cleanup):** 2026-10-25 at HEAD `a74976bf1a1145c61d7b43f01568ef6f33fbb64a`
 **P0 round 3 (Core scanner cleanup hardening):** 2026-10-25
 **P0 round 8 (final silent UI cleanup):** 2026-10-26 at baseline HEAD `8f5191efd1327a8e4218c389a5248834d31c8da8`
+**P1 UP030/UP031 cleanup:** 2026-10-27 at HEAD `41a415b6ee8d1bb19b817a9f71db599638173342`
 **Tools:** Ruff (primary), mypy (limited), Architecture boundary tests (AST-based)  
 **Scope:** All production Python in three add-ons
 
@@ -14,7 +15,7 @@
 
 | Tool | Version | Config | Status |
 |------|---------|--------|--------|
-| **Ruff** | 0.16.10 (via `.venv-debian-vm`) | default | ✅ Active — 227 baseline / 196 after P0 round 1 / 193 after P0 round 2 / 188 after P0 round 3 / **185 after P0 round 8** (default rules) |
+| **Ruff** | 0.16.10 (via `.venv-debian-vm`) | default | ✅ Active — 227 baseline / 196 after P0 round 1 / 193 after P0 round 2 / 188 after P0 round 3 / 185 after P0 round 8 / **173 after P1 at `41a415b`** (default rules) |
 | **mypy** | 1.x (via `.venv-debian-vm`) | `mypy.ini` / default | ⚠️ Partial — single modules only with `--follow-imports=skip` |
 | **pytest** | 9.x | default | ✅ Active — P0 round 8 full suite: **1178 passed, 0 failed, 5 skipped, 18 subtests** |
 | **Architecture boundary tests** | Custom (AST) | `tests/test_architecture_boundaries.py` | ✅ 7/7 passed |
@@ -119,7 +120,7 @@ after round 3 it is 188 findings, after round 4 it is 189 findings, after round
 S110 -6), after round 7 it is 186 findings (S110 -1), and after round 8 it is
 185 findings (BLE001 +2, S110 -3).
 
-### Current findings by rule (after round 8)
+### Findings by rule (after round 8 baseline `8f5191e`)
 
 Non-`BLE001`/`S110` counts were last rechecked in round 1 and were unchanged by
 the round 2-8 edits.
@@ -149,6 +150,26 @@ the round 2-8 edits.
 > `E722` (bare `except:`), `B006` (mutable default) and `TRY203` were reported
 > by earlier audits; `E722`/`B006` are absent and the 2 `TRY203` findings were
 > removed in round 1 (`emulator_launcher.py`).
+
+### P1 UP030/UP031 cleanup (at `41a415b`)
+
+The P1 string-formatting pass resolved all current `UP030`/`UP031` findings.
+Measured at `41a415b` with the three production roots:
+
+| Code | Before P1 | After P1 |
+|------|-----------|----------|
+| **UP031** | 10 | **0** |
+| **UP030** | 1 | **0** |
+| **BLE001** | 122 | 122 |
+| **S110** | 0 | 0 |
+| **PLW1510** | 0 | 0 |
+| **Default rules total** | 184 | **173** |
+
+No SQL, MAME/emulator format strings, regular expressions, external command
+templates or logging calls were converted for style alone. `database.py` has no
+`UP031` findings; its six historical entries were stale. The 10 `UP031` findings
+were in `gui.py` (1) and `umsa_gui/` (9); the single `UP030` finding was in
+`launch_preparer.py`.
 
 ### High-Priority Findings (Correctness Risk)
 
@@ -535,7 +556,7 @@ the table is kept only for chronology.
 ```bash
 # 5. Ruff style issues not increasing (UP031, UP007, etc.)
 .venv-debian-vm/bin/python -m ruff check . --statistics
-# → At af3bd11: UP031 = 10 (was 16 historically), UP007 = 6, etc.
+# → At 41a415b after P1: UP031 = 0, UP030 = 0, UP007 = 6, etc.
 
 # 6. Mypy on Core modules (individual, skip imports)
 for f in sqlite.py vgm_header.py status_repository.py emulator_repository.py game_repository.py; do
@@ -564,7 +585,7 @@ done
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
 | Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0); after round 3 126 rows / 109 locations (BLE001=109, S110=17, PLW1510=0); after round 4 127 rows / 112 locations (BLE001=112, S110=15, PLW1510=0); after round 5 125 rows / 115 locations (BLE001=115, S110=10, PLW1510=0); after round 6 (baseline `c02e77b`) 125 rows / 121 locations (BLE001=121, S110=4, PLW1510=0); after round 7 (baseline `d8d8cfa`) 124 rows / 121 locations (BLE001=121, S110=3, PLW1510=0); after round 8 (baseline `8f5191e`) 123 rows / 123 locations (BLE001=123, S110=0, PLW1510=0) | **S110 eliminated**; continue B1 triage |
-| Ruff style issues | 62 (default rules minus BLE001/S110/PLW1510) | P1: UP031 → 0 |
+| Ruff style issues | 51 (default rules minus BLE001/S110/PLW1510 at `41a415b`; 173 default total) | P1: UP031/UP030 → 0 ✅ |
 | Mypy (`vgm_header.py` only) | Clean | Clean |
 | Pre-existing test failures | 0 (13 historical resolved); one transient network failure in round 1, not reproducible | No new |
 | Full suite | 1178 passed, 5 skipped, 18 subtests (round 8) | ≥ 1178, no new failures |
@@ -578,7 +599,7 @@ done
 | P0 | Close the 3 open manual areas (emulator matrix, Retroplayer, clean install/upgrade) | Maintainer |
 | P0 | Continue B1 triage (remaining BLE001=123, S110=0 after round 8); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, VGM socket lifecycle cleanup, VGM player callback diagnostics, and final emulator/scan UI cleanup are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
 | ~~P0~~ | ~~Fix PLW1510~~ ✅ **Fixed in round 1** at `emulation.py` terminal fallback with regression tests | Dev |
-| P1 | Convert UP031 (10 f-string candidates) | Dev |
+| ~~P1~~ | ~~Convert UP031 (10 f-string candidates) and UP030 (1)~~ ✅ **Fixed at `41a415b`** | Dev |
 | P1 | Fix UP007 (6 union syntax), SIM115 (5 context managers) | Dev |
 | P1 | Reduce remaining BLE001 by adding specific exception types + logging | Dev |
 | P2 | Run full Ruff `--fix` with review | Dev |

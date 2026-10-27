@@ -32,7 +32,7 @@ def close_filterlist(gui, no_update=None):
     # update filter
     if not no_update:
         gui.getControl(LABEL_STATUS).setLabel(
-            "%s filtered items" % (gui.ggdb.define_filter(gui.filter_lists),)
+            f"{gui.ggdb.define_filter(gui.filter_lists)} filtered items"
         )
     gui.setFocus(gui.getControl(gui.main_focus))
 
@@ -53,7 +53,7 @@ def filter_category(gui):
                 return
             gui.filter_lists = gui.ggdb.load_filter_selections(files[ret])
             gui.getControl(LABEL_STATUS).setLabel(
-                "%s filtered items" % (gui.ggdb.define_filter(gui.filter_lists),)
+                f"{gui.ggdb.define_filter(gui.filter_lists)} filtered items"
             )
             gui.act_filter = files[ret]
             gui.getControl(FILTER_CONTENT_LIST_ACTIVE).reset()

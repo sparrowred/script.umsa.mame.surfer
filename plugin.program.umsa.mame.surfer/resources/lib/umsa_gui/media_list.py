@@ -29,7 +29,7 @@ def choose_media(gui):
         for i in j:
             if 'video' in i:
                 video.append(
-                    {'name': '%s (%s)' % (i['gamename'], i['swl_name']),
+                    {'name': f"{i['gamename']} ({i['swl_name']})",
                      'id': i['video'],
                      'year': '',
                      'maker': ''
@@ -37,7 +37,7 @@ def choose_media(gui):
                     )
             if 'manual' in i:
                 manual.append(
-                    {'name': '%s (%s)' % (i['gamename'], i['swl_name']),
+                    {'name': f"{i['gamename']} ({i['swl_name']})",
                      'id': i['manual'],
                      'year': '',
                      'maker': ''

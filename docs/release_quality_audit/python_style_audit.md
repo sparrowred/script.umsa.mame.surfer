@@ -1,6 +1,6 @@
 # Python Style & String Formatting Audit
 
-**Audited:** 2026-10-23 (at HEAD `4186b5f5dd3479b19df84215d1fa21a4cbb38f29`)  
+**Audited:** 2026-10-27 (at HEAD `41a415b6ee8d1bb19b817a9f71db599638173342`)
 **Tools:** Ruff (UP031, UP030), manual grep inspection  
 **Scope:** All production Python in `plugin.program.umsa.mame.surfer/`, `screensaver.umsa.mame.surfer/`, `script.module.umsa.core/`
 
@@ -8,54 +8,41 @@
 
 ## Summary
 
-| Pattern | Count | Locations |
-|---------|-------|-----------|
-| `%` formatting (UP031) | 16 | `database.py` 6, `umsa_gui/software_selector.py` 3, `umsa_gui/artwork_presenter.py` 2, `umsa_gui/filter_ui.py` 2, `umsa_gui/media_list.py` 2, `gui.py` 1 |
-| Explicit `.format()` index (UP030) | 1 | `launch_preparer.py:134` |
+| Pattern | Current count | Status |
+|---------|---------------|--------|
+| `%` formatting (UP031) | **0** | ✅ Resolved |
+| Explicit `.format()` positional index (UP030) | **0** | ✅ Resolved |
 | f-strings (dominant) | 100+ | Throughout newer code |
 
-Ruff reports 16 `UP031` and 1 `UP030`, matching the table above. The screensaver
-add-on and `gamelist_strategies.py` are clean (the 8 historical `gamelist_strategies.py`
-conversions are done).
+Ruff reports **0 `UP031` and 0 `UP030`** across the three production roots
+at `41a415b`. The screensaver add-on, `gamelist_strategies.py` and
+`database.py` are clean.
+
+### Historical counts (superseded)
+
+The 2026-10-23 audit at `4186b5f` listed 16 `UP031` (including six
+`database.py` entries) and 1 `UP030`. That inventory was already stale by
+`8f5191e`, where Ruff reported 10 `UP031` (`gui.py` 1, `umsa_gui/` 9) and 1
+`UP030`. The `database.py` entries no longer produced findings and were the
+main source of the old 16-vs-10 discrepancy. At `41a415b` the actual
+inventory before the P1 edits was 10 `UP031` and 1 `UP030`; all eleven are
+now fixed.
 
 ---
 
-## Detailed Inventory by File
+## Resolved findings at `41a415b`
 
-### `script.module.umsa.core/lib/umsa_core/database.py` (6 UP031)
+| File | Rule | Lines before | Resolution |
+|------|------|--------------|------------|
+| `plugin.program.umsa.mame.surfer/resources/lib/gui.py` | UP031 | 516 | Search-result label converted to an f-string |
+| `.../resources/lib/umsa_gui/artwork_presenter.py` | UP031 | 131, 217 | Play-time label and history summary converted to f-strings |
+| `.../resources/lib/umsa_gui/filter_ui.py` | UP031 | 35, 56 | Filter count label converted to an f-string |
+| `.../resources/lib/umsa_gui/media_list.py` | UP031 | 32, 40 | Video/manual labels converted to f-strings |
+| `.../resources/lib/umsa_gui/software_selector.py` | UP031 | 59, 68, 213 | Set-list and video labels converted to f-strings |
+| `script.module.umsa.core/lib/umsa_core/launch_preparer.py` | UP030 | 134 | Explicit `{0}` positional index made implicit (`{}`); Demul arguments unchanged |
 
-| Line | Suggested | Notes |
-|------|-----------|-------|
-| 1030 | f-string | SQL-adjacent string — verify placeholder intent before changing |
-| 1032 | f-string | Same |
-| 1034 | f-string | Same |
-| 1036 | f-string | Same |
-| 1048 | f-string | Same |
-| 1379 | f-string | Same |
-
-### `plugin.program.umsa.mame.surfer/resources/lib/umsa_gui/software_selector.py` (3 UP031)
-
-Lines 59, 68, 213 — clear UI/log string candidates.
-
-### `plugin.program.umsa.mame.surfer/resources/lib/umsa_gui/artwork_presenter.py` (2 UP031)
-
-Lines 131, 217 — clear UI/log string candidates.
-
-### `plugin.program.umsa.mame.surfer/resources/lib/umsa_gui/filter_ui.py` (2 UP031)
-
-Lines 35, 56 — clear UI/log string candidates.
-
-### `plugin.program.umsa.mame.surfer/resources/lib/umsa_gui/media_list.py` (2 UP031)
-
-Lines 32, 40 — clear UI/log string candidates.
-
-### `plugin.program.umsa.mame.surfer/resources/lib/gui.py` (1 UP031)
-
-Line 516 — clear UI/log string candidate.
-
-### `script.module.umsa.core/lib/umsa_core/launch_preparer.py` (1 UP030)
-
-Line 134 — explicit positional index can be implicit.
+`database.py` has no current findings. The six historical entries were not
+reproducible at `41a415b` and are removed from the active inventory.
 
 ---
 
@@ -100,46 +87,31 @@ pattern = r'^(\d+)-(\d+)$'
 
 ---
 
-## Conversion Priority
+## Verification
 
-| Priority | Files | Est. Effort | Risk |
-|----------|-------|-------------|------|
-| **High** | `database.py` (6) | Low | Medium — SQL-adjacent strings; verify intent |
-| **High** | `umsa_gui/` package (9) | Low | Low — UI/log strings |
-| **High** | `gui.py` (1) | Low | Low — UI/log string |
-| **Medium** | `launch_preparer.py` (1 UP030) | Low | Low — verify MAME args unchanged |
-| **Done** | `gamelist_strategies.py` (8 historical) | N/A | N/A |
-| **Done** | screensaver add-on (0) | N/A | N/A |
-
----
-
-## Recommended Conversion Command
+Run the rule check against all production roots:
 
 ```bash
-# Preview changes for clear candidates
-.venv-debian-vm/bin/python -m ruff check . --select UP031 --diff
-
-# Apply safe conversions (review each)
-.venv-debian-vm/bin/python -m ruff check . --select UP031 --fix
-
-# Some conversions are only available as unsafe fixes
-.venv-debian-vm/bin/python -m ruff check . --select UP031,UP030 --fix --unsafe-fixes
-
-# For UP030 (explicit format index)
-.venv-debian-vm/bin/python -m ruff check . --select UP030 --fix
+.venv-debian-vm/bin/python -m ruff check \
+    plugin.program.umsa.mame.surfer \
+    screensaver.umsa.mame.surfer \
+    script.module.umsa.core \
+    --select UP030,UP031
+# → All checks passed!
 ```
 
-At this HEAD `ruff check . --select UP031,UP030` reports 17 findings with 8
-hidden unsafe fixes. The repo-wide `--fix` total is 19 safe fixes, plus 17
-additional hidden fixes with `--unsafe-fixes`.
+Measured at `41a415b` after the P1 edits:
 
----
+| Check | Result |
+|-------|--------|
+| Ruff `UP030,UP031` | **0 findings** (was UP031=10, UP030=1) |
+| Ruff `BLE001,S110,PLW1510` | **BLE001=122, S110=0, PLW1510=0** (unchanged) |
+| Ruff default rules | **173 findings** (was 184) |
+| Focused GUI/emulator tests | **62 passed** (`test_umsa_gui_workflows.py`, `test_emulator_launcher.py`) |
+| Architecture boundary tests | **7 passed** |
+| Full suite | **1171 passed, 5 skipped, 18 subtests, 11 failed** — the 11 failures are the pre-existing `test_gui_shutdown.py` baseline, reproduced at the starting commit with the production edits reverted |
 
-## Verification After Conversion
-
-1. Run full test suite: `.venv-debian-vm/bin/python -m pytest tests/ -q`
-2. Run architecture boundary tests: `.venv-debian-vm/bin/python -m pytest tests/test_architecture_boundaries.py -v`
-3. Manual Kodi smoke test: menu navigation, gamelist display, emulator launch (maintainer-confirmed for GUI navigation)
+No manual Kodi smoke test was performed as part of this P1 change.
 
 ---
 
@@ -147,12 +119,12 @@ additional hidden fixes with `--unsafe-fixes`.
 
 | File | UP031 | UP030 | Status |
 |----------|-------|-------|--------|
-| `gamelist_strategies.py` | 0 (8 converted) | 0 | ✅ **COMPLETE** |
-| `gui.py` | 1 | 0 | ⏳ Open |
-| `umsa_gui/` package | 9 | 0 | ⏳ Open |
-| `database.py` | 6 | 0 | ⏳ Open |
-| `launch_preparer.py` | 0 | 1 | ⏳ Open |
+| `gamelist_strategies.py` | 0 | 0 | ✅ **COMPLETE** |
+| `gui.py` | 0 | 0 | ✅ **COMPLETE** |
+| `umsa_gui/` package | 0 | 0 | ✅ **COMPLETE** |
+| `database.py` | 0 | 0 | ✅ **COMPLETE** (historical 6 were stale) |
+| `launch_preparer.py` | 0 | 0 | ✅ **COMPLETE** |
 | `emulator_launcher.py` | 0 | 0 | ✅ Clean |
 | `emulation.py` | 0 | 0 | ✅ Clean |
 | screensaver add-on | 0 | 0 | ✅ Clean |
-| **Total** | **16** | **1** | |
+| **Total** | **0** | **0** | |

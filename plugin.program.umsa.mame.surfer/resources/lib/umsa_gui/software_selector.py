@@ -56,7 +56,7 @@ def fill_set_list(gui, pos):
 
         # add swl when not mame
         if i['swl_name'] != 'mame':
-            label = '%s (%s)' % (label, i['swl_name'])
+            label = f'{label} ({i["swl_name"]})'
 
         # add * as a sign for a clone
         clone = ''
@@ -65,12 +65,7 @@ def fill_set_list(gui, pos):
 
         # add count to label
         if length > 1:
-            label = '%s (%s%d/%d)' % (
-                label,
-                clone,
-                count,
-                length
-            )
+            label = f'{label} ({clone}{count:d}/{length:d})'
 
         list_item.setLabel(label)
 
@@ -210,7 +205,7 @@ def select_software(gui, software_id):
             for i in j:
                 if 'video' in i:
                     video.append(
-                        {'label': '%s (%s)' % (i['gamename'], i['swl_name']),
+                        {'label': f"{i['gamename']} ({i['swl_name']})",
                          'id': i['video']
                          }
                         )

@@ -513,7 +513,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 else:
                     return
                 gamelist, pos, result_count = self.ggdb.get_searchresults(self.searchold)
-                gl_label = '%d results for %s' % (result_count, self.searchold)
+                gl_label = f'{result_count} results for {self.searchold}'
                 gl_options = ('new search',)
 
                 # check how many results
