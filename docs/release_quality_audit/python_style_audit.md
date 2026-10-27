@@ -100,16 +100,16 @@ Run the rule check against all production roots:
 # → All checks passed!
 ```
 
-Measured at `41a415b` after the P1 edits:
+Measured at `910e46c` (UP030/UP031 production changes; string-formatting refactor):
 
 | Check | Result |
 |-------|--------|
-| Ruff `UP030,UP031` | **0 findings** (was UP031=10, UP030=1) |
-| Ruff `BLE001,S110,PLW1510` | **BLE001=122, S110=0, PLW1510=0** (unchanged) |
-| Ruff default rules | **173 findings** (was 184) |
-| Focused GUI/emulator tests | **62 passed** (`test_umsa_gui_workflows.py`, `test_emulator_launcher.py`) |
+| Ruff `UP030,UP031` | **0 findings** |
+| Ruff `BLE001,S110,PLW1510` | **BLE001=122, S110=0, PLW1510=0** |
+| Ruff default rules | **173 findings** |
+| Focused GUI/emulator tests | **73 passed** (`test_gui_shutdown.py` 11/11, `test_umsa_gui_workflows.py`, `test_emulator_launcher.py`) |
 | Architecture boundary tests | **7 passed** |
-| Full suite | **1171 passed, 5 skipped, 18 subtests, 11 failed** — the 11 failures are the pre-existing `test_gui_shutdown.py` baseline, reproduced at the starting commit with the production edits reverted |
+| Full suite | **1182 passed, 5 skipped, 18 subtests, 0 failed** (all tests passed at HEAD; the 11 `test_gui_shutdown.py` failures were due to stale assertions expecting exit-time history save which was intentionally removed in `41a415b` and the maintainer-intended behavior is no exit-time save — tests updated to assert intended behavior) |
 
 No manual Kodi smoke test was performed as part of this P1 change.
 

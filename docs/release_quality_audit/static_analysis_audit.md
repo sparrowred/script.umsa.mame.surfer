@@ -397,7 +397,7 @@ rest of the suite).
 |---------|--------|
 | `pytest tests/test_vgm_socket_cleanup.py tests/test_lua_socket_log.py tests/test_vgmplay_port.py -q` | **55 passed, 18 subtests passed** |
 | `pytest tests/test_vgm_socket_cleanup.py tests/test_lua_socket_log.py tests/test_vgmplay_port.py tests/test_emulation_process.py tests/test_emulation_vgm_callback.py tests/test_emulation_chd.py tests/test_process.py tests/test_vgm_player_entrypoints.py tests/test_random_vgm_player.py tests/test_vgm_random_batch.py tests/test_vgmplay_preexit.py tests/test_architecture_boundaries.py -q` | **149 passed, 18 subtests passed** |
-| `pytest tests/ -q` | **1171 passed, 5 skipped, 18 subtests passed** |
+| `pytest tests/ -q` | **1182 passed, 5 skipped, 18 subtests passed** (HEAD `910e46c`) |
 | `ruff check .../vgm_socket.py --select BLE001,S110 --statistics` | **20 BLE001, 0 S110** (was 14 BLE001, 6 S110 at `c02e77b`) |
 | `ruff check plugin.program.umsa.mame.surfer screensaver.umsa.mame.surfer script.module.umsa.core --select BLE001,S110,PLW1510 --statistics` | **121 BLE001, 4 S110, 0 PLW1510** (125 rows / 121 unique locations) |
 | `ruff check . --statistics` | **187 findings** (unchanged; BLE001 +6, S110 -6) |
