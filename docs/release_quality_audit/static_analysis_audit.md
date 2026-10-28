@@ -163,7 +163,7 @@ Measured at `41a415b` with the three production roots:
 | **BLE001** | 122 | 122 |
 | **S110** | 0 | 0 |
 | **PLW1510** | 0 | 0 |
-| **Default rules total** | 184 | **173** |
+| **Default rules total** | 184 | **173** → **167** at `a0ac240` |
 
 No SQL, MAME/emulator format strings, regular expressions, external command
 templates or logging calls were converted for style alone. `database.py` has no

@@ -48,11 +48,10 @@ def make_time_nice(timestamp, now=None):
         except Exception:
             return ''
 
-    if elapsed < 0:
-        elapsed = 0
+    elapsed = max(elapsed, 0)
 
     if elapsed < 60:
-        return f'{elapsed:02d}s'
+        return f'0:{elapsed:02d}'
 
     if elapsed < 3600:
         total_minutes = elapsed // 60

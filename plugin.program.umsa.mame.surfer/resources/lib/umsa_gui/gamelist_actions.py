@@ -49,7 +49,7 @@ def gamelist_click(gui):
         else:
             size = gui.getControl(GAME_LIST).size()
             sid = int(gui.getControl(GAME_LIST).getListItem(size - 2).getLabel2())
-        gamelist, pos, result_count = gui.ggdb.execute_statement(
+        gamelist, pos, _result_count = gui.ggdb.execute_statement(
             software_id=sid, prevnext=list_id)
         # create list
         list_items = []
@@ -202,15 +202,14 @@ def gamelist_context(gui):
 
     # reconfigure/remove connection
     if what == "emu_conn":
-        if (gui.dialog.yesno(
+        if gui.dialog.yesno(
                 f"Emulator {label}", "What shall we do?",
-                nolabel="Reconfigure", yeslabel="Remove")):
+                nolabel="Reconfigure", yeslabel="Remove"):
             last_emu_id = gui.ggdb.delete_emulator_connection(list_id)
-            if last_emu_id:
-                if (gui.dialog.yesno(
-                        'Delete emulator',
-                        f'No other connection for {label}, delete?')):
-                    gui.ggdb.delete_emulator(last_emu_id)
+            if last_emu_id and gui.dialog.yesno(
+                    'Delete emulator',
+                    f'No other connection for {label}, delete?'):
+                gui.ggdb.delete_emulator(last_emu_id)
             gui.update_gamelist(M_MACHINE)
         else:
             xbmc.log("UMSA gui: reconfigure emulator")

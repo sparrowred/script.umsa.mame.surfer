@@ -153,7 +153,7 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
         cursor.execute("SELECT COUNT (software.id) FROM software")
         all_count = _fetch_scalar(cursor)
         if all_count > 0:
-            percent = int(round(count/float(all_count)*100))
+            percent = round(count / float(all_count) * 100)
         else:
             percent = 0
     finally:

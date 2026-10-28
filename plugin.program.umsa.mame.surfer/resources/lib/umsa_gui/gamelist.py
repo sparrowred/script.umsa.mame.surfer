@@ -132,7 +132,7 @@ def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None):
             xbmc.log(f"UMSA gui: popup_gamelist: item in gamelist {label} broken: {i}", xbmc.LOGERROR)
             continue
         listitem = xbmcgui.ListItem(i['name'], str(i['id']))
-        if 'year' in i.keys():
+        if 'year' in i:
             listitem.setInfo('video', {'Writer': i['year'], 'Studio': i['maker']})
         list_items.append(listitem)
 
