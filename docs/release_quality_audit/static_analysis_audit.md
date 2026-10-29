@@ -6,6 +6,8 @@
 **P0 round 3 (Core scanner cleanup hardening):** 2026-10-25
 **P0 round 8 (final silent UI cleanup):** 2026-10-26 at baseline HEAD `8f5191efd1327a8e4218c389a5248834d31c8da8`
 **P1 UP030/UP031 cleanup:** 2026-10-27 at HEAD `41a415b6ee8d1bb19b817a9f71db599638173342`
+**P1 six-rule cleanup:** 2026-10-28 at HEAD `63688a7f0c0d5b2949060b1103d0997505c31f02`
+**P1 follow-up revalidation:** 2026-10-29 on top of HEAD `63688a7f0c0d5b2949060b1103d0997505c31f02`
 **Tools:** Ruff (primary), mypy (limited), Architecture boundary tests (AST-based)  
 **Scope:** All production Python in three add-ons
 
@@ -15,9 +17,9 @@
 
 | Tool | Version | Config | Status |
 |------|---------|--------|--------|
-| **Ruff** | 0.16.10 (via `.venv-debian-vm`) | default | ✅ Active — 227 baseline / 196 after P0 round 1 / 193 after P0 round 2 / 188 after P0 round 3 / 185 after P0 round 8 / **173 after P1 at `41a415b`** (default rules) |
+| **Ruff** | 0.16.10 (via `.venv-debian-vm`) | default | ✅ Active — 227 baseline / 196 after P0 round 1 / 193 after P0 round 2 / 188 after P0 round 3 / 185 after P0 round 8 / 173 after P1 UP030/UP031 / **167 at `63688a7`** (default rules) |
 | **mypy** | 1.x (via `.venv-debian-vm`) | `mypy.ini` / default | ⚠️ Partial — single modules only with `--follow-imports=skip` |
-| **pytest** | 9.x | default | ✅ Active — P0 round 8 full suite: **1178 passed, 0 failed, 5 skipped, 18 subtests** |
+| **pytest** | 9.x | default | ✅ Active — P0 round 8 full suite: **1178 passed**; P1 follow-up at `63688a7`: **1185 passed, 0 failed, 5 skipped, 18 subtests** |
 | **Architecture boundary tests** | Custom (AST) | `tests/test_architecture_boundaries.py` | ✅ 7/7 passed |
 
 ### Configuration Files
@@ -120,38 +122,69 @@ after round 3 it is 188 findings, after round 4 it is 189 findings, after round
 S110 -6), after round 7 it is 186 findings (S110 -1), and after round 8 it is
 185 findings (BLE001 +2, S110 -3).
 
-### Findings by rule (after round 8 baseline `8f5191e`)
+### Findings by rule (current at `63688a7`)
 
-Non-`BLE001`/`S110` counts were last rechecked in round 1 and were unchanged by
-the round 2-8 edits.
+Re-measured on 2026-10-29 at the actual current HEAD with the three production
+roots. The six P1 rules plus `UP030`/`UP031` are all zero.
 
 | Code | Count | Description | Fixable |
 |------|-------|-------------|---------|
-| **BLE001** | 123 | Blind `except Exception:` — catches too broadly | ❌ |
+| **BLE001** | 122 | Blind `except Exception:` — catches too broadly | ❌ |
 | **S110** | **0** | `try: ... except Exception: pass` — silent failure | ✅ |
 | **F401** | 21 | Unused import | ✅ |
-| **UP031** | 10 | Legacy `%` formatting → prefer f-strings | ❌ |
 | **UP007** | 6 | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ❌ |
 | **SIM115** | 5 | `open()` without context manager | ❌ |
 | **SIM113** | 4 | `enumerate()` instead of manual index | ❌ |
 | **F841** | 4 | Unused variable | ❌ |
 | **I001** | 3 | Unsorted imports | ✅ |
-| **SIM102** | 1 | Collapsible `if` statements | ❌ |
-| **UP030** | 1 | Explicit `.format()` positional index | ❌ |
-| **PLR1730** | 1 | Replace `if` with `min`/`max` | ✅ |
-| **SIM118** | 1 | `key in dict.keys()` | ❌ |
 | **PERF402** | 1 | Manual list copy | ❌ |
 | **EXE002** | 1 | Shebang on non-executable file | ❌ |
-| **C413** | 1 | Unnecessary `sorted()` call | ❌ |
-| **RUF046** | 1 | Unnecessary `int()` cast | ❌ |
-| **RUF059** | 1 | Unused unpacked variable | ❌ |
-| **Total** | **185** | | **25 safe fixes** |
+| **SIM102** | **0** | Collapsible `if` statements | ✅ |
+| **SIM118** | **0** | `key in dict.keys()` | ✅ |
+| **PLR1730** | **0** | Replace `if` with `min`/`max` | ✅ |
+| **C413** | **0** | Unnecessary `sorted()` call | ✅ |
+| **RUF046** | **0** | Unnecessary `int()` cast | ✅ |
+| **RUF059** | **0** | Unused unpacked variable | ✅ |
+| **UP030** | **0** | Explicit `.format()` positional index | ✅ |
+| **UP031** | **0** | Legacy `%` formatting → prefer f-strings | ❌ |
+| **Total** | **167** | | **24 safe fixes** |
+
+The six P1 rules were fixed in `63688a7`, **not** in `a0ac240`. Commit `a0ac240`
+only changed autoscroll timing and the `make_time_nice()` output; its
+`game_labels.py` edit is the reason the formatter needed a follow-up here.
 
 > `E722` (bare `except:`), `B006` (mutable default) and `TRY203` were reported
 > by earlier audits; `E722`/`B006` are absent and the 2 `TRY203` findings were
 > removed in round 1 (`emulator_launcher.py`).
 
-### P1 UP030/UP031 cleanup (at `41a415b`)
+#### Historical round-8 inventory (baseline `8f5191e`; not current)
+
+Kept for comparison only. These are the counts before the P1 string-formatting
+and six-rule rounds.
+
+| Code | Count |
+|------|-------|
+| **BLE001** | 123 |
+| **S110** | 0 |
+| **F401** | 21 |
+| **UP031** | 10 |
+| **UP007** | 6 |
+| **SIM115** | 5 |
+| **SIM113** | 4 |
+| **F841** | 4 |
+| **I001** | 3 |
+| **SIM102** | 1 |
+| **UP030** | 1 |
+| **PLR1730** | 1 |
+| **SIM118** | 1 |
+| **PERF402** | 1 |
+| **EXE002** | 1 |
+| **C413** | 1 |
+| **RUF046** | 1 |
+| **RUF059** | 1 |
+| **Total** | **185** |
+
+### P1 UP030/UP031 cleanup (at `41a415b` / `910e46c`)
 
 The P1 string-formatting pass resolved all current `UP030`/`UP031` findings.
 Measured at `41a415b` with the three production roots:
@@ -163,7 +196,7 @@ Measured at `41a415b` with the three production roots:
 | **BLE001** | 122 | 122 |
 | **S110** | 0 | 0 |
 | **PLW1510** | 0 | 0 |
-| **Default rules total** | 184 | **173** → **167** at `a0ac240` |
+| **Default rules total** | 184 | **173** (rechecked at `910e46c`) |
 
 No SQL, MAME/emulator format strings, regular expressions, external command
 templates or logging calls were converted for style alone. `database.py` has no
@@ -171,18 +204,53 @@ templates or logging calls were converted for style alone. `database.py` has no
 were in `gui.py` (1) and `umsa_gui/` (9); the single `UP030` finding was in
 `launch_preparer.py`.
 
+### P1 six-rule cleanup (at `63688a7`)
+
+Measured at the current HEAD `63688a7` with the three production roots:
+
+| Code | Before | At `63688a7` |
+|------|--------|--------------|
+| **SIM102** | 1 | **0** |
+| **SIM118** | 1 | **0** |
+| **PLR1730** | 1 | **0** |
+| **C413** | 1 | **0** |
+| **RUF046** | 1 | **0** |
+| **RUF059** | 1 | **0** |
+| **BLE001** | 122 | 122 |
+| **S110** | 0 | 0 |
+| **PLW1510** | 0 | 0 |
+| **Default rules total** | 173 | **167** |
+
+`63688a7` replaced `reversed(sorted(software_dict.items(), ...))` in
+`get_last_played()` with `sorted(..., reverse=True)`. That rewrite satisfies
+`C413` but is **not** behavior-equivalent for tied sort keys: `reverse=True`
+preserves input order within equal-key groups, while reversing a stable
+ascending sort reverses it. The follow-up on top of `63688a7` keeps the stable
+ascending sort and reverses the finished list (`ordered[::-1]`), which restores
+the original order for both distinct and tied keys without reintroducing
+`C413`/`C414`. Regression test
+`tests/test_game_labels.py::test_get_last_played_preserves_tied_key_order`
+compares the result with the pre-change expression and asserts the tied group
+is reversed.
+
+The same follow-up restores the tested `M:SS` / hour / day / month / year
+output in `make_time_nice()` that `a0ac240` had changed (including the 0-, 5-,
+59- and 60-second boundaries). This is a formatting-contract correction, not a
+manual Kodi test result.
+
 ### High-Priority Findings (Correctness Risk)
 
-#### 1. BLE001 / S110 — Blind Exception Handling (remaining after round 8)
+#### 1. BLE001 / S110 — Blind Exception Handling (current at `63688a7`)
 
 Remaining findings grouped by module and functional risk. Counts are Ruff
-reported rows. Former `S110` rows were the same source locations as `BLE001`
-rows; after round 8 the unique location count equals the `BLE001` count.
+reported rows re-measured at the current HEAD. Former `S110` rows were the same
+source locations as `BLE001` rows; `S110` is zero, so the unique location count
+equals the `BLE001` count.
 
 | Module | BLE001 | S110 | Unique locations | Risk / status |
 |--------|--------|------|------------------|---------------|
 | `emulator_launcher.py` | 25 | 0 | 25 | Medium-low. Round 1 removed every silent pass and the high-risk startup paths. Remaining broad handlers are logged UI progress/close/notification, media pause, optional output, and best-effort status/artwork boundaries. |
-| `gui.py` | 7 | 0 | 7 | Low. Round 2 made every `exit()` cleanup step log its failure and continue; the 7 broad catches cover save, VGM stop/label, scan stop, thread check/join, and database close. |
+| `gui.py` | 6 | 0 | 6 | Low. Round 2 made every `exit()` cleanup step log its failure and continue; the remaining broad catches cover save, VGM stop/label, scan stop, thread check/join, and database close. |
 | `umsa_gui/emulator_setup.py` | 6 | 0 | 6 | Low. Emulator output list and final launch UI; failures are logged without affecting emulator execution or skipping the completion notification. |
 | `umsa_gui/optional_plugins.py` | 1 | 0 | 1 | Low. Intentional optional PDF-plugin import fallback. |
 | `umsa_gui/scan_orchestrator.py` | 1 | 0 | 1 | Low. Progress-dialog close cleanup is logged without masking the scan result. |
@@ -358,6 +426,21 @@ Cannot type-check without Kodi stubs (`Kodistubs` package). Requires Kodi runtim
 ---
 
 ## Test Suite Status
+
+### P1 follow-up verification (2026-10-29, HEAD `63688a7` + working tree)
+
+| Command | Result |
+|---------|--------|
+| `pytest tests/test_game_labels.py -q` | **43 passed** |
+| `pytest tests/test_game_labels.py tests/test_database.py tests/test_game_repository.py tests/test_gamelist_filter.py tests/test_architecture_boundaries.py -q` | **165 passed** |
+| `pytest tests/test_architecture_boundaries.py -q` | **7 passed** |
+| `pytest tests/ -q` | **1185 passed, 5 skipped, 18 subtests passed** |
+| `ruff check plugin.program.umsa.mame.surfer screensaver.umsa.mame.surfer script.module.umsa.core --select SIM102,SIM118,PLR1730,C413,RUF046,RUF059 --statistics` | **0 findings** |
+| `ruff check ... --select UP030,UP031 --statistics` | **0 findings** |
+| `ruff check ... --select BLE001,S110,PLW1510 --statistics` | **122 BLE001, 0 S110, 0 PLW1510** |
+| `ruff check ... --statistics` | **167 findings** (BLE001 122, F401 21, UP007 6, SIM115 5, SIM113 4, F841 4, I001 3, PERF402 1, EXE002 1) |
+
+No manual Kodi testing was performed in this follow-up.
 
 ### P0 round 8 verification (2026-10-26, final silent UI cleanup)
 
@@ -548,7 +631,9 @@ the table is kept only for chronology.
 #   after round 7 (baseline d8d8cfa): 124 rows
 #   (BLE001=121, S110=3, PLW1510=0; 121 unique locations);
 #   after round 8 (baseline 8f5191e): 123 rows
-#   (BLE001=123, S110=0, PLW1510=0; 123 unique locations).
+#   (BLE001=123, S110=0, PLW1510=0; 123 unique locations);
+#   at current HEAD 63688a7: 122 rows
+#   (BLE001=122, S110=0, PLW1510=0; 122 unique locations).
 ```
 
 ### Recommended (P1 — Should Pass)
@@ -557,6 +642,8 @@ the table is kept only for chronology.
 # 5. Ruff style issues not increasing (UP031, UP007, etc.)
 .venv-debian-vm/bin/python -m ruff check . --statistics
 # → At 41a415b after P1: UP031 = 0, UP030 = 0, UP007 = 6, etc.
+# → At current HEAD 63688a7: 167 findings; UP031 = 0, UP030 = 0,
+#   SIM102 = SIM118 = PLR1730 = C413 = RUF046 = RUF059 = 0.
 
 # 6. Mypy on Core modules (individual, skip imports)
 for f in sqlite.py vgm_header.py status_repository.py emulator_repository.py game_repository.py; do
@@ -584,11 +671,11 @@ done
 | Architecture boundary tests | 7/7 ✅ | 7/7 ✅ |
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
-| Ruff correctness issues | Baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); after round 1 134 rows / 105 locations (BLE001=105, S110=29, PLW1510=0); after round 2 at `a74976b` 131 rows / 107 locations (BLE001=107, S110=24, PLW1510=0); after round 3 126 rows / 109 locations (BLE001=109, S110=17, PLW1510=0); after round 4 127 rows / 112 locations (BLE001=112, S110=15, PLW1510=0); after round 5 125 rows / 115 locations (BLE001=115, S110=10, PLW1510=0); after round 6 (baseline `c02e77b`) 125 rows / 121 locations (BLE001=121, S110=4, PLW1510=0); after round 7 (baseline `d8d8cfa`) 124 rows / 121 locations (BLE001=121, S110=3, PLW1510=0); after round 8 (baseline `8f5191e`) 123 rows / 123 locations (BLE001=123, S110=0, PLW1510=0) | **S110 eliminated**; continue B1 triage |
-| Ruff style issues | 51 (default rules minus BLE001/S110/PLW1510 at `41a415b`; 173 default total) | P1: UP031/UP030 → 0 ✅ |
+| Ruff correctness issues | Historical: baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); round 8 at `8f5191e` 123 rows / 123 locations (BLE001=123, S110=0, PLW1510=0). Current at `63688a7`: **122 rows / 122 locations (BLE001=122, S110=0, PLW1510=0)** | **S110 eliminated**; continue B1 triage |
+| Ruff style issues | Current at `63688a7`: **45** (167 default total minus BLE001=122; S110/PLW1510=0). P1 six rules and UP030/UP031 are 0 | P1: UP031/UP030 → 0 ✅ |
 | Mypy (`vgm_header.py` only) | Clean | Clean |
 | Pre-existing test failures | 0 (13 historical resolved); one transient network failure in round 1, not reproducible | No new |
-| Full suite | 1178 passed, 5 skipped, 18 subtests (round 8) | ≥ 1178, no new failures |
+| Full suite | **1185 passed, 5 skipped, 18 subtests** at `63688a7` (P1 follow-up, 2026-10-29) | No new failures |
 
 ---
 
@@ -597,9 +684,10 @@ done
 | Priority | Action | Owner |
 |----------|--------|-------|
 | P0 | Close the 3 open manual areas (emulator matrix, Retroplayer, clean install/upgrade) | Maintainer |
-| P0 | Continue B1 triage (remaining BLE001=123, S110=0 after round 8); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, VGM socket lifecycle cleanup, VGM player callback diagnostics, and final emulator/scan UI cleanup are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
+| P0 | Continue B1 triage (remaining BLE001=122, S110=0 at `63688a7`); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, VGM socket lifecycle cleanup, VGM player callback diagnostics, and final emulator/scan UI cleanup are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
 | ~~P0~~ | ~~Fix PLW1510~~ ✅ **Fixed in round 1** at `emulation.py` terminal fallback with regression tests | Dev |
-| ~~P1~~ | ~~Convert UP031 (10 f-string candidates) and UP030 (1)~~ ✅ **Fixed at `41a415b`** | Dev |
+| ~~P1~~ | ~~Convert UP031 (10 f-string candidates) and UP030 (1)~~ ✅ **Fixed at `41a415b`/`910e46c`** | Dev |
+| ~~P1~~ | ~~Fix SIM102, SIM118, PLR1730, C413, RUF046, RUF059~~ ✅ **Fixed at `63688a7`**; the follow-up preserves tied-key ordering and restores the intended time format | Dev |
 | P1 | Fix UP007 (6 union syntax), SIM115 (5 context managers) | Dev |
 | P1 | Reduce remaining BLE001 by adding specific exception types + logging | Dev |
 | P2 | Run full Ruff `--fix` with review | Dev |

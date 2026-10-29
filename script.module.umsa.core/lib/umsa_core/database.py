@@ -1247,7 +1247,8 @@ class DBMod:
                     "maker": software['maker'],
                 }
         # sort dict after value in var order and create list for return
-        for software_id, status in sorted(software_dict.items(), key=lambda t: t[1][order], reverse=True):
+        ordered = sorted(software_dict.items(), key=lambda t: t[1][order])
+        for software_id, status in ordered[::-1]:
 
             time_played = self.make_time_nice(status["time_played"])
 
