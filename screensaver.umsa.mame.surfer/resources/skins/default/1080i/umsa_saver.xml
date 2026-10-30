@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Kodi 1080i layout: 1920x1080 coordinates.
+     Back to front: black base, video, wall/slide background with dimmer, slide images.
+     Python adds the cross pictures and the wall mesh on top of these controls;
+     the game info, the left artwork and the music info live in umsa_overlay.xml.
+     Visibility follows the mode on the home window (UMSA.Screensaver.Mode). -->
+<window>
+    <!-- below umsa_overlay.xml (zorder 2) -->
+    <zorder>1</zorder>
+    <controls>
+        <control type="image" id="109">
+            <description>black base; hidden in cross mode, which lies over the current Kodi screen</description>
+            <posx>0</posx>
+            <posy>0</posy>
+            <width>1920</width>
+            <height>1080</height>
+            <texture>screensaver-black.png</texture>
+            <animation effect="fade" start="0" end="100" time="500">WindowOpen</animation>
+            <visible>!String.IsEqual(Window(10000).Property(UMSA.Screensaver.Mode),cross)</visible>
+        </control>
+        <control type="videowindow" id="2004">
+            <description>video window</description>
+            <posx>900</posx>
+            <posy>23</posy>
+            <width>1013</width>
+            <height>600</height>
+            <aspectratio>stretch</aspectratio>
+            <animation effect="fade" start="0" end="100" time="2000" condition="Player.HasVideo">Conditional</animation>
+            <visible>Player.HasVideo</visible>
+        </control>
+        <control type="group">
+            <description>wall/slide background: blurred artwork crossfade, dimmed</description>
+            <visible>String.IsEqual(Window(10000).Property(UMSA.Screensaver.Mode),wall) | String.IsEqual(Window(10000).Property(UMSA.Screensaver.Mode),slide)</visible>
+            <control type="group">
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(SlideView.Fade11),1)">
+                    <effect type="fade" start="100" end="0" time="1000"/>
+                </animation>
+                <control type="image" id="5">
+                    <description>background 1</description>
+                    <posx>0</posx>
+                    <posy>0</posy>
+                    <width>1920</width>
+                    <height>1080</height>
+                    <texture background="true"></texture>
+                    <aspectratio>scale</aspectratio>
+                    <fadetime>0</fadetime>
+                </control>
+            </control>
+            <control type="group">
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(SlideView.Fade12),1)">
+                    <effect type="fade" start="100" end="0" time="1000"/>
+                </animation>
+                <control type="image" id="6">
+                    <description>background 2</description>
+                    <posx>0</posx>
+                    <posy>0</posy>
+                    <width>1920</width>
+                    <height>1080</height>
+                    <texture background="true"></texture>
+                    <aspectratio>scale</aspectratio>
+                    <fadetime>0</fadetime>
+                </control>
+            </control>
+            <control type="image">
+                <description>dimmer, behind the artwork</description>
+                <posx>0</posx>
+                <posy>0</posy>
+                <width>1920</width>
+                <height>1080</height>
+                <texture>screensaver-black.png</texture>
+                <animation effect="fade" start="80" end="80" time="0" condition="true">Conditional</animation>
+            </control>
+        </control>
+        <control type="group">
+            <description>slide images, flipped on every artwork</description>
+            <visible>String.IsEqual(Window(10000).Property(UMSA.Screensaver.Mode),slide)</visible>
+            <control type="image" id="1">
+                <description>slide image 1</description>
+                <posx>0</posx>
+                <posy>0</posy>
+                <width>1920</width>
+                <height>1080</height>
+                <texture background="true"></texture>
+                <aspectratio>keep</aspectratio>
+                <fadetime>0</fadetime>
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(SlideView.Slide1),0)" reversible="false">
+                    <effect type="slide" tween="cubic" easing="inout" start="1920,0" end="0,0" time="500"/>
+                </animation>
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(SlideView.Slide1),1)" reversible="false">
+                    <effect type="slide" tween="cubic" easing="inout" start="0,0" end="-1920,0" time="500"/>
+                </animation>
+            </control>
+            <control type="image" id="2">
+                <description>slide image 2</description>
+                <posx>0</posx>
+                <posy>0</posy>
+                <width>1920</width>
+                <height>1080</height>
+                <texture background="true"></texture>
+                <aspectratio>keep</aspectratio>
+                <fadetime>0</fadetime>
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(SlideView.Slide2),0)" reversible="false">
+                    <effect type="slide" tween="cubic" easing="inout" start="1920,0" end="0,0" time="500"/>
+                </animation>
+                <animation type="Conditional" condition="String.IsEqual(Window.Property(SlideView.Slide2),1)" reversible="false">
+                    <effect type="slide" tween="cubic" easing="inout" start="0,0" end="-1920,0" time="500"/>
+                </animation>
+            </control>
+        </control>
+    </controls>
+</window>

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Kodi 1080i layout: 1920x1080 coordinates, same resolution as umsa_saver.xml.
+     Foreground above umsa_saver.xml: game info, left artwork and one music line.
+     No background control, the overlay stays transparent. -->
+<window>
+    <!-- above umsa_saver.xml (zorder 1) -->
+    <zorder>2</zorder>
+    <controls>
+        <control type="group">
+            <description>game info, faded by LabelView.Fade</description>
+            <animation type="Conditional" condition="String.IsEqual(Window.Property(LabelView.Fade),0)">
+                <effect type="fade" start="0" end="100" time="1000"/>
+            </animation>
+            <animation type="Conditional" condition="String.IsEqual(Window.Property(LabelView.Fade),1)">
+                <effect type="fade" start="100" end="0" time="1000"/>
+            </animation>
+            <control type="image" id="104">
+                <description>left artwork; Python sizes it to the aspect ratio of the artwork (left_art.py)</description>
+                <posx>15</posx>
+                <posy>855</posy>
+                <width>280</width>
+                <height>210</height>
+                <fadetime>200</fadetime>
+                <aspectratio>stretch</aspectratio>
+            </control>
+            <control type="image" id="105">
+                <description>machine</description>
+                <posx>1785</posx>
+                <posy>975</posy>
+                <width>120</width>
+                <height>90</height>
+                <texture></texture>
+                <aspectratio scalediffuse="true" alignx="right" aligny="center">keep</aspectratio>
+            </control>
+            <control type="label" id="102">
+                <description>name and year</description>
+                <posx>1770</posx>
+                <posy>975</posy>
+                <width min="150" max="1200">auto</width>
+                <font>font14</font>
+                <textcolor>white</textcolor>
+                <shadowcolor>black</shadowcolor>
+                <align>right</align>
+            </control>
+            <control type="label" id="108">
+                <description>maker (category)</description>
+                <posx>1770</posx>
+                <posy>1014</posy>
+                <width min="150" max="1200">auto</width>
+                <font>font13</font>
+                <textcolor>white</textcolor>
+                <shadowcolor>black</shadowcolor>
+                <align>right</align>
+            </control>
+        </control>
+        <control type="group">
+            <description>music info: one line, VGM info first, otherwise Kodi music</description>
+            <control type="label" id="4100">
+                <description>VGM info, text and format from UMSA.VGM.Info unchanged</description>
+                <posx>60</posx>
+                <posy>15</posy>
+                <width>1500</width>
+                <visible>!String.IsEqual(Window(10000).Property(UMSA.VGM.Info),)</visible>
+                <textcolor>FFB2D4F5</textcolor>
+                <shadowcolor>ff000000</shadowcolor>
+                <scroll>true</scroll>
+                <label>$INFO[Window(10000).Property(UMSA.VGM.Info)]</label>
+                <font>font10</font>
+            </control>
+            <control type="label" id="4101">
+                <description>Kodi music: Song – Artist (mm:ss); empty parts drop their separator</description>
+                <posx>60</posx>
+                <posy>15</posy>
+                <width>1500</width>
+                <visible>String.IsEqual(Window(10000).Property(UMSA.VGM.Info),) + Player.HasAudio + !String.IsEmpty(MusicPlayer.Title)</visible>
+                <textcolor>FFB2D4F5</textcolor>
+                <shadowcolor>ff000000</shadowcolor>
+                <scroll>true</scroll>
+                <label>$INFO[MusicPlayer.Title]$INFO[MusicPlayer.Artist, – ]$INFO[Player.Time(mm:ss), (,)]</label>
+                <font>font10</font>
+            </control>
+            <control type="label" id="4102">
+                <description>Kodi music without title: Artist (mm:ss)</description>
+                <posx>60</posx>
+                <posy>15</posy>
+                <width>1500</width>
+                <visible>String.IsEqual(Window(10000).Property(UMSA.VGM.Info),) + Player.HasAudio + String.IsEmpty(MusicPlayer.Title)</visible>
+                <textcolor>FFB2D4F5</textcolor>
+                <shadowcolor>ff000000</shadowcolor>
+                <scroll>true</scroll>
+                <label>$INFO[MusicPlayer.Artist,, ]$INFO[Player.Time(mm:ss),(,)]</label>
+                <font>font10</font>
+            </control>
+        </control>
+    </controls>
+</window>

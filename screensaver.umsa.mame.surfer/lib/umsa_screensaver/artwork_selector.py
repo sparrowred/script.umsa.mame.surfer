@@ -119,6 +119,16 @@ def aspect_for(art):
     return check_image_aspect(art)
 
 
+def display_for(art):
+    """Return the display orientation of the game screen of a row.
+
+    ``Horizontal``, ``Vertical`` or ``NotScaled`` from the shared Core
+    detection, independent of the artwork type of the row.
+    """
+
+    return check_image_aspect(art)
+
+
 def needs_snapshot_check(art_type):
     """Return ``True`` when the artwork type is validated as image file."""
 

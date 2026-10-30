@@ -9,6 +9,7 @@ VGM music.
 from .constants import (
     ACTION_CONTEXT,
     ACTION_MOVEMENT_RIGHT,
+    ACTION_MUTE,
     ACTION_PLAY_NEXTITEM,
     ACTION_STOP,
     ACTION_VOLUME_DOWN,
@@ -64,6 +65,11 @@ def handle_action(saver, action, kodi, vgm_active, send_vgm_action):
     kodi.log(f"UMSA SSaver: onAction {saver.running}", kodi.LOGDEBUG)
     if saver.opening:
         kodi.log("UMSA SSaver: handoff already in progress, ignoring action", kodi.LOGDEBUG)
+        return
+    if action.getId() == ACTION_MUTE:
+        # Kodi raises the mute action itself when the silent videos mute
+        # and unmute it; like a volume change it never ends the saver
+        kodi.log("UMSA SSaver: mute changed, saver stays active", kodi.LOGDEBUG)
         return
     if saver.running == 'videos':
         # next video

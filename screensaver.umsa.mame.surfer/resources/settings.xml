@@ -32,6 +32,13 @@
           <default>true</default>
           <control type="toggle"/>
         </setting>
+        <setting id="ssaver_video_mute" type="boolean" label="30069" help="30070">
+          <default>false</default>
+          <dependencies>
+            <dependency type="enable" setting="ssaver_videos">true</dependency>
+          </dependencies>
+          <control type="toggle"/>
+        </setting>
         <setting id="ssaver_slide" type="boolean" label="30065">
           <default>true</default>
           <control type="toggle"/>
@@ -42,6 +49,13 @@
         </setting>
         <setting id="ssaver_cross" type="boolean" label="30068">
           <default>true</default>
+          <control type="toggle"/>
+        </setting>
+        <setting id="ssaver_cross_prefill" type="boolean" label="30071" help="30072">
+          <default>false</default>
+          <dependencies>
+            <dependency type="enable" setting="ssaver_cross">true</dependency>
+          </dependencies>
           <control type="toggle"/>
         </setting>
       </group>

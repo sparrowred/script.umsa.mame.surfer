@@ -13,9 +13,11 @@ from .constants import AR_NORM
 SETTING_TIME = 'ssaver_time'
 SETTING_INFO = 'ssaver_info'
 SETTING_VIDEOS = 'ssaver_videos'
+SETTING_VIDEO_MUTE = 'ssaver_video_mute'
 SETTING_SLIDE = 'ssaver_slide'
 SETTING_WALL = 'ssaver_wall'
 SETTING_CROSS = 'ssaver_cross'
+SETTING_CROSS_PREFILL = 'ssaver_cross_prefill'
 SETTING_TROWS = 'ssaver_trows'
 SETTING_TROWS_B = 'ssaver_trows_b'
 SETTING_SROWS = 'ssaver_srows'
@@ -62,6 +64,8 @@ class ScreensaverSettings:
     time: int = 0
     info: bool = False
     types: tuple = ()
+    video_mute: bool = False
+    cross_prefill: bool = False
     wall: WallSettings = WallSettings()
 
     @classmethod
@@ -98,6 +102,8 @@ class ScreensaverSettings:
             time=int(addon.getSetting(SETTING_TIME)),
             info=addon.getSetting(SETTING_INFO) == 'true',
             types=tuple(types),
+            video_mute=addon.getSetting(SETTING_VIDEO_MUTE) == 'true',
+            cross_prefill=addon.getSetting(SETTING_CROSS_PREFILL) == 'true',
             wall=wall,
         )
 
@@ -105,7 +111,8 @@ class ScreensaverSettings:
         """Return the dictionary the Kodi window code expects.
 
         The result keeps the historical keys (``ar_norm``, ``ar_x``,
-        ``time``, ``info``, ``type``, ``wall``); ``type`` is a mutable
+        ``time``, ``info``, ``type``, ``wall``) plus ``video_mute`` and ``cross_prefill``;
+        ``type`` is a mutable
         list because the monitor removes and re-appends ``videos`` while
         audio is playing.
         """
@@ -116,6 +123,8 @@ class ScreensaverSettings:
             'time': self.time,
             'info': self.info,
             'type': list(self.types),
+            'video_mute': self.video_mute,
+            'cross_prefill': self.cross_prefill,
             'wall': self.wall.as_dict(),
         }
 

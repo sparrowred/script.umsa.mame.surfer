@@ -11,17 +11,28 @@ ACTION_CONTEXT = (117,)
 ACTION_VOLUME_UP = 88
 ACTION_VOLUME_DOWN = 89
 ACTION_STOP = 13
+# also raised by Kodi itself when the mute changes (Application.SetMute)
+ACTION_MUTE = 91
 
-# Control ids of umsa_saver.xml
+# Control ids of umsa_overlay.xml (the foreground overlay)
 INFO_LABEL = 102
 INFO_DETAIL = 108
 PIC_MACHINE = 105
-PIC_4TO3 = 104
-PIC_3TO4 = 106
-PIC_1TO1 = 107
+LEFT_ART = 104
+
+# Control ids of umsa_saver.xml
 IMAGE = [1, 2]
 BACKG = [5, 6]
-CROSS_BACKGROUND = 109
+
+# Skin files; the main window and the foreground overlay share the resolution
+SKIN_NAME = "default"
+SKIN_RESOLUTION = "1080i"
+SAVER_XML = "umsa_saver.xml"
+OVERLAY_XML = "umsa_overlay.xml"
+
+# Coordinate space of SKIN_RESOLUTION, used by the dynamic Python controls
+SCREEN_WIDTH = 1920
+SCREEN_HEIGHT = 1080
 
 # Window properties (UMSA.Screensaver.* is shared with the frontend)
 WINDOW_ID = 10000

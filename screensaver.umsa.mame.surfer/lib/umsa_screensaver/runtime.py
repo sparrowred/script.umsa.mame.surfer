@@ -133,6 +133,12 @@ class ScreensaverRuntime:
             else:
                 self._start_request(request, window, self.monitor)
         finally:
+            # Kodi may close the saver window without Saver.close():
+            # the overlay must not stay behind
+            if self.monitor is not None:
+                self.monitor.saver.close_overlay()
+                # never leave Kodi muted by the screensaver videos
+                self.monitor.saver.restore_video_sound()
             # Clear manual inhibition for explicit invocations
             if manual:
                 set_screensaver_manual(False)

@@ -9,10 +9,12 @@ modules next to them:
 - ``availability`` - artwork availability check and mode planning
 - ``constants`` - control ids, action codes, window properties
 - ``history`` - screensaver display history
-- ``image_validator`` - bad image detection
+- ``image_validator`` - bad image detection, image size
+- ``left_art`` - geometry of the left artwork in the overlay
 - ``rendering`` - cross/slide/wall render loop, video label fading
 - ``settings`` - screensaver settings model
 - ``temp_video`` - eXoDOS video extraction and cleanup
+- ``video_mute`` - silent start of the videos, restore of the Kodi sound
 - ``video_playlist`` - playlist items and the unique id metadata
 - ``wall_layout`` - wall geometry
 
@@ -37,8 +39,10 @@ from . import (
     availability,
     history,
     image_validator,
+    left_art,
     rendering,
     temp_video,
+    video_mute,
     video_playlist,
     wall_layout,
 )
@@ -48,16 +52,17 @@ from .constants import (
     ACTION_MOVEMENT_RIGHT,
     ACTION_PLAY_NEXTITEM,
     BACKG,
-    CROSS_BACKGROUND,
     IMAGE,
     INFO_DETAIL,
     INFO_LABEL,
+    LEFT_ART,
     MODE_PROPERTY,
     MODE_VIDEOS,
-    PIC_1TO1,
-    PIC_3TO4,
-    PIC_4TO3,
+    OVERLAY_XML,
     PIC_MACHINE,
+    SAVER_XML,
+    SKIN_NAME,
+    SKIN_RESOLUTION,
     WINDOW_ID,
 )
 from .image_validator import PIL
@@ -73,18 +78,16 @@ __all__ = [
     'ACTION_MOVEMENT_RIGHT',
     'ACTION_PLAY_NEXTITEM',
     'BACKG',
-    'CROSS_BACKGROUND',
     'IMAGE',
     'INFO_DETAIL',
     'INFO_LABEL',
+    'LEFT_ART',
     'MEDIA_FOLDER',
-    'PIC_1TO1',
-    'PIC_3TO4',
-    'PIC_4TO3',
     'PIC_MACHINE',
     'PIL',
     'SET_ID_UNIQUE_TYPE',
     'Monitor',
+    'Overlay',
     'Player',
     'Saver',
     'attach_set_id',
@@ -96,6 +99,43 @@ __addon__ = xbmcaddon.Addon(id='screensaver.umsa.mame.surfer')
 
 MEDIA_FOLDER = xbmcvfs.translatePath(path.join(
     __addon__.getAddonInfo('path'), 'resources', 'skins', 'default', 'media'))
+
+# log levels of the Kodi-free helper modules
+_LOG_LEVELS = {
+    'debug': xbmc.LOGDEBUG,
+    'info': xbmc.LOGINFO,
+    'warning': xbmc.LOGWARNING,
+    'error': xbmc.LOGERROR,
+}
+
+
+def _log(message, level='debug'):
+    """Write a message of a Kodi-free helper module to the Kodi log."""
+
+    xbmc.log(message, _LOG_LEVELS.get(level, xbmc.LOGDEBUG))
+
+
+class Overlay(xbmcgui.WindowXMLDialog):
+    """Transparent foreground window above the screensaver window.
+
+    Kodi hands the input to the topmost dialog, so every action is
+    forwarded to the saver - the overlay never handles input itself.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.saver = kwargs['saver']
+
+    def onAction(self, action):
+        """Forward the action to the screensaver window.
+
+        ``super().onAction`` is not called on purpose: Kodi's default
+        would close only the overlay on a back action.
+        """
+
+        xbmc.log(
+            f"UMSA SSaver overlay: forwarding action {action.getId()}",
+            xbmc.LOGDEBUG)
+        self.saver.onAction(action)
 
 
 class Saver(xbmcgui.WindowXMLDialog):
@@ -134,6 +174,14 @@ class Saver(xbmcgui.WindowXMLDialog):
         self._playback_owned = False
         # known broken images, the list depends on the Pillow support
         self.bad_image_list = list(image_validator.bad_image_list(PIL))
+        # the Kodi mute of the silent videos (ssaver_video_mute)
+        self._video_mute = video_mute.VideoMute(xbmc.executeJSONRPC, _log)
+        # the transparent foreground window with the game and music info,
+        # shown while this window is open
+        self._overlay = Overlay(
+            OVERLAY_XML, self.__addon__.getAddonInfo('path'),
+            SKIN_NAME, SKIN_RESOLUTION, saver=self)
+        self._overlay_shown = False
 
         self.read_settings()
 
@@ -144,14 +192,9 @@ class Saver(xbmcgui.WindowXMLDialog):
         # Clear the Kodi video playlist to remove stale entries from previous
         # screensaver sessions. This is done once during initialization.
         self.playlist.clear()
-        # correct aspect ratio for snap in bottom left position
-        _4to3 = self.getControl(PIC_4TO3).getWidth()
-        _3to4 = self.getControl(PIC_3TO4).getWidth()
-        self.getControl(PIC_4TO3).setWidth(int(
-            _4to3/self.settings['ar_x']*self.settings['ar_norm']))
-        self.getControl(PIC_3TO4).setWidth(int(
-            _3to4*self.settings['ar_norm']/self.settings['ar_x']))
-
+        # the render loop runs inside onInit and fills the overlay controls:
+        # show the overlay first
+        self.show_overlay()
         self.get_art_and_call_saver()
 
     def onAction(self, action):
@@ -161,6 +204,78 @@ class Saver(xbmcgui.WindowXMLDialog):
             self, action, kodi=xbmc,
             vgm_active=vgm_active,
             send_vgm_action=send_vgm_action)
+
+    def show_overlay(self):
+        """Show the foreground overlay once per window session."""
+
+        if self._overlay_shown:
+            return
+        try:
+            self._overlay.show()
+            self._overlay_shown = True
+        except Exception as error:  # noqa: BLE001 - logged, the render loop reports the missing controls
+            xbmc.log(
+                f"UMSA SSaver: could not show the overlay: {error}",
+                xbmc.LOGERROR)
+
+    def close_overlay(self):
+        """Close the foreground overlay; repeated calls are safe."""
+
+        if not self._overlay_shown:
+            return
+        self._overlay_shown = False
+        try:
+            self._overlay.close()
+        except Exception as error:  # noqa: BLE001 - the cleanup must not raise
+            xbmc.log(
+                f"UMSA SSaver: could not close the overlay: {error}",
+                xbmc.LOGWARNING)
+
+    def overlay_control(self, control_id):
+        """Return a control of the foreground overlay.
+
+        The game info, the left snap and the machine picture live in the
+        overlay, not in this window.
+        """
+
+        return self._overlay.getControl(control_id)
+
+    def show_left_art(self, filename, kind=left_art.ARTWORK, display=None, use_cache=True):
+        """Show the small artwork in the bottom left corner of the overlay.
+
+        The control is sized to the aspect ratio of the artwork: a game
+        screen (``left_art.SCREEN``) gets 4:3 or 3:4 from its ``display``
+        orientation, every other artwork keeps the proportions of its file.
+        An empty ``filename`` clears the picture.
+        """
+
+        control = self.overlay_control(LEFT_ART)
+        if not filename:
+            control.setImage('')
+            return
+        aspect = left_art.target_aspect(
+            kind, display, image_validator.image_size(filename))
+        pos_x, pos_y, width, height = left_art.fit_rect(
+            aspect, self.settings['ar_norm'], self.settings['ar_x'])
+        control.setPosition(pos_x, pos_y)
+        control.setWidth(width)
+        control.setHeight(height)
+        control.setImage(filename, use_cache)
+
+    def set_label_fade(self, value):
+        """Fade the game info of the overlay in (``'0'``) or out (``'1'``)."""
+
+        self._overlay.setProperty('LabelView.Fade', value)
+
+    def close(self):
+        """Close the overlay first, then the screensaver window.
+
+        Every close path of the screensaver ends here, so the overlay
+        never outlives the window.
+        """
+
+        self.close_overlay()
+        super().close()
 
     def addControl(self, control):
         """Add a control to the window and remember it.
@@ -418,6 +533,20 @@ class Saver(xbmcgui.WindowXMLDialog):
                 f"UMSA SSaver: could not stop the video playback: {error}",
                 xbmc.LOGWARNING)
 
+    def mute_videos(self):
+        """Mute Kodi before the videos start, when ``ssaver_video_mute`` is on."""
+
+        if self.settings.get('video_mute'):
+            self._video_mute.mute()
+
+    def restore_video_sound(self):
+        """Give Kodi its sound back when the screensaver muted it.
+
+        Called after the video playback stopped; repeated calls are safe.
+        """
+
+        self._video_mute.restore()
+
     def shutdown_video_mode(self):
         """Stop the video playback and clean up temporary files.
 
@@ -433,6 +562,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         xbmc.log("UMSA SSaver: shutting the video mode down", xbmc.LOGDEBUG)
         self.stop_video_playback()
         self._playback_owned = False
+        self.restore_video_sound()
         # Do not clear the playlist - the user's playlist must not be modified.
         # Only clean up temporary files that are no longer needed.
         self.cleanup_temp_videos()
@@ -460,6 +590,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         xbmc.log("UMSA SSaver: preparing an artwork mode", xbmc.LOGDEBUG)
         self.stop_video_playback()
         self._playback_owned = False
+        self.restore_video_sound()
         candidates = availability.image_fallback_modes(
             self.parent.umsa.ggdb, list(self.settings.get('type') or []))
         if not candidates:
@@ -551,7 +682,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         - in wall mode make one position a video
 
         The controls are created exactly once per wall session: a second
-        call does nothing.
+        call does nothing. A new wall session (mode change) starts from
+        ``reset_render_state`` and lays the wall out again.
         """
 
         if self._wall_created:
@@ -570,20 +702,21 @@ class Saver(xbmcgui.WindowXMLDialog):
         # create lists
         self.wall['pics'] = grid['pics']
         self.wall['pos'] = list(range(self.wall['pics']))
-        # generate image list
-        self.wall['mesh'] = []
-        positions = wall_layout.cell_positions(
+        # one stretch and one keep control per cell, created once and reused
+        # by render_wall for every picture of this wall session
+        self.wall['cells'] = wall_layout.cell_positions(
             rows, grid['cols'], grid['width'], grid['height'], grid['evspace'])
-        # TODO rework for, for
-        for pos_x, pos_y in positions:
-            self.wall['mesh'].append(
-                xbmcgui.ControlImage(pos_x, pos_y, self.wall['width'], self.wall['height'], ''))
-
-        # TODO really needed? acutally coz run_wall does removeControl
-        # if we could remove addControl here, no need for doModal before create_wall
-        # add images to window
-        for control in self.wall['mesh']:
-            self.addControl(control)
+        self.wall['slots'] = []
+        for pos_x, pos_y in self.wall['cells']:
+            slot = {
+                wall_layout.STRETCH: xbmcgui.ControlImage(
+                    pos_x, pos_y, self.wall['width'], self.wall['height'], ''),
+                wall_layout.KEEP: xbmcgui.ControlImage(
+                    pos_x, pos_y, self.wall['width'], self.wall['height'], '', 2),
+            }
+            for control in slot.values():
+                self.addControl(control)
+            self.wall['slots'].append(slot)
 
         # shuffle position list
         wall_layout.shuffle_positions(self.wall['pos'])
@@ -758,7 +891,7 @@ class Monitor(xbmc.Monitor):
         self.player = Player(itself=self)
         self.vgmaction = False
         self.saver = Saver(
-            "umsa_saver.xml", __addon__.getAddonInfo('path'), "default", "720p", itself=self)
+            SAVER_XML, __addon__.getAddonInfo('path'), SKIN_NAME, SKIN_RESOLUTION, itself=self)
 
     def _mode_candidates(self, configured):
         """Return the modes that may be selected.

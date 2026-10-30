@@ -37,6 +37,22 @@ msgctxt "#30058"
 msgid "Videos"
 msgstr ""
 
+msgctxt "#30069"
+msgid "Start videos without sound"
+msgstr ""
+
+msgctxt "#30070"
+msgid "Mutes Kodi while the screensaver videos play and restores the previous sound state afterwards. Not used while music or VGM plays: the video mode does not start then."
+msgstr ""
+
+msgctxt "#30071"
+msgid "Fill the cross screen at once"
+msgstr ""
+
+msgctxt "#30072"
+msgid "The first 60 cross pictures follow each other without the artwork pause. Afterwards every picture stays on screen for the configured time again."
+msgstr ""
+
 msgctxt "#30065"
 msgid "Slide"
 msgstr ""

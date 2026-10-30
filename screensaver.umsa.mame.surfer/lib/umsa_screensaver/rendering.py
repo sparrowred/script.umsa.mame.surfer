@@ -8,29 +8,32 @@ controls) and the artwork helpers of ``artwork_selector``.
 
 from random import randint
 
+from . import left_art
 from .artwork_selector import (
     art_types_for_mode,
     aspect_for,
+    display_for,
     left_picture_type,
     needs_snapshot_check,
     source_roots,
 )
 from .constants import (
     BACKG,
-    CROSS_BACKGROUND,
     IMAGE,
     INFO_DETAIL,
     INFO_LABEL,
-    PIC_1TO1,
-    PIC_3TO4,
-    PIC_4TO3,
     PIC_MACHINE,
+    SCREEN_HEIGHT,
+    SCREEN_WIDTH,
 )
-from .wall_layout import next_position
+from .wall_layout import KEEP, STRETCH, cell_geometry, next_position
 
 # Screen area the cross mode places its pictures on
-CROSS_MAX_X = 1280
-CROSS_MAX_Y = 720
+CROSS_MAX_X = SCREEN_WIDTH
+CROSS_MAX_Y = SCREEN_HEIGHT
+
+# Artwork rows that show a game screen; their left picture is the flyer/cover
+SCREEN_ROW_TYPES = ('snap', 'titles', 'videosnaps')
 
 # Maximum number of pictures kept on screen in cross mode
 CROSS_MAX_PICTURES = 60
@@ -43,6 +46,10 @@ ARTWORK_RETRY_DELAY = 500
 
 # Poll interval of the interruptible waits (ms)
 WAIT_POLL_INTERVAL = 250
+
+# Pause between two pictures of the cross prefill (ms): short, but the
+# sleep lets Kodi deliver the pending actions (stop, volume) to the saver
+CROSS_PREFILL_PAUSE = 100
 
 # Maximum time the label fading waits for the duration of a video (s)
 VIDEO_STARTUP_TIMEOUT = 15.0
@@ -62,28 +69,57 @@ class RenderContext:
         self.order = [0, 1]
         # position used last in the wall mode
         self.lastpos = None
-        # pictures shown in the cross mode
+        # pictures shown in the cross mode, oldest first: (variant, control)
         self.piclist = []
+        # cross controls that left the window and wait for reuse, per variant
+        self.spare = {STRETCH: [], KEEP: []}
+
+
+def cross_geometry(aspect, x_axis, y_axis):
+    """Return ``(variant, x, y, width, height)`` of a cross picture.
+
+    ``x_axis``/``y_axis`` is the random center of the picture. A
+    ``NotScaled`` picture needs the ``KEEP`` control variant, every other
+    picture the ``STRETCH`` variant.
+    """
+
+    if aspect == 'Vertical':
+        return STRETCH, x_axis-180, y_axis-240, 360, 480
+    if aspect == 'NotScaled':
+        return KEEP, x_axis-270, y_axis-270, 540, 540
+    return STRETCH, x_axis-270, y_axis-202, 540, 405
 
 
 def render_cross(ctx, filename, aspect):
-    """Show one picture at a random position (cross mode)."""
+    """Show one picture at a random position (cross mode).
+
+    At most ``CROSS_MAX_PICTURES`` controls are in the window. When the
+    screen is full, the oldest control leaves the window and is reused:
+    it gets the new picture and geometry and comes back on top. The other
+    pictures keep their image, position and order.
+    """
 
     saver = ctx.saver
-    x_axis = randint(0, CROSS_MAX_X)
-    y_axis = randint(0, CROSS_MAX_Y)
-    if aspect == 'Vertical':
-        # TODO look up aspect calc from ssaver
-        ctx.piclist.append(ctx.gui.ControlImage(x_axis-120, y_axis-160, 240, 320, filename))
-    elif aspect == 'NotScaled':
-        ctx.piclist.append(ctx.gui.ControlImage(x_axis-180, y_axis-180, 360, 360, filename, 2))
+    variant, pos_x, pos_y, width, height = cross_geometry(
+        aspect, randint(0, CROSS_MAX_X), randint(0, CROSS_MAX_Y))
+    if len(ctx.piclist) >= CROSS_MAX_PICTURES:
+        old_variant, oldest = ctx.piclist.pop(0)
+        saver.removeControl(oldest)
+        ctx.spare[old_variant].append(oldest)
+    if ctx.spare[variant]:
+        # a removed control takes the new picture and geometry before it is
+        # added again: re-adding puts it on top of the window
+        control = ctx.spare[variant].pop()
+        control.setImage(filename)
+        control.setPosition(pos_x, pos_y)
+        control.setWidth(width)
+        control.setHeight(height)
+    elif variant == KEEP:
+        control = ctx.gui.ControlImage(pos_x, pos_y, width, height, filename, 2)
     else:
-        ctx.piclist.append(ctx.gui.ControlImage(x_axis-180, y_axis-135, 360, 270, filename))
-    # show pic
-    saver.addControl(ctx.piclist[-1])
-    if len(ctx.piclist) > CROSS_MAX_PICTURES:
-        saver.removeControl(ctx.piclist[0])
-        del ctx.piclist[0]
+        control = ctx.gui.ControlImage(pos_x, pos_y, width, height, filename)
+    ctx.piclist.append((variant, control))
+    saver.addControl(control)
 
 
 def render_slide(ctx, filename, aspect):
@@ -100,7 +136,11 @@ def render_slide(ctx, filename, aspect):
 
 
 def render_wall(ctx, filename, aspect):
-    """Show one picture in the wall (wall mode)."""
+    """Show one picture in the wall (wall mode).
+
+    The controls of the cell are reused: only the picture, the position and
+    the size change, no control is created or removed.
+    """
 
     saver = ctx.saver
     wall = saver.wall
@@ -115,78 +155,58 @@ def render_wall(ctx, filename, aspect):
             tofree = wall['freelist'].pop(
                 randint(0, round(len(wall['freelist'])/2)))
             wall['pos'].insert(0, tofree)
-            # make image empty
-            saver.removeControl(wall['mesh'][tofree])
-            wall['mesh'][tofree].setImage('')
-            # TODO unneeded?
-            saver.addControl(wall['mesh'][tofree])
+            # make the cell empty
+            for control in wall['slots'][tofree].values():
+                control.setImage('')
 
-    # check if image is horizontal, vertical or aspect ratio must be keeped
-    # get image position
-    pos_x, pos_y = wall['mesh'][lastpos].getPosition()
-    # width not standard =
-    # image was vertical > correct pos_x position
-    if wall['mesh'][lastpos].getWidth() != wall['width']:
-        pos_x = pos_x-wall['vert_x']
-    # remove image control
-    # TODO only when image exists
-    saver.removeControl(wall['mesh'][lastpos])
-    # TODO switch to create_gui_element, it also does snaporientation
-    # create new image control for horz, vert or ar=keep
-    if aspect == 'Horizontal':
-        wall['mesh'][lastpos] = ctx.gui.ControlImage(
-            pos_x, pos_y, wall['width'], wall['height'], '')
-    elif aspect == 'Vertical':
-        wall['mesh'][lastpos] = ctx.gui.ControlImage(
-            pos_x + wall['vert_x'], pos_y,
-            wall['vert_width'], wall['height'], '')
-    elif aspect == 'NotScaled':
-        wall['mesh'][lastpos] = ctx.gui.ControlImage(
-            pos_x, pos_y, wall['width'], wall['height'], '', 2)
-    # set image
-    wall['mesh'][lastpos].setImage(filename, False)
-    # add new image control
-    saver.addControl(wall['mesh'][lastpos])
+    # horizontal and vertical pictures are stretched, NotScaled keeps its
+    # aspect ratio: each needs its own control variant
+    variant, pos_x, pos_y, width, height = cell_geometry(
+        wall['cells'][lastpos], aspect, wall)
+    slot = wall['slots'][lastpos]
+    for name, control in slot.items():
+        if name != variant:
+            control.setImage('')
+    control = slot[variant]
+    control.setPosition(pos_x, pos_y)
+    control.setWidth(width)
+    control.setHeight(height)
+    control.setImage(filename, False)
     saver.getControl(BACKG[order[0]]).setImage(filename)
     saver.setProperty(f'SlideView.Fade1{order[0]+1}', '0')
     saver.setProperty(f'SlideView.Fade1{order[1]+1}', '1')
 
 
 def render_left_picture(ctx, art, roots):
-    """Show the left picture (snapshot) of the artwork."""
+    """Show the left picture of the artwork in the overlay.
+
+    A snap/title/video row gets the flyer or cover of the set, every other
+    row gets the snap. The snap is shown with the aspect ratio of the game
+    screen, the flyer/cover with the proportions of its file.
+    """
 
     saver = ctx.saver
-    # get left pic
     # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
-    # TODO needs fetch info for snap from db for aspect ratio
-    if 'left_pic' in art:
-        if art['type'] in ('snap', 'titles', 'videosnaps'):
-            saver.getControl(PIC_1TO1).setImage(art['left_pic'])
-            saver.getControl(PIC_4TO3).setImage('')
-            saver.getControl(PIC_3TO4).setImage('')
+    if art['type'] in SCREEN_ROW_TYPES:
+        if 'left_pic' in art:
+            snapshot = art['left_pic']
         else:
-            saver.getControl(PIC_1TO1).setImage('')
-            saver.getControl(PIC_4TO3).setImage(art['left_pic'])
-            saver.getControl(PIC_3TO4).setImage('')
-    elif art['type'] in ('snap', 'titles', 'videosnaps'):
-        left_type = left_picture_type(art)
-        snapshot = saver.resolve_art_path(art, roots, art_type=left_type)
-        saver.getControl(PIC_1TO1).setImage(snapshot, False)
-        saver.getControl(PIC_4TO3).setImage('')
-        saver.getControl(PIC_3TO4).setImage('')
+            left_type = left_picture_type(art)
+            snapshot = saver.resolve_art_path(art, roots, art_type=left_type)
+        saver.show_left_art(snapshot, left_art.ARTWORK, use_cache=False)
+    elif 'left_pic' in art:
+        saver.show_left_art(
+            art['left_pic'], left_art.SCREEN, display_for(art), use_cache=False)
     else:
         # TODO dirty hack, get from db! maybe get_random_art should return it!
         snapshot = saver.resolve_art_path(
             art, roots, art_type='snap', extension='png')
-        snapctrl = PIC_4TO3
         if saver.check_snapshot(snapshot):
-            saver.getControl(snapctrl).setImage(snapshot, False)
-
-        # no snapshot = clear all 3 snap views
+            saver.show_left_art(
+                snapshot, left_art.SCREEN, display_for(art), use_cache=False)
         else:
-            saver.getControl(PIC_4TO3).setImage('')
-            saver.getControl(PIC_3TO4).setImage('')
-            saver.getControl(PIC_1TO1).setImage('')
+            # no snapshot = clear the left picture
+            saver.show_left_art('')
 
 
 def playback_active(player):
@@ -258,7 +278,7 @@ def run_playback_labels(player, kodi):
 
     saver = player.parent.saver
     # clear video label
-    saver.setProperty('LabelView.Fade', '1')
+    saver.set_label_fade('1')
     # wait until the video starts, bounded and interruptible
     total_time = wait_for_duration(player, kodi)
     if total_time <= 0:
@@ -279,26 +299,24 @@ def run_playback_labels(player, kodi):
     count_seconds = 0
     kodi.log(f"UMSA SSaver Player: time: {total_time}, start {timecount1}, end {timecount2}", kodi.LOGINFO)
     # set labels
-    saver.getControl(INFO_LABEL).setLabel(
+    saver.overlay_control(INFO_LABEL).setLabel(
         player.getVideoInfoTag().getTitle()
     )
-    saver.getControl(INFO_DETAIL).setLabel(
+    saver.overlay_control(INFO_DETAIL).setLabel(
         player.getVideoInfoTag().getGenre()
     )
-    saver.getControl(PIC_MACHINE).setImage(
+    saver.overlay_control(PIC_MACHINE).setImage(
         player.getVideoInfoTag().getTrailer()
     )
     kodi.log(f"UMSA SSaver Player: director {player.getVideoInfoTag().getDirector()}", kodi.LOGINFO)
-    saver.getControl(PIC_1TO1).setImage(
-        player.getVideoInfoTag().getDirector()
-    )
+    saver.show_left_art(player.getVideoInfoTag().getDirector(), left_art.ARTWORK)
 
     while player.runp:
         if player.isPlayingVideo():
             if count_seconds == timecount1:
-                saver.setProperty('LabelView.Fade', '0')
+                saver.set_label_fade('0')
             elif count_seconds == timecount2:
-                saver.setProperty('LabelView.Fade', '1')
+                saver.set_label_fade('1')
                 player.runp = False
                 continue
         else:
@@ -345,12 +363,12 @@ class RenderSession:
             saver.getControl(BACKG[1]).setImage('blank.png')
         elif saver.running == 'cross':
             ctx.piclist.reverse()
-            for control in ctx.piclist:
+            for _variant, control in ctx.piclist:
                 saver.removeControl(control)
         elif saver.running == 'wall':
-            for control in saver.wall['mesh']:
-                saver.removeControl(control)
-                #control.setImage('blank.png')
+            for slot in saver.wall.get('slots', []):
+                for control in slot.values():
+                    saver.removeControl(control)
             saver.getControl(BACKG[0]).setImage('blank.png')
             saver.getControl(BACKG[1]).setImage('blank.png')
 
@@ -363,6 +381,20 @@ class RenderSession:
             deactivate()
         else:
             self.saver.running = 'no'
+
+    def _cross_prefill(self, ctx):
+        """Return whether the cross prefill still fills the screen.
+
+        With ``ssaver_cross_prefill`` the first pictures of a cross session
+        follow each other without the ``ssaver_time`` pause until the
+        screen holds ``CROSS_MAX_PICTURES``; the render context (and with
+        it the picture list) is new for every cross session.
+        """
+
+        saver = self.saver
+        return (saver.running == 'cross'
+                and bool(saver.settings.get('cross_prefill'))
+                and len(ctx.piclist) < CROSS_MAX_PICTURES)
 
     def _wait_before_retry(self):
         """Wait a short moment before the next artwork attempt.
@@ -419,6 +451,8 @@ class RenderSession:
             self.kodi.log("UMSA SSaver: no screensaver videos available", self.kodi.LOGWARNING)
             return False
         saver._playback_owned = True
+        # mute before the playback starts, so no sound gets through
+        saver.mute_videos()
         saver.parent.player.play(saver.playlist)
         return True
 
@@ -453,18 +487,11 @@ class RenderSession:
             if not saver.art_types:
                 saver.art_types = art_types_for_mode(saver.running)
 
+            # the skin shows the black base, the background and the slide
+            # images by the mode property (UMSA.Screensaver.Mode)
             if saver.running == 'wall':
                 saver.create_wall()
                 ctx.lastpos = None
-                saver.setProperty('SlideView.Background', 'show')
-
-            elif saver.running == 'slide':
-                saver.setProperty('SlideView.Background', 'show')
-
-            elif saver.running == 'cross':
-                saver.getControl(CROSS_BACKGROUND).setVisible(False)
-                saver.getControl(BACKG[0]).setVisible(False)
-                saver.getControl(BACKG[1]).setVisible(False)
 
             # screensaver loop
             while saver.running != 'no':
@@ -499,14 +526,14 @@ class RenderSession:
                 aspect = aspect_for(art)
 
                 # get machine pic
-                saver.getControl(PIC_MACHINE).setImage(
+                saver.overlay_control(PIC_MACHINE).setImage(
                     saver.get_machine_pic(art), False)
 
                 render_left_picture(ctx, art, roots)
 
                 # set info label
-                saver.getControl(INFO_LABEL).setLabel(f"{art['gamename']}")
-                saver.getControl(INFO_DETAIL).setLabel(
+                saver.overlay_control(INFO_LABEL).setLabel(f"{art['gamename']}")
+                saver.overlay_control(INFO_DETAIL).setLabel(
                     "{}, {}".format(art['year'], art['maker']))
 
                 # call saver
@@ -527,6 +554,13 @@ class RenderSession:
                 # the artwork was displayed: the failure counter starts again
                 self._failures = 0
 
+                if self._cross_prefill(ctx):
+                    # no ssaver_time pause while the cross fills up; the
+                    # game info stays hidden instead of flickering
+                    saver.set_label_fade('1')
+                    kodi.sleep(CROSS_PREFILL_PAUSE)
+                    continue
+
                 # set wait_time
                 wait_time = self._wait_time()
 
@@ -534,9 +568,9 @@ class RenderSession:
                 count = 0
                 while count < wait_time:
                     if count == 1:
-                        saver.setProperty('LabelView.Fade', '0')
+                        saver.set_label_fade('0')
                     if count == wait_time-1:
-                        saver.setProperty('LabelView.Fade', '1')
+                        saver.set_label_fade('1')
                     count += 1
                     kodi.sleep(1000)
                     if saver.running == 'no':

@@ -68,6 +68,23 @@ def bad_image_list(pil_available=None):
     return BAD_IMAGE_LIST_PIL if pil_available else BAD_IMAGE_LIST_NO_PIL
 
 
+def image_size(filename):
+    """Return ``(width, height)`` of an image file, ``None`` when unknown.
+
+    Pillow opens images lazily: only the file header is read. Without
+    Pillow, for archive or Kodi VFS paths and for unreadable files the
+    size is unknown.
+    """
+
+    if not (PIL and _Image is not None and filename):
+        return None
+    try:
+        with _Image.open(filename) as img:
+            return img.size
+    except (OSError, ValueError):
+        return None
+
+
 def check_snapshot(snapshot, bad_images=None, pil_available=None, kodi=None):
     """Return ``True`` when the snapshot is usable.
 
