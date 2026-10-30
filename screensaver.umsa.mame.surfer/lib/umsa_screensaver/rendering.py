@@ -7,6 +7,7 @@ controls) and the artwork helpers of ``artwork_selector``.
 """
 
 from random import randint
+from time import monotonic
 
 from . import left_art
 from .artwork_selector import (
@@ -17,6 +18,7 @@ from .artwork_selector import (
     needs_snapshot_check,
     source_roots,
 )
+from .availability import IMAGE_MODES
 from .constants import (
     BACKG,
     IMAGE,
@@ -329,12 +331,17 @@ def run_playback_labels(player, kodi):
 class RenderSession:
     """Drives the render loop of one screensaver session."""
 
-    def __init__(self, saver, gui, kodi):
+    def __init__(self, saver, gui, kodi, clock=monotonic):
         self.saver = saver
         self.gui = gui
         self.kodi = kodi
         # consecutive failed artwork attempts
         self._failures = 0
+        # timed mode switch: the monotonic clock, the start of the mode and
+        # the image mode the screensaver continues with after this session
+        self._clock = clock
+        self._mode_started = None
+        self.next_mode = None
 
     def _wait_time(self):
         """Return how long the artwork stays on screen."""
@@ -381,6 +388,35 @@ class RenderSession:
             deactivate()
         else:
             self.saver.running = 'no'
+
+    def _mode_expired(self):
+        """Return whether the image mode ran for ``ssaver_mode_switch_minutes``.
+
+        Only image modes of an automatically started screensaver rotate;
+        ``0`` minutes switches the rotation off.
+        """
+
+        minutes = self.saver.settings.get('mode_switch_minutes') or 0
+        if minutes <= 0 or self._mode_started is None:
+            return False
+        if self.saver.running not in IMAGE_MODES or not self.saver.rotate_modes:
+            return False
+        return self._clock() - self._mode_started >= minutes * 60
+
+    def _switch_mode(self):
+        """Handle an expired image mode at a safe point of the render loop.
+
+        Returns ``True`` when the session ends because another image mode
+        follows (``next_mode``). Without another mode the current one keeps
+        running and its time starts again.
+        """
+
+        next_mode = self.saver.next_rotation_mode()
+        if next_mode is None:
+            self._mode_started = self._clock()
+            return False
+        self.next_mode = next_mode
+        return True
 
     def _cross_prefill(self, ctx):
         """Return whether the cross prefill still fills the screen.
@@ -493,8 +529,14 @@ class RenderSession:
                 saver.create_wall()
                 ctx.lastpos = None
 
+            # the mode time starts when the mode really runs
+            self._mode_started = self._clock()
+
             # screensaver loop
             while saver.running != 'no':
+                # safe point: the previous artwork is complete
+                if self._mode_expired() and self._switch_mode():
+                    break
                 art = saver.parent.umsa.ggdb.get_random_art(saver.art_types)
                 # remember the software being rendered for the context handoff
                 saver.remember_art(art)
@@ -573,7 +615,8 @@ class RenderSession:
                         saver.set_label_fade('1')
                     count += 1
                     kodi.sleep(1000)
-                    if saver.running == 'no':
+                    # the mode switch does not wait for the whole ssaver_time
+                    if saver.running == 'no' or self._mode_expired():
                         break
 
                 ctx.order.reverse()

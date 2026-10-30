@@ -174,6 +174,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         self._playback_owned = False
         # known broken images, the list depends on the Pillow support
         self.bad_image_list = list(image_validator.bad_image_list(PIL))
+        # the timed mode switch only rotates an automatically started saver
+        self.rotate_modes = False
         # the Kodi mute of the silent videos (ssaver_video_mute)
         self._video_mute = video_mute.VideoMute(xbmc.executeJSONRPC, _log)
         # the transparent foreground window with the game and music info,
@@ -624,9 +626,8 @@ class Saver(xbmcgui.WindowXMLDialog):
             self.running = 'no'
             self.finish_screensaver()
             return
-        session = rendering.RenderSession(self, gui=xbmcgui, kodi=xbmc)
         try:
-            session.run()
+            self.run_render_sessions()
         finally:
             # Ensure cleanup even if render loop raises unexpectedly
             if self.running != 'videos' or self.video_teardown:
@@ -658,12 +659,69 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.current_software_id = None
         self.opening = False
 
+    def next_rotation_mode(self):
+        """Return the image mode the timed mode switch continues with.
+
+        ``None`` keeps the current mode: no other configured image mode has
+        artwork, or the availability check failed.
+        """
+
+        configured = list(self.settings.get('type') or [])
+        try:
+            candidates = availability.rotation_candidates(
+                self.parent.umsa.ggdb, configured)
+        except availability.AvailabilityError as error:
+            xbmc.log(
+                f"UMSA SSaver: mode switch check failed, keeping {self.running}: {error}",
+                xbmc.LOGWARNING)
+            return None
+        mode = availability.next_rotation_mode(self.running, candidates)
+        if mode is None:
+            xbmc.log(
+                f"UMSA SSaver: no other image mode with artwork, keeping {self.running}",
+                xbmc.LOGINFO)
+        return mode
+
+    def enter_image_mode(self, mode):
+        """Switch from the finished image mode to ``mode``.
+
+        The render session of the old mode has already cleaned up its
+        pictures. The dynamic controls, the wall and the slide/background
+        properties of the old mode are reset, so nothing carries over.
+        """
+
+        xbmc.log(
+            f"UMSA SSaver: mode time is up, switching from {self.running} to {mode}",
+            xbmc.LOGINFO)
+        self.reset_render_state()
+        for name in ('SlideView.Slide1', 'SlideView.Slide2',
+                     'SlideView.Fade11', 'SlideView.Fade12'):
+            self.clearProperty(name)
+        self.set_label_fade('1')
+        self.running = mode
+        self.set_mode_property(mode)
+
+    def run_render_sessions(self):
+        """Run render sessions until the screensaver stops.
+
+        One render session runs at a time. When the timed mode switch ends a
+        session, the next image mode starts in a new session - no recursion.
+        Returns ``False`` when the video mode took over.
+        """
+
+        while True:
+            session = rendering.RenderSession(self, gui=xbmcgui, kodi=xbmc)
+            if not session.run():
+                return False
+            if session.next_mode is None or self.running == 'no':
+                return True
+            self.enter_image_mode(session.next_mode)
+
     def get_art_and_call_saver(self):
         """ Get artwork and call Screensaver """
 
-        session = rendering.RenderSession(self, gui=xbmcgui, kodi=xbmc)
         try:
-            if not session.run():
+            if not self.run_render_sessions():
                 # the video mode took over, the window stays open
                 return
         finally:
@@ -955,6 +1013,9 @@ class Monitor(xbmc.Monitor):
                 self.saver.notify_user("no screensaver videos available")
             # Reset session-specific state for the new activation
             self.saver._reset_session_state()
+            # an automatic start may rotate its image modes; an explicit
+            # script request keeps the requested mode
+            self.saver.rotate_modes = True
             self.saver.running = plan.mode
             self.saver.art_types = None
             self.saver.set_mode_property(plan.mode)

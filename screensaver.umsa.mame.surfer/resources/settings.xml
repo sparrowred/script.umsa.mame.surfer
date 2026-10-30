@@ -22,6 +22,17 @@
             <popup>false</popup>
           </control>
         </setting>
+        <setting id="ssaver_mode_switch_minutes" type="integer" label="30073" help="30074">
+          <default>0</default>
+          <constraints>
+            <minimum>0</minimum>
+            <step>1</step>
+            <maximum>120</maximum>
+          </constraints>
+          <control type="slider" format="integer">
+            <popup>false</popup>
+          </control>
+        </setting>
         <setting id="ssaver_info" type="boolean" label="30056">
           <default>true</default>
           <control type="toggle"/>

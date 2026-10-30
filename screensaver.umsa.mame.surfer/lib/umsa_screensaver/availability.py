@@ -123,6 +123,38 @@ def image_fallback_modes(ggdb, configured):
     return available_modes(ggdb, others)
 
 
+def rotation_candidates(ggdb, configured):
+    """Return the image modes the timed mode switch may rotate through.
+
+    Only the configured image modes whose artwork is available count; the
+    video mode never takes part. Raises :class:`AvailabilityError` like the
+    other checks.
+    """
+
+    return available_modes(ggdb, [mode for mode in configured if mode in IMAGE_MODES])
+
+
+def next_rotation_mode(current, candidates):
+    """Return the image mode after ``current`` in the rotation, or ``None``.
+
+    The rotation follows the fixed order cross, slide, wall and wraps
+    around; only ``candidates`` count and ``current`` is never chosen
+    again. ``None`` means there is no other mode to switch to.
+    """
+
+    others = [mode for mode in IMAGE_MODES if mode in candidates and mode != current]
+    if not others:
+        return None
+    if current not in IMAGE_MODES:
+        return others[0]
+    start = IMAGE_MODES.index(current)
+    for step in range(1, len(IMAGE_MODES)):
+        mode = IMAGE_MODES[(start + step) % len(IMAGE_MODES)]
+        if mode in others:
+            return mode
+    return None  # pragma: no cover - others is never empty here
+
+
 def plan_start(ggdb, candidates, configured=None, chooser=choice):
     """Plan the start of an automatically selected screensaver mode.
 

@@ -53,6 +53,14 @@ msgctxt "#30072"
 msgid "The first 60 cross pictures follow each other without the artwork pause. Afterwards every picture stays on screen for the configured time again."
 msgstr ""
 
+msgctxt "#30073"
+msgid "Change the image mode after (minutes, 0 = never)"
+msgstr ""
+
+msgctxt "#30074"
+msgid "Minutes an image mode (cross, slide, wall) runs before the screensaver changes to the next enabled one. Videos do not take part. Not the time per picture, that is the setting above."
+msgstr ""
+
 msgctxt "#30065"
 msgid "Slide"
 msgstr ""
