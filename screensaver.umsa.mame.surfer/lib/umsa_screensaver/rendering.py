@@ -480,6 +480,10 @@ class RenderSession:
         saver = self.saver
         # leftovers of a previous session must not pile up
         saver.cleanup_temp_videos()
+        # a video mode entered by the timed mode switch starts with the
+        # screensaver's own empty playlist, not with the old videos
+        saver.playlist.clear()
+        saver._video_playlist_urls = []
         queued = 0
         while queued < 2 and saver.add_video_to_playlist():
             queued += 1
@@ -490,6 +494,7 @@ class RenderSession:
         # mute before the playback starts, so no sound gets through
         saver.mute_videos()
         saver.parent.player.play(saver.playlist)
+        saver.mark_video_start()
         return True
 
     def run(self):

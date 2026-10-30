@@ -24,6 +24,9 @@ from .constants import (
 # The modes that show artwork instead of a video
 IMAGE_MODES = (MODE_CROSS, MODE_SLIDE, MODE_WALL)
 
+# Order of the timed mode switch; the muted video mode joins it at the end
+ROTATION_ORDER = IMAGE_MODES + (MODE_VIDEOS,)
+
 # Reasons of a start plan
 REASON_OK = 'ok'
 REASON_NO_MODES = 'no_modes'
@@ -123,33 +126,35 @@ def image_fallback_modes(ggdb, configured):
     return available_modes(ggdb, others)
 
 
-def rotation_candidates(ggdb, configured):
-    """Return the image modes the timed mode switch may rotate through.
+def rotation_candidates(ggdb, configured, include_videos=False):
+    """Return the modes the timed mode switch may rotate through.
 
-    Only the configured image modes whose artwork is available count; the
-    video mode never takes part. Raises :class:`AvailabilityError` like the
-    other checks.
+    Only the configured modes whose artwork is available count. The video
+    mode takes part only with ``include_videos`` - the caller allows it for
+    muted videos while no music plays. Raises :class:`AvailabilityError`
+    like the other checks.
     """
 
-    return available_modes(ggdb, [mode for mode in configured if mode in IMAGE_MODES])
+    allowed = ROTATION_ORDER if include_videos else IMAGE_MODES
+    return available_modes(ggdb, [mode for mode in configured if mode in allowed])
 
 
 def next_rotation_mode(current, candidates):
-    """Return the image mode after ``current`` in the rotation, or ``None``.
+    """Return the mode after ``current`` in the rotation, or ``None``.
 
-    The rotation follows the fixed order cross, slide, wall and wraps
-    around; only ``candidates`` count and ``current`` is never chosen
+    The rotation follows the fixed order cross, slide, wall, videos and
+    wraps around; only ``candidates`` count and ``current`` is never chosen
     again. ``None`` means there is no other mode to switch to.
     """
 
-    others = [mode for mode in IMAGE_MODES if mode in candidates and mode != current]
+    others = [mode for mode in ROTATION_ORDER if mode in candidates and mode != current]
     if not others:
         return None
-    if current not in IMAGE_MODES:
+    if current not in ROTATION_ORDER:
         return others[0]
-    start = IMAGE_MODES.index(current)
-    for step in range(1, len(IMAGE_MODES)):
-        mode = IMAGE_MODES[(start + step) % len(IMAGE_MODES)]
+    start = ROTATION_ORDER.index(current)
+    for step in range(1, len(ROTATION_ORDER)):
+        mode = ROTATION_ORDER[(start + step) % len(ROTATION_ORDER)]
         if mode in others:
             return mode
     return None  # pragma: no cover - others is never empty here

@@ -22,6 +22,7 @@ IDEA switch mode after some time -> save time and beginning and check diff in lo
 """
 
 from os import path
+from time import monotonic
 
 import xbmc
 import xbmcaddon
@@ -176,6 +177,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.bad_image_list = list(image_validator.bad_image_list(PIL))
         # the timed mode switch only rotates an automatically started saver
         self.rotate_modes = False
+        # start of the current video mode (monotonic clock), for the switch
+        self._video_started = None
         # the Kodi mute of the silent videos (ssaver_video_mute)
         self._video_mute = video_mute.VideoMute(xbmc.executeJSONRPC, _log)
         # the transparent foreground window with the game and music info,
@@ -658,6 +661,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.art_types = None
         self.current_software_id = None
         self.opening = False
+        self._video_started = None
 
     def next_rotation_mode(self):
         """Return the image mode the timed mode switch continues with.
@@ -669,7 +673,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         configured = list(self.settings.get('type') or [])
         try:
             candidates = availability.rotation_candidates(
-                self.parent.umsa.ggdb, configured)
+                self.parent.umsa.ggdb, configured,
+                include_videos=self._videos_may_rotate())
         except availability.AvailabilityError as error:
             xbmc.log(
                 f"UMSA SSaver: mode switch check failed, keeping {self.running}: {error}",
@@ -678,12 +683,68 @@ class Saver(xbmcgui.WindowXMLDialog):
         mode = availability.next_rotation_mode(self.running, candidates)
         if mode is None:
             xbmc.log(
-                f"UMSA SSaver: no other image mode with artwork, keeping {self.running}",
+                f"UMSA SSaver: no other mode with artwork, keeping {self.running}",
                 xbmc.LOGINFO)
         return mode
 
-    def enter_image_mode(self, mode):
-        """Switch from the finished image mode to ``mode``.
+    def _videos_may_rotate(self):
+        """Return whether the video mode may join the timed mode switch.
+
+        Only muted videos rotate (``ssaver_video_mute``), and never while
+        Kodi music or a VGM track plays: a starting video would stop them.
+        """
+
+        if not self.settings.get('video_mute'):
+            return False
+        return not (self.parent.player.isPlayingAudio() or vgm_active())
+
+    def mark_video_start(self):
+        """Start the mode time of the video mode (playback was started)."""
+
+        self._video_started = monotonic()
+
+    def video_mode_expired(self):
+        """Return whether the muted video mode ran for its mode time.
+
+        Like the image modes, only an automatically started screensaver
+        rotates, and only muted videos leave the mode on time.
+        """
+
+        minutes = self.settings.get('mode_switch_minutes') or 0
+        if (minutes <= 0 or not self.rotate_modes or self._video_started is None
+                or not self.settings.get('video_mute')):
+            return False
+        return monotonic() - self._video_started >= minutes * 60
+
+    def leave_video_mode(self):
+        """Switch from the expired video mode to the next image mode.
+
+        Called between two videos (end of a playback), the safe point of
+        the video mode. The playback is stopped, the sound restored and the
+        extracted videos removed before the image mode starts. Returns
+        ``False`` when no image mode is available: the videos continue and
+        their mode time starts again.
+        """
+
+        next_mode = self.next_rotation_mode()
+        if next_mode is None or next_mode == MODE_VIDEOS:
+            self.mark_video_start()
+            return False
+        self.stop_video_playback()
+        self._playback_owned = False
+        self.restore_video_sound()
+        self.cleanup_temp_videos()
+        self._video_started = None
+        self.enter_next_mode(next_mode)
+        try:
+            self.run_render_sessions()
+        finally:
+            if self.running != MODE_VIDEOS or self.video_teardown:
+                self.finish_screensaver()
+        return True
+
+    def enter_next_mode(self, mode):
+        """Switch from the finished mode to ``mode`` (timed mode switch).
 
         The render session of the old mode has already cleaned up its
         pictures. The dynamic controls, the wall and the slide/background
@@ -715,7 +776,7 @@ class Saver(xbmcgui.WindowXMLDialog):
                 return False
             if session.next_mode is None or self.running == 'no':
                 return True
-            self.enter_image_mode(session.next_mode)
+            self.enter_next_mode(session.next_mode)
 
     def get_art_and_call_saver(self):
         """ Get artwork and call Screensaver """
@@ -932,6 +993,9 @@ class Player(xbmc.Player):
             # the extracted file of the video that ended is not needed anymore
             saver.release_playing_video()
             if saver.running == 'videos' and not saver.video_teardown:
+                # end of a video: the safe point of the timed mode switch
+                if saver.video_mode_expired() and saver.leave_video_mode():
+                    return
                 xbmc.log("UMSA SSaver Player: add video to playlist", xbmc.LOGINFO)
                 if not saver.add_video_to_playlist():
                     # the database holds no video anymore: leave the video mode
