@@ -17,8 +17,6 @@ modules next to them:
 - ``video_mute`` - silent start of the videos, restore of the Kodi sound
 - ``video_playlist`` - playlist items and the unique id metadata
 - ``wall_layout`` - wall geometry
-
-IDEA switch mode after some time -> save time and beginning and check diff in loop
 """
 
 from os import path
@@ -218,10 +216,27 @@ class Saver(xbmcgui.WindowXMLDialog):
         try:
             self._overlay.show()
             self._overlay_shown = True
+            self.apply_overlay_settings()
         except Exception as error:  # noqa: BLE001 - logged, the render loop reports the missing controls
             xbmc.log(
                 f"UMSA SSaver: could not show the overlay: {error}",
                 xbmc.LOGERROR)
+
+    def apply_overlay_settings(self):
+        """Hide the parts of the overlay the user switched off.
+
+        ``ssaver_info`` hides the game info (name, year/maker, machine and
+        left picture), the Core setting ``ssaver_musicinfo`` the Kodi music
+        line; the VGM info follows ``ssaver_musicinfo`` already, the
+        frontend does not publish it then. Both are on by default.
+        """
+
+        hidden = {
+            'GameInfo.Hidden': not self.settings.get('info', True),
+            'MusicInfo.Hidden': not self.settings.get('music_info', True),
+        }
+        for name, value in hidden.items():
+            self._overlay.setProperty(name, 'true' if value else 'false')
 
     def close_overlay(self):
         """Close the foreground overlay; repeated calls are safe."""
@@ -503,7 +518,6 @@ class Saver(xbmcgui.WindowXMLDialog):
             machine_pic = self.get_machine_pic(rand_vid)
             # get left pic
             # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
-            # TODO needs fetch info for snap from db for aspect ratio
             snapshot = rand_vid.get('left_pic')
             if not snapshot:
                 left_type = artwork_selector.left_picture_type(rand_vid)

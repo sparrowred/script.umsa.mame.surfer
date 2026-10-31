@@ -38,6 +38,7 @@ SCREEN_HEIGHT = 1080
 WINDOW_ID = 10000
 MODE_PROPERTY = "UMSA.Screensaver.Mode"
 RUNNING_PROPERTY = "UMSA.Screensaver.Running"
+# shared with plugin.program.umsa.mame.surfer: both depend on the identical name
 EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"
 
 # Screensaver modes

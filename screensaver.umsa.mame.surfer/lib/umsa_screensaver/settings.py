@@ -68,6 +68,7 @@ class ScreensaverSettings:
     video_mute: bool = False
     cross_prefill: bool = False
     mode_switch_minutes: int = 0
+    music_info: bool = True
     wall: WallSettings = WallSettings()
 
     @classmethod
@@ -107,6 +108,8 @@ class ScreensaverSettings:
             video_mute=addon.getSetting(SETTING_VIDEO_MUTE) == 'true',
             cross_prefill=addon.getSetting(SETTING_CROSS_PREFILL) == 'true',
             mode_switch_minutes=int(addon.getSetting(SETTING_MODE_SWITCH) or 0),
+            # ssaver_musicinfo of the Core settings: VGM info and Kodi music line
+            music_info=core_settings.musicinfo_enabled,
             wall=wall,
         )
 
@@ -114,8 +117,8 @@ class ScreensaverSettings:
         """Return the dictionary the Kodi window code expects.
 
         The result keeps the historical keys (``ar_norm``, ``ar_x``,
-        ``time``, ``info``, ``type``, ``wall``) plus ``video_mute``, ``cross_prefill`` and
-        ``mode_switch_minutes``;
+        ``time``, ``info``, ``type``, ``wall``) plus ``video_mute``, ``cross_prefill``,
+        ``mode_switch_minutes`` and ``music_info``;
         ``type`` is a mutable
         list because the monitor removes and re-appends ``videos`` while
         audio is playing.
@@ -130,6 +133,7 @@ class ScreensaverSettings:
             'video_mute': self.video_mute,
             'cross_prefill': self.cross_prefill,
             'mode_switch_minutes': self.mode_switch_minutes,
+            'music_info': self.music_info,
             'wall': self.wall.as_dict(),
         }
 

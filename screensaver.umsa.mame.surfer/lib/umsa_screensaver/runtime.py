@@ -13,12 +13,13 @@ from umsa_core_kodi import (
 
 from .arguments import decode_request
 from .availability import REASON_NO_VIDEOS, AvailabilityError, plan_request
+from .constants import (
+    EMULATOR_RUNNING_PROPERTY,
+    MODE_PROPERTY,
+    RUNNING_PROPERTY,
+    WINDOW_ID,
+)
 from .ui import Monitor
-
-_RUNNING_PROPERTY = "UMSA.Screensaver.Running"
-_MODE_PROPERTY = "UMSA.Screensaver.Mode"
-_EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"  # Shared with plugin.program.umsa.mame.surfer; both depend on identical name.
-_WINDOW_ID = 10000
 
 
 class ScreensaverRuntime:
@@ -81,12 +82,12 @@ class ScreensaverRuntime:
         self._run(request)
 
     def _run(self, request=None):
-        window = xbmcgui.Window(_WINDOW_ID)
-        if window.getProperty(_RUNNING_PROPERTY):
+        window = xbmcgui.Window(WINDOW_ID)
+        if window.getProperty(RUNNING_PROPERTY):
             xbmc.log("UMSA Screensaver: another screensaver instance is active", xbmc.LOGWARNING)
             return
         # Prevent screensaver from starting while an external emulator is running
-        if window.getProperty(_EMULATOR_RUNNING_PROPERTY) == "true":
+        if window.getProperty(EMULATOR_RUNNING_PROPERTY) == "true":
             xbmc.log("UMSA saver: emulator running, not starting", xbmc.LOGINFO)
             return
 
@@ -95,8 +96,8 @@ class ScreensaverRuntime:
         if manual:
             set_screensaver_manual(True)
 
-        window.setProperty(_RUNNING_PROPERTY, "true")
-        window.setProperty(_MODE_PROPERTY, "starting")
+        window.setProperty(RUNNING_PROPERTY, "true")
+        window.setProperty(MODE_PROPERTY, "starting")
         try:
             set_log(lambda *args, level="debug": xbmc.log(
                 " ".join(map(str, args)),
@@ -146,8 +147,8 @@ class ScreensaverRuntime:
                 if self.ggdb is not None:
                     self.ggdb.close()
             finally:
-                window.clearProperty(_MODE_PROPERTY)
-                window.clearProperty(_RUNNING_PROPERTY)
+                window.clearProperty(MODE_PROPERTY)
+                window.clearProperty(RUNNING_PROPERTY)
 
     def _start_request(self, request, window, monitor):
         """Start the explicitly requested screensaver mode.
@@ -185,5 +186,5 @@ class ScreensaverRuntime:
         # mode: a fallback mode uses its own artwork types
         saver.running = plan.mode
         saver.art_types = request["art_types"] if plan.mode == request["mode"] else None
-        window.setProperty(_MODE_PROPERTY, saver.running)
+        window.setProperty(MODE_PROPERTY, saver.running)
         saver.doModal()
