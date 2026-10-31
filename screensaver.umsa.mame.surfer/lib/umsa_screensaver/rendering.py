@@ -244,7 +244,8 @@ def wait_for_duration(player, kodi, timeout=VIDEO_STARTUP_TIMEOUT):
     while True:
         try:
             total_time = int(player.getTotalTime())
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RuntimeError):
+            # RuntimeError: Kodi is not playing (anymore)
             total_time = 0
         if total_time > 0:
             return total_time
@@ -276,13 +277,25 @@ def run_playback_labels(player, kodi):
     of the video. A video that never reports its duration leaves the
     screensaver untouched: the labels stay hidden and the label loop is
     not started.
+
+    Kodi delivers the callback of a newer video while an older label loop
+    sleeps (quick "next video"); a loop whose video is no longer the
+    current playback instance ends at once and leaves the labels to the
+    newer one.
     """
 
     saver = player.parent.saver
+    instance = getattr(player, '_playback_instance', None)
+
+    def superseded():
+        return getattr(player, '_playback_instance', None) != instance
+
     # clear video label
     saver.set_label_fade('1')
     # wait until the video starts, bounded and interruptible
     total_time = wait_for_duration(player, kodi)
+    if superseded():
+        return
     if total_time <= 0:
         # no valid duration: leave the label state consistent and stop
         player.runp = False
@@ -301,19 +314,21 @@ def run_playback_labels(player, kodi):
     count_seconds = 0
     kodi.log(f"UMSA SSaver Player: time: {total_time}, start {timecount1}, end {timecount2}", kodi.LOGINFO)
     # set labels
-    saver.overlay_control(INFO_LABEL).setLabel(
-        player.getVideoInfoTag().getTitle()
-    )
-    saver.overlay_control(INFO_DETAIL).setLabel(
-        player.getVideoInfoTag().getGenre()
-    )
-    saver.overlay_control(PIC_MACHINE).setImage(
-        player.getVideoInfoTag().getTrailer()
-    )
-    kodi.log(f"UMSA SSaver Player: director {player.getVideoInfoTag().getDirector()}", kodi.LOGINFO)
-    saver.show_left_art(player.getVideoInfoTag().getDirector(), left_art.ARTWORK)
+    try:
+        tag = player.getVideoInfoTag()
+        saver.overlay_control(INFO_LABEL).setLabel(tag.getTitle())
+        saver.overlay_control(INFO_DETAIL).setLabel(tag.getGenre())
+        saver.overlay_control(PIC_MACHINE).setImage(tag.getTrailer())
+        kodi.log(f"UMSA SSaver Player: director {tag.getDirector()}", kodi.LOGINFO)
+        saver.show_left_art(tag.getDirector(), left_art.ARTWORK)
+    except RuntimeError:
+        # the playback ended meanwhile: nothing to label
+        player.runp = False
+        return
 
     while player.runp:
+        if superseded():
+            return
         if player.isPlayingVideo():
             if count_seconds == timecount1:
                 saver.set_label_fade('0')
@@ -364,10 +379,10 @@ class RenderSession:
 
         saver = self.saver
         if saver.running == 'slide':
-            saver.getControl(IMAGE[0]).setImage('blank.png')
-            saver.getControl(IMAGE[1]).setImage('blank.png')
-            saver.getControl(BACKG[0]).setImage('blank.png')
-            saver.getControl(BACKG[1]).setImage('blank.png')
+            saver.getControl(IMAGE[0]).setImage('')
+            saver.getControl(IMAGE[1]).setImage('')
+            saver.getControl(BACKG[0]).setImage('')
+            saver.getControl(BACKG[1]).setImage('')
         elif saver.running == 'cross':
             ctx.piclist.reverse()
             for _variant, control in ctx.piclist:
@@ -376,8 +391,8 @@ class RenderSession:
             for slot in saver.wall.get('slots', []):
                 for control in slot.values():
                     saver.removeControl(control)
-            saver.getControl(BACKG[0]).setImage('blank.png')
-            saver.getControl(BACKG[1]).setImage('blank.png')
+            saver.getControl(BACKG[0]).setImage('')
+            saver.getControl(BACKG[1]).setImage('')
 
     def _stop_saver(self):
         """Stop the screensaver through the established lifecycle path."""

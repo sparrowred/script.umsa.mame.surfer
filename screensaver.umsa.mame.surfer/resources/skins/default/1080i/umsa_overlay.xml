@@ -69,7 +69,7 @@
                 <font>font10</font>
             </control>
             <control type="label" id="4101">
-                <description>Kodi music: Song – Artist (mm:ss); empty parts drop their separator</description>
+                <description>Kodi music: Song – Artist (-mm:ss remaining); empty parts drop their separator</description>
                 <posx>60</posx>
                 <posy>15</posy>
                 <width>1500</width>
@@ -77,11 +77,11 @@
                 <textcolor>FFB2D4F5</textcolor>
                 <shadowcolor>ff000000</shadowcolor>
                 <scroll>true</scroll>
-                <label>$INFO[MusicPlayer.Title]$INFO[MusicPlayer.Artist, – ]$INFO[Player.Time(mm:ss), (,)]</label>
+                <label>$INFO[MusicPlayer.Title]$INFO[MusicPlayer.Artist, – ]$INFO[Player.TimeRemaining(mm:ss), (-,)]</label>
                 <font>font10</font>
             </control>
             <control type="label" id="4102">
-                <description>Kodi music without title: Artist (mm:ss)</description>
+                <description>Kodi music without title: Artist (-mm:ss remaining)</description>
                 <posx>60</posx>
                 <posy>15</posy>
                 <width>1500</width>
@@ -89,7 +89,7 @@
                 <textcolor>FFB2D4F5</textcolor>
                 <shadowcolor>ff000000</shadowcolor>
                 <scroll>true</scroll>
-                <label>$INFO[MusicPlayer.Artist,, ]$INFO[Player.Time(mm:ss),(,)]</label>
+                <label>$INFO[MusicPlayer.Artist,, ]$INFO[Player.TimeRemaining(mm:ss),(-,)]</label>
                 <font>font10</font>
             </control>
         </control>

@@ -54,6 +54,7 @@ from .constants import (
     IMAGE,
     INFO_DETAIL,
     INFO_LABEL,
+    KODI_SCREENSAVER_STOP_ALARM,
     LEFT_ART,
     MODE_PROPERTY,
     MODE_VIDEOS,
@@ -177,6 +178,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.rotate_modes = False
         # start of the current video mode (monotonic clock), for the switch
         self._video_started = None
+        # the mode that follows the videos once the last queued one ended
+        self._pending_mode = None
         # the Kodi mute of the silent videos (ssaver_video_mute)
         self._video_mute = video_mute.VideoMute(xbmc.executeJSONRPC, _log)
         # the transparent foreground window with the game and music info,
@@ -676,6 +679,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.current_software_id = None
         self.opening = False
         self._video_started = None
+        self._pending_mode = None
 
     def next_rotation_mode(self):
         """Return the image mode the timed mode switch continues with.
@@ -730,20 +734,46 @@ class Saver(xbmcgui.WindowXMLDialog):
             return False
         return monotonic() - self._video_started >= minutes * 60
 
-    def leave_video_mode(self):
-        """Switch from the expired video mode to the next image mode.
+    def start_video_drain(self):
+        """Let the video mode run out when its mode time is up.
 
-        Called between two videos (end of a playback), the safe point of
-        the video mode. The playback is stopped, the sound restored and the
-        extracted videos removed before the image mode starts. Returns
-        ``False`` when no image mode is available: the videos continue and
-        their mode time starts again.
+        Called at the end of a video. No further video is queued: the one
+        Kodi just started is the last of the playlist. When it ends, Kodi
+        ends the playlist by itself and resets its playlist player - only
+        then does the next fullscreen start work again. Stopping the next
+        video right after Kodi started it would leave that reset out, and
+        every later video would play in the small video window of the skin.
+
+        Returns ``False`` when no other mode is available: the videos
+        continue and their mode time starts again.
         """
 
         next_mode = self.next_rotation_mode()
         if next_mode is None or next_mode == MODE_VIDEOS:
             self.mark_video_start()
             return False
+        self._pending_mode = next_mode
+        xbmc.log(
+            f"UMSA SSaver: video time is up, {next_mode} follows after the last queued video",
+            xbmc.LOGINFO)
+        return True
+
+    def video_drain_done(self):
+        """Return whether the videos ran out and the next mode is waiting."""
+
+        return self._pending_mode is not None
+
+    def leave_video_mode(self):
+        """Switch from the run-out video mode to the waiting image mode.
+
+        Called at the end of the last queued video: the playlist has ended,
+        Kodi has reset its playlist player. A video the user started with
+        "next" is still stopped. The sound is restored and the extracted
+        videos removed before the image mode starts.
+        """
+
+        next_mode = self._pending_mode
+        self._pending_mode = None
         self.stop_video_playback()
         self._playback_owned = False
         self.restore_video_sound()
@@ -755,7 +785,6 @@ class Saver(xbmcgui.WindowXMLDialog):
         finally:
             if self.running != MODE_VIDEOS or self.video_teardown:
                 self.finish_screensaver()
-        return True
 
     def enter_next_mode(self, mode):
         """Switch from the finished mode to ``mode`` (timed mode switch).
@@ -1008,7 +1037,12 @@ class Player(xbmc.Player):
             saver.release_playing_video()
             if saver.running == 'videos' and not saver.video_teardown:
                 # end of a video: the safe point of the timed mode switch
-                if saver.video_mode_expired() and saver.leave_video_mode():
+                if saver.video_drain_done():
+                    # the last queued video ended with the playlist
+                    saver.leave_video_mode()
+                    return
+                if saver.video_mode_expired() and saver.start_video_drain():
+                    # queue nothing: the video Kodi just started is the last
                     return
                 xbmc.log("UMSA SSaver Player: add video to playlist", xbmc.LOGINFO)
                 if not saver.add_video_to_playlist():
@@ -1101,6 +1135,20 @@ class Monitor(xbmc.Monitor):
             self.saver.doModal()
         xbmc.log("UMSA SSaver Monitor: onScreensaverActivated routine stop", xbmc.LOGINFO)
 
+    def keep_script_running(self):
+        """Cancel Kodi's stop of the woken screensaver script.
+
+        When Kodi wakes a Python screensaver - a starting video counts as
+        activity - it schedules ``StopScript`` 15 s later. The saver stays
+        active on purpose in the video mode and for VGM commands; the
+        forced stop then hit a running playback and Kodi hung (only a
+        ``kill -9`` helped). The alarm is started before Kodi reports the
+        deactivation, so it can be cancelled here.
+        """
+
+        xbmc.log("UMSA SSaver Monitor: cancelling Kodi's screensaver script stop", xbmc.LOGDEBUG)
+        xbmc.executebuiltin(f'CancelAlarm({KODI_SCREENSAVER_STOP_ALARM},true)')
+
     def onScreensaverDeactivated(self):
         """Clear running argument, but let video run."""
 
@@ -1115,11 +1163,14 @@ class Monitor(xbmc.Monitor):
                 xbmc.log("UMSA SSaver Monitor: self.umsa has no emu_dialog ERROR", xbmc.LOGERROR)
         elif self.saver.running == 'videos':
             xbmc.log("UMSA SSaver Monitor: video screensaver stays active", xbmc.LOGINFO)
+            self.keep_script_running()
         elif self.vgmaction:
             xbmc.log("UMSA SSaver Monitor: only vgm command send, screensaver stays active", xbmc.LOGDEBUG)
             self.vgmaction = False
+            self.keep_script_running()
         elif vgm_active():
             xbmc.log("UMSA SSaver Monitor: dont stop as random vgm plays and it could be a command", xbmc.LOGDEBUG)
+            self.keep_script_running()
         else:
             xbmc.log("UMSA SSaver Monitor: no vgm playing, stopping screensaver", xbmc.LOGDEBUG)
             self.reallyDeactivateScreensaver()

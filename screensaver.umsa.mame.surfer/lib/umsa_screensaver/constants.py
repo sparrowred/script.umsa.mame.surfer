@@ -41,6 +41,10 @@ RUNNING_PROPERTY = "UMSA.Screensaver.Running"
 # shared with plugin.program.umsa.mame.surfer: both depend on the identical name
 EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"
 
+# Kodi stops a woken Python screensaver 15 s later through this alarm
+# (SCRIPT_ALARM / SCRIPT_TIMEOUT in Kodi's ApplicationPowerHandling.cpp)
+KODI_SCREENSAVER_STOP_ALARM = "sssssscreensaver"
+
 # Screensaver modes
 MODE_NONE = 'no'
 MODE_VIDEOS = 'videos'
