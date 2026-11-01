@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from re import findall, search
 import time
+from re import findall, search
 
 
 def split_gamename(complete_name):

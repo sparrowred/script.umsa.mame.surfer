@@ -147,12 +147,10 @@ def gamelist_click(gui):
             gui.marp_replayer(dl_file=list_id, set_name=what)
         # vgm
         elif what == "vgm":
-            select = []
             vgm_zipfile = gui.emulation.find_roms('vgmplay', list_id)
             xbmc.log(f"UMSA gui: get vgmfile - {vgm_zipfile}")
             vgm_tracklist = zipfile.ZipFile(vgm_zipfile).namelist()
-            for vgm in vgm_tracklist:
-                select.append(vgm)
+            select = vgm_tracklist.copy()
             if select:
                 which_track = gui.dialog.select('Select VGM track:', select)
                 if which_track > -1:

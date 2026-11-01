@@ -38,7 +38,7 @@ class LaunchCtx:
     sleep: Callable[[int], None] = lambda ms: None
 
 
-def launch_emulator(ctx: LaunchCtx) -> None:
+def _launch_emulator(ctx: LaunchCtx) -> None:
     """Orchestrate emulator launch (non-retroplayer paths).
 
     Preserves existing behavior and error/cleanup semantics.
@@ -358,3 +358,14 @@ def launch_emulator(ctx: LaunchCtx) -> None:
         log(
             f'UMSA gui: could not show final emulator notification: {error}',
             level='warning')
+
+
+def launch_emulator(ctx: LaunchCtx) -> None:
+    """Run the launch workflow and always release launch-owned symlinks."""
+
+    try:
+        _launch_emulator(ctx)
+    finally:
+        cleanup = getattr(ctx.emulation, 'after_run', None)
+        if callable(cleanup):
+            cleanup()

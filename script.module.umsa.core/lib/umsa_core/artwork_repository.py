@@ -323,7 +323,8 @@ class ArtworkRepository:
         scan_unit: str,
         db_cursor: sqlite3.Cursor | None = None,
     ) -> None:
-        """Mark a scan unit as done."""
+        """Mark a scan unit as done when no artwork replacement is required."""
+
         self._write_status(source, root_key, scan_unit, "done", db_cursor=db_cursor)
 
     def delete_scan_unit(self, source: str, root_key: str, scan_unit: str) -> int:

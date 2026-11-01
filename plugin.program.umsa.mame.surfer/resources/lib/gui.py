@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """UI Module for UMSA Kodi Add-on.
 
 This module is the Kodi adapter of the frontend: it owns the ``UMSA`` window

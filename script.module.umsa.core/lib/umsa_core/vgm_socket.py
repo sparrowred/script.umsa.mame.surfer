@@ -44,14 +44,6 @@ def _parse_vgmplay_port(value: str | None) -> int | None:
     return port
 
 
-def _get_vgmplay_port(value: str | None) -> int:
-    """Return a valid VGMPlay port, using default if unset or invalid."""
-    port = _parse_vgmplay_port(value)
-    if port is None:
-        return VGMPLAY_DEFAULT_PORT
-    return port
-
-
 def parse_lua_log_line(line):
     """Parse one Lua log frame, pure function, socket independent.
 

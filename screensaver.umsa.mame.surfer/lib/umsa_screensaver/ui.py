@@ -970,18 +970,6 @@ class Player(xbmc.Player):
         # once finalization has run.
         self._playback_finalized = set()
 
-    def _av_instance_token(self):
-        """Return an identity for the current playback instance, or ``None``.
-
-        The token combines the playback instance counter (bumped by
-        ``onPlayBackStarted``), the playlist position and the playing file,
-        so duplicate ``onAVStarted`` callbacks for one playback instance
-        collapse to a single record while a later playback of the same set
-        (a new instance / playlist position) is recorded again.
-        """
-
-        return history.playback_token(self, self._playback_instance)
-
     def get_playing_file(self):
         """Return the file that is playing, or ``None``."""
 

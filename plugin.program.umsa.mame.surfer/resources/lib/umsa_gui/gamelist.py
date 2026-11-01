@@ -157,8 +157,6 @@ def gamelist_move(gui):
 
     # check label if we have games in list
     g_label = gui.getControl(GAME_LIST_LABEL).getLabel()
-    list_id = gui.getControl(GAME_LIST_LABEL_ID).getLabel()
-    # TODO use game_list_label_id
     if (g_label in 'Machines for'
             or g_label in 'Choose Media'
             or g_label in 'Emulators'

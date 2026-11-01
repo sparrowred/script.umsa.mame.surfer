@@ -172,8 +172,6 @@ def last_saver(ctx):
     return results, pos, gl_label, gl_options
 
 def series(ctx):
-    results, pos = [], 0
-
     results = ctx.db.get_series(ctx.last[ctx.lastptr])
     if results and ctx.popup_gamelist:
         ctx.popup_gamelist(results, 'Series')
@@ -182,8 +180,6 @@ def series(ctx):
 
 
 def recommended(ctx):
-    results, pos = [], 0
-
     if ctx.show_rec:
         ctx.show_rec()
     #gui.getControl(GAME_LIST_TEXT).setText('')

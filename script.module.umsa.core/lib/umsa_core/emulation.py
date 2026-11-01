@@ -1,6 +1,7 @@
 """Module for general emulation handling."""
 
 import os
+import socket  # noqa: F401
 import subprocess
 from platform import platform
 from threading import Thread
@@ -13,38 +14,36 @@ from umsa_core import (
     ProcessStatus,
     log,
 )
+
+# Compatibility re-exports for existing code that imports from emulation.
 from umsa_core.chd_extractor import (
+    CHDExtractionCancelled,  # noqa: F401
+    CHDExtractionError,  # noqa: F401
     extract_chd,
 )
 from umsa_core.launch_preparer import LaunchPreparer
 from umsa_core.rom_extractor import extract_rom
-from umsa_core.rom_finder import find_nonmame_roms, find_roms
-from umsa_core.vgm_player import VgmPlayer
-
-# Compatibility re-exports for existing code that imports from emulation
-from umsa_core.chd_extractor import (
-    CHDExtractionCancelled,
-    CHDExtractionError,
+from umsa_core.rom_finder import (
+    NONMAME,  # noqa: F401
+    find_nonmame_roms,
+    find_roms,
 )
-from umsa_core.rom_finder import NONMAME
-import socket
-
 from umsa_core.vgm_header import (
-    calculate_playback_plan,
-    parse_vgm_header,
+    calculate_playback_plan,  # noqa: F401
+    parse_vgm_header,  # noqa: F401
 )
+from umsa_core.vgm_player import VgmPlayer
 from umsa_core.vgm_socket import (
-    LUA_LOG_FALLBACK_LEVEL,
-    LUA_LOG_LEVELS,
-    LUA_LOG_MAX_LINE_BYTES,
-    LUA_LOG_MSG_PREFIX,
-    LUA_LOG_TAG,
-    LUA_READ_POLL_TIMEOUT,
-    LUA_READER_JOIN_TIMEOUT,
-    VGMPLAY_DEFAULT_PORT,
+    LUA_LOG_FALLBACK_LEVEL,  # noqa: F401
+    LUA_LOG_LEVELS,  # noqa: F401
+    LUA_LOG_MAX_LINE_BYTES,  # noqa: F401
+    LUA_LOG_MSG_PREFIX,  # noqa: F401
+    LUA_LOG_TAG,  # noqa: F401
+    LUA_READ_POLL_TIMEOUT,  # noqa: F401
+    LUA_READER_JOIN_TIMEOUT,  # noqa: F401
+    VGMPLAY_DEFAULT_PORT,  # noqa: F401
     VgmSocketServer,
-    _parse_vgmplay_port,
-    parse_lua_log_line,
+    parse_lua_log_line,  # noqa: F401
 )
 
 PLATFORM = platform()
@@ -250,12 +249,6 @@ class Emulation:
         return self.mame_ini.get('snapshot_directory', '')
 
     @property
-    def input_directory(self):
-        """Absolute MAME input directory ('' when unset)."""
-
-        return self.mame_ini.get('input_directory', '')
-
-    @property
     def rom_paths(self):
         """Absolute MAME rom path list ([] when unset)."""
 
@@ -398,10 +391,11 @@ class Emulation:
     def after_run(self):
         """Clean up after emulation run."""
 
-        if self.emurun.get('symlink'):
-            # TODO try except
-            os.unlink(self.emurun['symlink'])
-        self.emurun = {}
+        emurun = self.emurun
+        try:
+            self.launch_preparer.cleanup_symlinks(emurun)
+        finally:
+            self.emurun = {}
 
     def terminate(self):
         """Terminate the emulator process."""

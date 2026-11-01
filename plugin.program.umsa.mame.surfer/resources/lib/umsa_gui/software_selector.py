@@ -31,13 +31,10 @@ def fill_set_list(gui, pos):
 
     gui.getControl(SET_LIST).reset()
     length = len(gui.info[pos])
-    count = 0
-
     set_list_items = []
-    for i in gui.info[pos]:
+    for count, i in enumerate(gui.info[pos], start=1):
         gamename, gamedetail = split_gamename(i['gamename'])
 
-        count += 1
         label = ""
         list_item = xbmcgui.ListItem()
 
@@ -124,15 +121,13 @@ def select_software(gui, software_id):
     gui.getControl(SET_LIST).selectItem(pos_set)
 
     # fill MACHINE_WRAPLIST
-    count = 0
     list_items = []
-    for i in gui.info:
+    for count, i in enumerate(gui.info):
 
         # check if we are at selected machine, to use the correct selected set
         set_no = 0
         if pos_machine == count:
             set_no = pos_set
-        count += 1
 
         # set picture
         list_item = xbmcgui.ListItem()

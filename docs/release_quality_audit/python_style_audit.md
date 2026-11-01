@@ -18,6 +18,18 @@ Ruff reports **0 `UP031` and 0 `UP030`** across the three production roots
 at `41a415b`. The screensaver add-on, `gamelist_strategies.py` and
 `database.py` are clean.
 
+### Cleanup follow-up (2026-11-01; HEAD `41c0124`)
+
+The broader cleanup removed the remaining non-exception Ruff findings,
+including an unused `DTZ005` suppression. A full-repository `ruff check .`
+now reports **122 `BLE001` findings and no other findings**. Those remaining
+broad catches are existing error boundaries around Kodi/optional-plugin
+callbacks, database rollback and cleanup, scan/import isolation, and VGM
+socket/player operations. Narrowing them to a short list of built-in exception
+types could let runtime or extension exceptions escape these boundaries or
+skip required cleanup, so they were retained rather than suppressed or
+changed without a behavioral guarantee.
+
 ### Historical counts (superseded)
 
 The 2026-10-23 audit at `4186b5f` listed 16 `UP031` (including six

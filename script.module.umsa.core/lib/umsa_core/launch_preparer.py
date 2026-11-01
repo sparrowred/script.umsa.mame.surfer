@@ -1,15 +1,144 @@
 """Emulator-specific launch preparation."""
 
 import os
+import stat
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 from platform import platform
+from threading import RLock
 
 from umsa_core import log
 from umsa_core.rom_finder import NONMAME
 from umsa_core.support import marp_download
 
 PLATFORM = platform()
+
+_SYMLINK_LOCK = RLock()
+
+
+@dataclass
+class _ActiveSymlink:
+    target: str
+    references: int
+    device: int
+    inode: int
+
+
+_ACTIVE_SYMLINKS: dict[str, _ActiveSymlink] = {}
+
+
+def _is_within(path: str, root: str) -> bool:
+    """Return whether path is equal to or nested under root."""
+
+    try:
+        return os.path.commonpath((path, root)) == root
+    except ValueError:
+        return False
+
+
+def _link_matches(path: str, target: str, active: _ActiveSymlink) -> bool:
+    """Check that a registered link still identifies the file we created."""
+
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return (
+        stat.S_ISLNK(info.st_mode)
+        and info.st_dev == active.device
+        and info.st_ino == active.inode
+        and os.path.realpath(path) == target
+    )
+
+
+def _create_or_reuse_symlink(
+    emurun: dict,
+    link_path: str,
+    target_path: str,
+    *,
+    target_is_directory: bool,
+) -> str:
+    """Create a symlink, or reuse an identical one without claiming ownership."""
+
+    link_path = os.path.abspath(link_path)
+    target_path = os.path.realpath(target_path)
+    owned_links = emurun.setdefault("_owned_symlinks", [])
+    if not isinstance(owned_links, list):
+        raise TypeError("emurun['_owned_symlinks'] must be a list")
+
+    with _SYMLINK_LOCK:
+        active = _ACTIVE_SYMLINKS.get(link_path)
+        if active is not None:
+            if active.target != target_path or not _link_matches(
+                link_path, target_path, active
+            ):
+                raise FileExistsError(
+                    f"refusing to reuse changed symlink path: {link_path}"
+                )
+            active.references += 1
+            owned_links.append(link_path)
+            return link_path
+
+        if os.path.lexists(link_path):
+            if (
+                os.path.islink(link_path)
+                and os.path.exists(link_path)
+                and os.path.realpath(link_path) == target_path
+                and os.path.isdir(link_path) == target_is_directory
+            ):
+                return link_path
+            raise FileExistsError(
+                f"refusing to replace existing path: {link_path}"
+            )
+
+        os.symlink(target_path, link_path, target_is_directory=target_is_directory)
+        info = os.lstat(link_path)
+        _ACTIVE_SYMLINKS[link_path] = _ActiveSymlink(
+            target=target_path,
+            references=1,
+            device=info.st_dev,
+            inode=info.st_ino,
+        )
+        owned_links.append(link_path)
+    return link_path
+
+
+def _release_owned_symlinks(emurun: dict) -> None:
+    """Release links created for this run, preserving replaced or shared links."""
+
+    first_error = None
+    for link_path in reversed(emurun.pop("_owned_symlinks", [])):
+        with _SYMLINK_LOCK:
+            active = _ACTIVE_SYMLINKS.get(link_path)
+            if active is None:
+                continue
+            active.references -= 1
+            if active.references:
+                continue
+            del _ACTIVE_SYMLINKS[link_path]
+            if not _link_matches(link_path, active.target, active):
+                log(
+                    f"UMSA Emu: preserving changed symlink during cleanup: "
+                    f"{link_path}",
+                    level="warning",
+                )
+                continue
+            try:
+                os.unlink(link_path)
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                log(
+                    f"UMSA Emu: could not remove temporary symlink "
+                    f"{link_path}: {error}",
+                    level="error",
+                )
+                if first_error is None:
+                    first_error = error
+    if first_error is not None:
+        raise first_error
 
 
 def update_dialog(dialog, percent, msg):
@@ -96,13 +225,21 @@ class LaunchPreparer:
         """
         err = ''
         params = []
+        if emurun.get('chds') and emurun['chds'][0] and 'extractcd' not in emurun:
+            self._prepare_chd_directory_symlink(emurun)
         # dreamcast
         if emurun['swl_name'] == 'dc' and emurun['chds']:
             # make symlink in tmp as spaces and brackets are not nice
-            if 'Linux' in PLATFORM:
-                emurun['symlink'] = os.path.join(
+            if 'Linux' in PLATFORM and 'extractcd' not in emurun:
+                link_path = os.path.join(
                     emurun['folder'], emurun['set_name'])
-                os.symlink(emurun['chds'][0], emurun['symlink'])
+                os.makedirs(emurun['folder'], exist_ok=True)
+                emurun['symlink'] = _create_or_reuse_symlink(
+                    emurun,
+                    link_path,
+                    emurun['chds'][0],
+                    target_is_directory=False,
+                )
                 image = emurun['symlink']
             else:
                 image = emurun['chds'][0]
@@ -169,13 +306,74 @@ class LaunchPreparer:
         emurun['args'] = params
 
     def flycast(self, emurun):
-        """Create symlink for Naomi GD-ROMs.
+        """Expose an external, unextracted CHD directory in the ROM layout."""
 
-        TODO check if we have mame chds as disks and if found: only use dir and symlink
-        to path where zip is found. if no disks: use zip name and check for dir with name
-        in rompath and if not same path: symlink
-        """
-        emurun['symlink'] = ""
+        if emurun.get('chds') and emurun['chds'][0]:
+            self._prepare_chd_directory_symlink(emurun)
+
+    def _prepare_chd_directory_symlink(self, emurun):
+        """Link an external CHD directory at the standard ROM lookup path."""
+
+        if 'extractcd' in emurun:
+            return None
+        chds = emurun.get('chds') or []
+        if not chds or not chds[0]:
+            return None
+
+        chd_file = Path(chds[0]).resolve(strict=True)
+        if not chd_file.is_file():
+            raise FileNotFoundError(f"CHD file does not exist: {chd_file}")
+        source_dir = str(chd_file.parent)
+
+        rom_paths = self.mame_ini.get('rompath', [])
+        if isinstance(rom_paths, str):
+            rom_paths = [rom_paths]
+        rom_roots = [str(Path(path).resolve()) for path in rom_paths if path]
+        if not rom_roots:
+            return None
+
+        rom_root = rom_roots[0]
+        for zip_path in emurun.get('zips') or []:
+            resolved_zip = str(Path(zip_path).resolve())
+            matching_root = next(
+                (root for root in rom_roots if _is_within(resolved_zip, root)),
+                None,
+            )
+            if matching_root is not None:
+                rom_root = matching_root
+                break
+
+        if not os.path.isdir(rom_root):
+            raise FileNotFoundError(f"ROM directory does not exist: {rom_root}")
+        if _is_within(source_dir, rom_root):
+            return None
+
+        swl_name = emurun['swl_name']
+        set_name = emurun['set_name']
+        if (
+            not swl_name
+            or not set_name
+            or os.path.basename(swl_name) != swl_name
+            or os.path.basename(set_name) != set_name
+            or swl_name in ('.', '..')
+            or set_name in ('.', '..')
+        ):
+            raise ValueError("software-list and set names must be path components")
+
+        link_path = os.path.join(rom_root, swl_name, set_name)
+        os.makedirs(os.path.dirname(link_path), exist_ok=True)
+        emurun['chd_directory_symlink'] = _create_or_reuse_symlink(
+            emurun,
+            link_path,
+            source_dir,
+            target_is_directory=True,
+        )
+        return emurun['chd_directory_symlink']
+
+    def cleanup_symlinks(self, emurun):
+        """Remove only symlinks owned by this launch operation."""
+
+        _release_owned_symlinks(emurun)
 
     def other_emulator(self, emurun, emu_infos, dialog=None, sleep=None):
         """Prepare run for other emulators."""

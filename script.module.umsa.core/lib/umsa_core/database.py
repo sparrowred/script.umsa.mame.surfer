@@ -33,7 +33,6 @@ TODO
 import os
 import sqlite3  # connect, Row, OperationalError
 import time
-from contextlib import contextmanager
 from urllib.request import pathname2url
 
 from .artwork import resolve_artwork_path
@@ -43,6 +42,7 @@ from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .data_paths import CoreDataPaths
 from .emulator_repository import EmulatorRepository
+from .game_labels import make_time_nice, split_gamename  # noqa: F401
 from .game_repository import GameRepository
 from .gamelist_filter import GamelistFilter
 from .gamelist_filter import category_query as _category_query
@@ -60,14 +60,11 @@ from .history_import import retry_import as _retry_import
 from .history_import import run_legacy_import as _run_legacy_import
 from .history_repository import HistoryRepository
 from .logging import log
-from .umsa_db_download import download_and_update_umsa_db
-from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
+from .scan_progress import _scan_state_ownership, run_scan_with_progress  # noqa: F401
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
 from .status_repository import StatusRepository
-
-from .scan_progress import _scan_state_ownership, run_scan_with_progress  # noqa: F401
-from .game_labels import make_time_nice, split_gamename  # noqa: F401
+from .umsa_db_download import download_and_update_umsa_db  # noqa: F401 - public import used by the GUI adapter
 
 
 def _core_data_paths(db_path):
@@ -1659,16 +1656,12 @@ class DBMod:
         latest_set_id = self.get_latest_by_software(software_id)
         # find latest in return_list
         if latest_set_id:
-            count1 = 0
-            for i in return_list:
-                count2 = 0
-                for j in i:
+            for count1, i in enumerate(return_list):
+                for count2, j in enumerate(i):
                     if j['id'] == latest_set_id:
                         pos_machine = count1
                         pos_set = count2
                         break
-                    count2 += 1
-                count1 += 1
         all_dat = self.get_dat_for_sets(set_ids)
         all_art = self.get_artwork_for_sets(set_ids)
         time2 = time.time()

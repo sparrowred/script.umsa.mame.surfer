@@ -280,7 +280,7 @@ class HistoryRepository:
         )
         # Local (advisory) wall-clock time, not UTC: the column is declared as a
         # timezone-naive DATETIME and displayed_at is never used for ordering.
-        displayed_at = datetime.now().strftime("%Y-%m-%d %H:%M")  # noqa: DTZ005
+        displayed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         def operation(cursor: sqlite3.Cursor) -> None:
             # Move the set to the newest position: the old row keeps its

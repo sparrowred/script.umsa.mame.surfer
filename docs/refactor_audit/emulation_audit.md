@@ -62,7 +62,8 @@ UMSA.run_emulator(emu_infos)
     │   ├─ If mame → refresh local snaps + show_artwork('set')
     │   └─ notify_final(notif, emu_name, screensaver_mode)
     │
-    └─ Cleanup: Emulation.after_run() (symlink removal)
+    └─ Cleanup: emulator_launcher finally → Emulation.after_run()
+                 (release only launch-owned symlinks)
 ```
 
 ---
@@ -140,9 +141,29 @@ def prepare_mame_run(self, ggdb, actset, dialog=None):
 | `prepare_exodos_run` | eXoDOS | `find_nonmame_roms('shell'|'alt')` → sets `emurun['args']=[]`, `emulation_start=2` (fallback/terminal) |
 | `prepare_marp_run` | MARP replay | `marp_download(inp_url, input_dir)` → args = `[set_name, "-playback", inp_file, "-exit_after_playback"]` |
 | `other_emulator` | All others | Sets `folder`, `emu_exe`, `working_dir`, `emulation_start`; calls `find_nonmame_roms()` or `find_roms()`; if not zip mode: `extract_rom()` + `extract_chd()`; special cases: `demul()`, `fsuae()`, `flycast()` |
-| `demul` | Demul | Runs `emu_exe -listroms`, parses output to find section + rom → `-run=section -rom=name` |
+| `demul` | Demul | Dreamcast: `-run=dc -image=<CHD>`; other systems: parses `-listroms` output → `-run=section -rom=name` |
 | `fsuae` | FS-UAE | Model from SWL; CDROM or floppy args; `--floppies_dir` + `--floppy_image_N` |
-| `flycast` | Flycast | Stub — sets `symlink = ""` |
+| `flycast` | Flycast | Adds a temporary ROM-layout directory link for an unextracted CHD stored outside the selected ROM root |
+
+#### Demul/Flycast CHD symlink lifecycle
+
+For in-place CHD launches, Core resolves the CHD file and the ROM root selected
+for the current set (the root containing its ROM ZIP, or the first configured
+`rompath` entry). A CHD directory already under that root needs no directory
+symlink. If it is in a different configured location, a temporary link is made
+at `<rom root>/<software list>/<set name>` and points to the resolved directory
+containing the CHD. The layout matches `find_roms()`; CHD files are never moved
+or copied. When `extractcd` is present, the CHD has already been extracted and
+neither Demul nor Flycast creates this directory link.
+
+Demul retains its Linux-only, temporary file link for direct Dreamcast images
+when the CHD is used in place. Both link types are registered to the launch.
+The GUI calls `Emulation.after_run()` in a `finally` block covering preparation,
+startup and waiting. Cleanup removes only links created by that launch; matching
+pre-existing links are reused without being claimed, collisions are rejected,
+and active launches share a reference-counted link so one launch cannot remove
+it while another still uses it. Replaced links and real directories are left
+untouched.
 
 ---
 
@@ -187,7 +208,7 @@ def prepare_mame_run(self, ggdb, actset, dialog=None):
 | `Emulation.wait_for_completion(dialog, sleep)` | Polls `ProcessRunner.status()` or `process.poll()`; handles dialog cancel → terminate → kill; returns captured output if `emulation_start==1` |
 | `Emulation.run()` | Fallback/terminal: raw `subprocess.Popen` (no capture) or terminal wrapper (`terminal -e "cmd"`) |
 | `Emulation.terminate()` / `kill()` | Raw process terminate/kill (for fallback mode) |
-| `Emulation.after_run()` | Cleans up `emurun['symlink']` |
+| `Emulation.after_run()` | Releases launch-owned symlinks; called by the GUI launcher's `finally` block |
 
 **Thread safety:** `ProcessRunner` documented as "not thread-safe; intended for serialized calls from one owner."
 
@@ -381,6 +402,30 @@ The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 - **Process lifecycle**: `run`, `_process_args`, `start_managed_process`, `managed_process_status`, `terminate_managed_process`, `kill_managed_process`, `read_managed_process_output`, `wait_for_completion`, `terminate`, `kill`, `after_run`
 - **Delegated methods**: `prepare_exodos_run`, `prepare_marp_run`, `prepare_mame_run`, `find_nonmame_roms`, `find_roms`, `extract_chd`, `extract_rom`, `demul`, `fsuae`, `flycast`, `other_emulator` (delegate to `LaunchPreparer`)
 - **VGM playback**: `play_vgm`, `play_vgm_thread`, `play_random_vgm`, `play_random_vgm_thread` (thread management and socket lifecycle stay in `Emulation`; the candidate loop and the run preparation are delegated to `VgmPlayer`)
+
+### Dead-code candidate review
+
+The AST/reference review was checked against the three add-ons, their tests,
+public imports and Kodi/settings dispatch points at the current repository
+revision. Confirmed obsolete wrappers were removed: `_get_vgmplay_port()` is
+superseded by `_parse_vgmplay_port()` plus server startup validation;
+`Player._av_instance_token()` duplicated token generation now performed by
+`history.record_video_playback()`; `DatRepository.create_tables()` duplicated
+the canonical `create_dat_tables()` entry point; and
+`Emulation.input_directory` duplicated direct access to the parsed `mame_ini`
+setting.
+
+The following zero-internal-reference candidates remain intentionally
+available: `VgmPlayer.get_state()` is marked as a compatibility API;
+`VgmSocketServer.is_connected` and `umsa_core_kodi.is_screensaver_manual()` are
+small cross-add-on state accessors; `umsa_core_kodi.open_core_settings()` is
+called by Kodi add-on settings actions; and `build_artwork_path()` is a
+package-exported legacy API. `ArtworkRepository.set_scan_unit_done()` has no
+current scanner caller, but tests and the repository API use it to record a
+completed scan unit independently of replacing artwork. `DBMod.retry_legacy_import()`
+is likewise retained as a tested Core facade for the same retry operation
+exposed by the frontend entry point. `Emulation.after_run()` is not dead code:
+it now owns symlink cleanup and is invoked for every GUI launch outcome.
 
 ### Verification Results (at the time of this step; current HEAD: 1081 passed)
 
@@ -587,4 +632,3 @@ The skipped real-MAME case is the 90 s long track; it needs
 - `tests/` is gitignored (`.gitignore:15`), so
   `tests/test_vgm_player_entrypoints.py` is a local-only file by repository
   convention and is not part of any commit. It must be kept in sync by hand.
-

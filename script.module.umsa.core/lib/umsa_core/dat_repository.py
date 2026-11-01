@@ -169,18 +169,6 @@ class DatRepository:
         """Return a schema-qualified table name."""
         return f"{self._schema}.{table}"
 
-    def create_tables(self, db_cursor: sqlite3.Cursor | None = None) -> None:
-        """Create/upgrade the DAT tables, optionally using a supplied cursor."""
-
-        if db_cursor is not None:
-            create_dat_tables(db_cursor)
-            return
-        cursor = self._conn.cursor()
-        try:
-            create_dat_tables(cursor)
-        finally:
-            cursor.close()
-
     def get_dat_for_set(self, set_id: int) -> dict:
         """Return a ``{display category: entry text}`` mapping for one set."""
 
