@@ -233,9 +233,11 @@ the original order for both distinct and tied keys without reintroducing
 compares the result with the pre-change expression and asserts the tied group
 is reversed.
 
-The same follow-up restores the tested `M:SS` / hour / day / month / year
-output in `make_time_nice()` that `a0ac240` had changed (including the 0-, 5-,
-59- and 60-second boundaries). This is a formatting-contract correction, not a
+The same follow-up settles the current `make_time_nice()` contract:
+`SSs` below a minute, `M:SSM` below an hour, `H:MMH` below a day, `D:HHd`
+below 30 days, `M:DDm` below 360 days, and `Y:MMy` thereafter. The game-label,
+database, and repository tests were updated to this format (including the 0-,
+5-, 59- and 60-second boundaries). This is a formatting-contract change, not a
 manual Kodi test result.
 
 ### High-Priority Findings (Correctness Risk)
@@ -687,7 +689,7 @@ done
 | P0 | Continue B1 triage (remaining BLE001=122, S110=0 at `63688a7`); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, VGM socket lifecycle cleanup, VGM player callback diagnostics, and final emulator/scan UI cleanup are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
 | ~~P0~~ | ~~Fix PLW1510~~ ✅ **Fixed in round 1** at `emulation.py` terminal fallback with regression tests | Dev |
 | ~~P1~~ | ~~Convert UP031 (10 f-string candidates) and UP030 (1)~~ ✅ **Fixed at `41a415b`/`910e46c`** | Dev |
-| ~~P1~~ | ~~Fix SIM102, SIM118, PLR1730, C413, RUF046, RUF059~~ ✅ **Fixed at `63688a7`**; the follow-up preserves tied-key ordering and restores the intended time format | Dev |
+| ~~P1~~ | ~~Fix SIM102, SIM118, PLR1730, C413, RUF046, RUF059~~ ✅ **Fixed at `63688a7`**; the follow-up preserves tied-key ordering and applies the current `SSs`/`M:SSM`/`H:MMH`/`D:HHd`/`M:DDm`/`Y:MMy` time format | Dev |
 | P1 | Fix UP007 (6 union syntax), SIM115 (5 context managers) | Dev |
 | P1 | Reduce remaining BLE001 by adding specific exception types + logging | Dev |
 | P2 | Run full Ruff `--fix` with review | Dev |
