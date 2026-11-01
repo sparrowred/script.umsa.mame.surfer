@@ -100,28 +100,29 @@ def check_snapshot(snapshot, bad_images=None, pil_available=None, kodi=None):
 
     ret = True
     if pil_available and PIL and _Image is not None and _ImageStat is not None:
-        img = False
         try:
             img = _Image.open(snapshot)
         except OSError:
             ret = False
-
-        if img:
-            try:
-                imgmd5 = md5(img.tobytes()).hexdigest()
-            except OSError as error:
-                if kodi is not None:
-                    kodi.log(
-                        f"UMSA SSaver: {snapshot} error md5sum: {error}",
-                        kodi.LOGWARNING)
-                ret = False
-            else:
-                imgv = _ImageStat.Stat(img).var
-                img.close()
-                if imgmd5 in bad_images or reduce(
-                        lambda x, y: x and y < SOLID_COLOR_VARIANCE,
-                        imgv, True):
+        else:
+            # Image data is loaded lazily by Pillow. Keep the image in a
+            # context manager so it is closed even when decoding or the
+            # variance calculation raises an exception.
+            with img:
+                try:
+                    imgmd5 = md5(img.tobytes()).hexdigest()
+                except OSError as error:
+                    if kodi is not None:
+                        kodi.log(
+                            f"UMSA SSaver: {snapshot} error md5sum: {error}",
+                            kodi.LOGWARNING)
                     ret = False
+                else:
+                    imgv = _ImageStat.Stat(img).var
+                    if imgmd5 in bad_images or reduce(
+                            lambda x, y: x and y < SOLID_COLOR_VARIANCE,
+                            imgv, True):
+                        ret = False
     else:
         try:
             with open(snapshot, 'rb') as handle:
