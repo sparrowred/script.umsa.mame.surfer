@@ -373,10 +373,12 @@ These replace the former "Open questions" gate. Every roadmap step below assumes
   substituted or deleted merely because the set is absent from `umsa.db`; the history
   reader does not look them up, so it does **not** detect or report them. Consumer-side
   orphan diagnostics remain future work.
-- Note: `load_lastsaver()` stays untouched legacy read-side code with one live but
-  always-empty consumer (`M_LSSAVER`); no writer of `lastsaver.txt` exists in any
-  revision — it is **not** an import source, and a stray `lastsaver.txt` would be an
-  *unknown* file: preserved and listed, never auto-deleted.
+- Note: the legacy text-file persistence module and its five functions were removed on
+  2026-11-01 after the `status.db` migration was verified. `load_lastsaver()` had one
+  always-empty consumer (`M_LSSAVER`) and no writer of `lastsaver.txt` ever existed; a
+  stray `lastsaver.txt` remains an *unknown* file: preserved and listed, never
+  auto-deleted. Runtime history and filter selections are persisted in `status.db` via
+  `history_repository` / `history_import`.
 
 ### Implemented (all phases through 4.8)
 
@@ -619,8 +621,7 @@ Python from `.venv-debian-vm` (single consistent venv across all docs):
   --follow-imports=skip
 # → Success: no issues found in 1 source file
 
-# Type check on the step-4.5 repository (skip imports: __init__ drags in pre-existing
-# var-annotated errors in persistence.py, per AGENTS.md)
+# Type check on the step-4.5 repository (per-module, skip imports per AGENTS.md)
 .venv-debian-vm/bin/python -m mypy script.module.umsa.core/lib/umsa_core/status_repository.py \
   --follow-imports=skip
 # → Success: no issues found in 1 source file

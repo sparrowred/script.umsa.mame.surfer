@@ -1,7 +1,7 @@
 # Core Module Inventory — `script.module.umsa.core/lib/umsa_core/`
 
 **Audited at:** git HEAD `4186b5f5dd3479b19df84215d1fa21a4cbb38f29` (2026-10-23)  
-**Total modules:** 38 Python files (excluding `__init__.py`, `__pycache__`)
+**Total modules:** 37 Python files (excluding `__init__.py`, `__pycache__`)
 
 ---
 
@@ -36,7 +36,6 @@
 | `history_repository.py` | `status.db` history tables (`gui_lastgames`, `filter_selections`, `screensaver_history`, `status_meta`) | `create_history_tables`, `HistoryRepository` (lastgames, filter, screensaver, marker), `normalize_set_id` | `sqlite3`, `umsa_core.sqlite` | DB (read/write `status.db`), Schema | **No** | Core: `database.py` (facade), Screensaver: `ui.py` (via `ggdb`), `history_import.py` | ✅ Cohesive — single DB domain |
 | `logging.py` | Logger indirection (`log`, `set_log`) | `log`, `set_log` | — | — | **No** | All Core modules | ✅ Trivial — indirection only |
 | `paths.py` | Batocera mapping loader | `load_batocera_mapping` | `json`, `os` | FS (read JSON) | **No** | GUI: `gui.py`, `settings_adapter.py` | ✅ Trivial — single loader |
-| `persistence.py` | Legacy text-file persistence (`lastgames.txt`, `filter_*.txt`, `lastsaver.txt`) | `load_filter`, `save_filter`, `load_lastsaver`, `load_software_list`, `save_software_list` | `os` | FS (read/write text files) | **No** | GUI: `gui.py` (startup/shutdown — now migrating to `status.db`) | ✅ Cohesive — legacy persistence |
 | `process.py` | Subprocess ownership (`ProcessRunner`, `ProcessState`, `ProcessStatus`, `ProcessLaunchError`) | `ProcessRunner`, `ProcessState`, `ProcessStatus`, `ProcessLaunchError` | `subprocess`, `dataclasses`, `enum` | Subprocess (wrap `Popen`) | **No** | Core: `emulation.py` | ✅ Cohesive — pure process wrapper |
 | `scan_coordinator.py` | Cross-scanner lock coordination | `ScanBusyError`, `ScanLockContext`, `scan_coordinator` | `threading`, `time`, `contextlib` | Orchestrate (lock) | **No** | Core: all scanners, `database.py` (`run_scan_with_progress`) | ✅ Cohesive — single lock service |
 | `settings.py` | Shared settings constants (`FILTER_CATEGORIES`, `SharedSettings`) | `FILTER_CATEGORIES`, `SharedSettings` (dataclass) | `dataclasses` | — | **No** | Core: `database.py`, `gui.py` (via adapter) | ✅ Trivial — constants |
@@ -50,11 +49,13 @@
 | `cmdline.py` | MAME command-line assembly (Phase 4.9.3c) | `create_cmdline` | — | Format | **No** | Core: `database.py` (wrapper) | ✅ Cohesive — pure assembly |
 | `vgm_header.py` | VGM header parsing + playback plan | `VGMHeader`, `PlaybackPlan`, `parse_vgm_header`, `calculate_playback_plan` | `struct`, `gzip`, `io`, `dataclasses` | Parse (binary VGM/VGZ) | **No** | Core: `emulation.py`, `database.py` (facade), GUI: `gui.py` | ✅ Cohesive — pure parser |
 
+The legacy text-file persistence module (`persistence.py`: `lastgames.txt`, `filter_*.txt`, `lastsaver.txt`) was removed on 2026-11-01 after the `status.db` migration was verified. History and filter-selection persistence now live in `history_repository.py` / `history_import.py` using `status.db`.
+
 ---
 
 ## Kodi-Import Compliance (Boundary Tests)
 
-All 38 modules under `lib/umsa_core/` **pass** the architecture boundary test: zero `import xbmc*` statements. The single allowed Kodi-importing module in the core add-on is `lib/umsa_core_kodi.py` (adapter).
+All 37 modules under `lib/umsa_core/` **pass** the architecture boundary test: zero `import xbmc*` statements. The single allowed Kodi-importing module in the core add-on is `lib/umsa_core_kodi.py` (adapter).
 
 ---
 
@@ -83,13 +84,12 @@ All 38 modules under `lib/umsa_core/` **pass** the architecture boundary test: z
 | `exodos_parser.py` + `exodos_artwork.py` + `exodos_scanner.py` | All eXoDOS — scanner orchestrates parser + artwork extractor | Scanner is workflow, others are utilities |
 | `gb64_parser.py` + `gb64_scanner.py` | Same pattern | Keep separate |
 | `history_import.py` + `history_repository.py` | Import uses repository — keep separate | Import is one-time, repo is ongoing |
-| `persistence.py` | Legacy text-file ops — will be removed after migration completes | Keep until migration verified |
 
 ---
 
 ## Summary
 
-- **35/38 modules** are clean, single-responsibility, Kodi-free, with clear boundaries
+- **34/37 modules** are clean, single-responsibility, Kodi-free, with clear boundaries
 - **3 modules** need attention: `database.py` (~1797 lines after Phase 4.9.2/4.9.3a; was ~1857), `emulation.py` (592 lines, facade with delegates), `artwork_scanner.py`/`dat_scanner.py`/`exodos_scanner.py`/`gb64_scanner.py` (similar pattern, could share base class but not urgent)
 - No duplicate abstractions found — existing modules cover all Core domains
 - Package layout respects Kodi-addon packaging (flat `lib/umsa_core/`); no subdirectories needed

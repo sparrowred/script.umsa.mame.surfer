@@ -10,7 +10,7 @@ ASPECT_RATIOS = {
 }
 DEFAULT_ASPECT_RATIO = "16:9"
 
-# Filter category names shown in the UI - must match database/persistence keys
+# Filter category names shown in the UI - must match the status.db filter mappings
 FILTER_CATEGORIES = [
     "Softwarelists", "Game Categories", "Machine Categories", "Players",
     "Years", "----------", "Load Filter", "Save Filter"

@@ -23,7 +23,7 @@
 | **Scan orchestration** | `update`, `run_scan_with_progress` (imported), `scan_thread`, `progress_dialog` | Yes — `DialogProgress`, `Thread`, `xbmc.sleep` | **Yes** — progress callbacks injected; scan logic in Core scanners |
 | **Screensaver / VGM communication** | `VgmCommandMonitor` (class), `start_screensaver`, `stop_screensaver`, `get_screensaver_mode`, `_show_vgm_info`, `_hide_vgm_info`, `_handle_vgm_action`, `open_software`, `EMULATOR_RUNNING_PROPERTY` | Yes — `xbmc.Monitor`, `xbmc.executebuiltin`, window properties | Partial — protocol (`VGM_SENDER`, notifications) could be in Core adapter |
 | **Emulator startup / completion** | `run_emulator`, `_add_or_update_emu_output`, `_notify_final_launch`, `LaunchCtx` (dataclass), `RetroplayerCtx` (dataclass) | Yes — `DialogProgress`, `Player`, `xbmc.sleep`, `Dialog` | **Yes** — `emulator_launcher.py` + `retroplayer_cache.py` already extracted; `run_emulator` has **dead code** after `launch_emulator` return |
-| **Database access / state persistence** | `ggdb` (`DBMod`), `filter_lists`, `act_filter`, `last`/`lastptr`, `_remember_and_select`, `_save_lastgames`, `run_startup_import`, `read_settings` | Yes — `DBMod` (Core), `xbmcaddon` settings | Partial — `lastgames`/`filter` persistence moving to `status.db` (Phase 4.6.1) |
+| **Database access / state persistence** | `ggdb` (`DBMod`), `filter_lists`, `act_filter`, `last`/`lastptr`, `_remember_and_select`, `_save_lastgames`, `run_startup_import`, `read_settings` | Yes — `DBMod` (Core), `xbmcaddon` settings | Complete — `lastgames`/`filter` persistence uses `status.db` (Phase 4.6.1); legacy text-file module removed |
 | **Settings management** | `read_settings`, `load_all_settings` (imported), `artwork_source_roots` | Yes — `xbmcaddon.Addon` settings | **Yes** — `settings_adapter.py` already extracted |
 
 ---
@@ -113,7 +113,7 @@
 
 1. **`run_emulator` legacy body (lines 2545–2636)**: After `launch_emulator(ctx)` returns at line 2543, a 92-line block duplicates `emulator_launcher.py` logic (process start, wait, output capture, status write, notification). **Unreachable** — `launch_emulator` handles all non-retroplayer paths. **Remove.**
 
-2. **`lastsaver.txt` handling**: `load_lastsaver` imported but never used (no writer exists). `CORE_DATA_PATHS.lastsaver_file` passed to `GamelistCtx` but `last_saver` strategy now uses `ggdb.get_screensaver_history()`. **Remove import and context field.**
+2. **`lastsaver.txt` handling**: the legacy `load_lastsaver` function and its persistence module have been removed (no writer ever existed). The `last_saver` strategy uses `ggdb.get_screensaver_history()` from `status.db`. `CORE_DATA_PATHS.lastsaver_file` is still passed to `GamelistCtx` as an unused pass-through and can be dropped separately.
 
 3. **`batomame` dict**: Loaded in `read_settings` → `self.batomame`, passed to `LaunchCtx`/`RetroplayerCtx`. Used only in `retroplayer_cache.py` for cache folder mapping. **Keep** — active.
 

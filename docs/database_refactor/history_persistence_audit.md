@@ -17,6 +17,13 @@ follow D18. The 2026-10-19 corrective follow-up (§1.2) fixed the empty-filter-n
 (D20) and the misclassification of unreadable files as malformed (D21) without changing
 the version-1 schema or `user_version`.
 
+> **Post-migration update (2026-11-01):** the obsolete `umsa_core/persistence.py` module
+> and its five text-file functions (`load_filter`, `save_filter`, `load_lastsaver`,
+> `load_software_list`, `save_software_list`) have been removed. `status.db` is now the
+> only persistence path for GUI history, filter selections, screensaver history and the
+> import marker. References below describe the pre-removal state audited for the
+> migration.
+
 **Runtime verification is not assumed.** The repository contains automated repository
 and Kodi-stub tests, but no documented manual Kodi test run for the screensaver history.
 Section 16.2 therefore records, per item, whether it is covered only by automated

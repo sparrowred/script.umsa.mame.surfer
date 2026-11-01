@@ -15,13 +15,6 @@ from .artwork import (
 from .data_paths import CoreDataPaths
 from .logging import log, set_log
 from .paths import load_batocera_mapping
-from .persistence import (
-    load_filter,
-    load_lastsaver,
-    load_software_list,
-    save_filter,
-    save_software_list,
-)
 from .process import ProcessLaunchError, ProcessRunner, ProcessState, ProcessStatus
 from .scan_coordinator import (
     ScanBusyError,
@@ -61,15 +54,10 @@ __all__ = [
     "find_local_snapshots",
     "get_machine_artwork_path",
     "load_batocera_mapping",
-    "load_filter",
-    "load_lastsaver",
-    "load_software_list",
     "log",
     "parse_vgm_header",
     "resolve_artwork_path",
     "root_key_for_path",
-    "save_filter",
-    "save_software_list",
     "scan_coordinator",
     "set_log",
 ]

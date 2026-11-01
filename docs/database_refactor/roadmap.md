@@ -34,6 +34,13 @@ not by themselves establish a manual Kodi run. The per-item status (automated/mo
 coverage, static inspection, or unverified) is recorded in
 [`history_persistence_audit.md`](history_persistence_audit.md) §16.2.
 
+**Post-migration cleanup (2026-11-01):** the obsolete
+`script.module.umsa.core/lib/umsa_core/persistence.py` module and its five text-file
+functions (`load_filter`, `save_filter`, `load_lastsaver`, `load_software_list`,
+`save_software_list`) were removed. `status.db` is now the only persistence path for
+history and filter selections. References below to those functions describe the
+pre-removal migration state.
+
 ## Global contracts every step must honour
 
 1. **`DBMod` stays the public compatibility facade.** Callers (GUI, screensaver,

@@ -105,7 +105,7 @@ def validate_lastgames(path: Path) -> list[int]:
     The writer emits one line of comma-separated decimal ids (no trailing
     newline). A zero-byte file (or an empty first line) means "no entries".
     Only the first line is data; further lines are ignored, matching the
-    historical ``load_software_list`` reader. A non-integer token or
+    historical legacy reader. A non-integer token or
     undecodable bytes raise ``ValueError`` (whole file discarded).
     """
 

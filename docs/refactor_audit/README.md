@@ -41,7 +41,7 @@ The codebase implements a three-add-on architecture (Frontend, Core, Screensaver
 
 | Document | Purpose |
 |----------|---------|
-| [`core_module_inventory.md`](core_module_inventory.md) | Verified inventory of all 38 `umsa_core` modules with responsibilities, APIs, dependencies, Kodi-import status |
+| [`core_module_inventory.md`](core_module_inventory.md) | Verified inventory of all 37 `umsa_core` modules with responsibilities, APIs, dependencies, Kodi-import status |
 | [`gui_audit.md`](gui_audit.md) | `UMSA` class responsibility map, workflow grouping, extraction candidates, dead code, shared state |
 | [`screensaver_audit.md`](screensaver_audit.md) | `Saver`/`Player`/`Monitor` boundaries, rendering vs. playback vs. lifecycle, history hooks, extraction opportunities |
 | [`emulation_audit.md`](emulation_audit.md) | Full emulator launch path trace: DB lookup → cmdline assembly → ROM/CHD discovery → emulator prep → process management → GUI callbacks |
