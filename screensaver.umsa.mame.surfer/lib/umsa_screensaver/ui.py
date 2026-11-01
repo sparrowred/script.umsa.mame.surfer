@@ -29,6 +29,7 @@ import xbmcvfs
 from umsa_core_kodi import (
     get_core_settings,
     send_vgm_action,
+    set_screensaver_manual,
     vgm_active,
 )
 
@@ -180,6 +181,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         self._video_started = None
         # the mode that follows the videos once the last queued one ended
         self._pending_mode = None
+        # Kodi asked the script to end and the shutdown has started
+        self._aborting = False
         # the Kodi mute of the silent videos (ssaver_video_mute)
         self._video_mute = video_mute.VideoMute(xbmc.executeJSONRPC, _log)
         # the transparent foreground window with the game and music info,
@@ -653,6 +656,38 @@ class Saver(xbmcgui.WindowXMLDialog):
             if self.running != 'videos' or self.video_teardown:
                 self.finish_screensaver()
 
+    def abort_requested(self):
+        """Return whether Kodi asked this script to end.
+
+        Kodi sets the abort flag (``trigger Monitor abort request``) and
+        kills the script 5 s later; a script with open modal dialogs and a
+        running playback hung Kodi then. Errors count as no request.
+        """
+
+        try:
+            return bool(self.parent.abortRequested())
+        except Exception:  # noqa: BLE001 - a stand-in parent has no abort flag
+            return False
+
+    def abort_screensaver(self, reason):
+        """End the screensaver because Kodi asked the script to end.
+
+        The playback is stopped, the sound restored and the extracted
+        videos removed (``reallyDeactivateScreensaver``). In the video mode
+        no render loop runs, so the windows are closed here; an image mode
+        render loop sees ``running == 'no'`` and closes them in its
+        ``finally``. Repeated calls are safe.
+        """
+
+        if self._aborting:
+            return
+        self._aborting = True
+        xbmc.log(f"UMSA SSaver: Kodi asked to stop ({reason}), shutting down", xbmc.LOGWARNING)
+        in_video = self.running == MODE_VIDEOS
+        self.parent.reallyDeactivateScreensaver()
+        if in_video:
+            self.finish_screensaver()
+
     def finish_screensaver(self):
         """Release the screensaver resources and close the window."""
 
@@ -680,6 +715,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.opening = False
         self._video_started = None
         self._pending_mode = None
+        self._aborting = False
 
     def next_rotation_mode(self):
         """Return the image mode the timed mode switch continues with.
@@ -959,7 +995,10 @@ class Player(xbmc.Player):
                 self, self._history, kodi=xbmc,
                 read_set_id=read_set_id,
                 read_software_id=read_software_id)
-        except (SystemExit, Exception) as err:  # noqa: BLE001 - a history failure must never escape into Kodi's player callback
+        except SystemExit:
+            # Kodi is killing the script: end the screensaver cleanly
+            self.parent.saver.abort_screensaver('SystemExit')
+        except Exception as err:  # noqa: BLE001 - a history failure must never escape into Kodi's player callback
             xbmc.log(
                 f"UMSA SSaver Player: onAVStarted history recording failed: {err}",
                 xbmc.LOGWARNING)
@@ -984,6 +1023,7 @@ class Player(xbmc.Player):
             xbmc.log("UMSA SSaver Player: onPlayBackStarted: routine ended", xbmc.LOGINFO)
         except SystemExit as err:
             xbmc.log(f"UMSA SSaver SystemExit onPlayBackStarted: {err}", xbmc.LOGWARNING)
+            self.parent.saver.abort_screensaver('SystemExit')
 
     def onPlayBackEnded(self):
         """Reacts to Kodi event 'onPlayBackEnded'"""
@@ -1050,6 +1090,7 @@ class Player(xbmc.Player):
                     saver.handle_missing_video()
         except SystemExit as err:
             xbmc.log(f"UMSA SystemExit onPlayBackStopped: {err}", xbmc.LOGWARNING)
+            self.parent.saver.abort_screensaver('SystemExit')
 
 
 class Monitor(xbmc.Monitor):
@@ -1057,6 +1098,8 @@ class Monitor(xbmc.Monitor):
 
     def __init__(self, **kwargs):
         self.umsa = kwargs['itself']
+        # this instance inhibits Kodi's idle screensaver (keep_script_running)
+        self.inhibits_kodi_screensaver = False
         __addon__ = xbmcaddon.Addon(id='screensaver.umsa.mame.surfer')
         self.player = Player(itself=self)
         self.vgmaction = False
@@ -1136,18 +1179,27 @@ class Monitor(xbmc.Monitor):
         xbmc.log("UMSA SSaver Monitor: onScreensaverActivated routine stop", xbmc.LOGINFO)
 
     def keep_script_running(self):
-        """Cancel Kodi's stop of the woken screensaver script.
+        """Keep the screensaver script alive after Kodi woke it.
 
-        When Kodi wakes a Python screensaver - a starting video counts as
-        activity - it schedules ``StopScript`` 15 s later. The saver stays
-        active on purpose in the video mode and for VGM commands; the
-        forced stop then hit a running playback and Kodi hung (only a
-        ``kill -9`` helped). The alarm is started before Kodi reports the
-        deactivation, so it can be cancelled here.
+        The saver stays active on purpose in the video mode and for VGM
+        commands, but Kodi treats its screensaver as ended and stops the
+        script in two ways - each forced stop hung Kodi:
+
+        - waking a Python screensaver (a starting video counts as
+          activity) schedules ``StopScript`` 15 s later; the alarm is
+          started before Kodi reports the deactivation, so it is cancelled;
+        - once the idle time passes again, Kodi activates its screensaver
+          anew and stops the still running script first. The manual
+          screensaver state inhibits Kodi's idle screensaver until this
+          instance ends (``ScreensaverRuntime`` clears it).
         """
 
         xbmc.log("UMSA SSaver Monitor: cancelling Kodi's screensaver script stop", xbmc.LOGDEBUG)
         xbmc.executebuiltin(f'CancelAlarm({KODI_SCREENSAVER_STOP_ALARM},true)')
+        if not self.inhibits_kodi_screensaver:
+            xbmc.log("UMSA SSaver Monitor: inhibiting Kodi's idle screensaver", xbmc.LOGINFO)
+            set_screensaver_manual(True)
+            self.inhibits_kodi_screensaver = True
 
     def onScreensaverDeactivated(self):
         """Clear running argument, but let video run."""

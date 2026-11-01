@@ -140,8 +140,11 @@ class ScreensaverRuntime:
                 self.monitor.saver.close_overlay()
                 # never leave Kodi muted by the screensaver videos
                 self.monitor.saver.restore_video_sound()
-            # Clear manual inhibition for explicit invocations
-            if manual:
+            # Clear the manual inhibition of explicit invocations and of an
+            # instance that kept running after Kodi woke it
+            inhibited = self.monitor is not None and getattr(
+                self.monitor, 'inhibits_kodi_screensaver', False)
+            if manual or inhibited:
                 set_screensaver_manual(False)
             try:
                 if self.ggdb is not None:

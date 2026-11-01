@@ -230,13 +230,21 @@ def playback_active(player):
     return True
 
 
+def player_abort_requested(player):
+    """Return whether Kodi asked the screensaver script of ``player`` to end."""
+
+    saver = getattr(getattr(player, 'parent', None), 'saver', None)
+    probe = getattr(saver, 'abort_requested', None)
+    return bool(probe()) if callable(probe) else False
+
+
 def wait_for_duration(player, kodi, timeout=VIDEO_STARTUP_TIMEOUT):
     """Wait until the player reports the duration of the video.
 
     The wait is bounded and interruptible: it gives up when the playback
     stops before a duration is known and when the video does not start
-    within the timeout. Returns the duration in seconds, ``0`` when no
-    valid duration was reported.
+    within the timeout or Kodi asks the script to end. Returns the
+    duration in seconds, ``0`` when no valid duration was reported.
     """
 
     waited = 0.0
@@ -265,6 +273,8 @@ def wait_for_duration(player, kodi, timeout=VIDEO_STARTUP_TIMEOUT):
                     "video duration was known",
                     kodi.LOGWARNING)
                 return 0
+        if player_abort_requested(player):
+            return 0
         kodi.sleep(WAIT_POLL_INTERVAL)
         waited += WAIT_POLL_INTERVAL / 1000
 
@@ -282,6 +292,10 @@ def run_playback_labels(player, kodi):
     sleeps (quick "next video"); a loop whose video is no longer the
     current playback instance ends at once and leaves the labels to the
     newer one.
+
+    The loop watches the whole video - in the video mode it is the only
+    Python code that runs - and ends the screensaver within a second when
+    Kodi asks the script to end.
     """
 
     saver = player.parent.saver
@@ -295,6 +309,9 @@ def run_playback_labels(player, kodi):
     # wait until the video starts, bounded and interruptible
     total_time = wait_for_duration(player, kodi)
     if superseded():
+        return
+    if player_abort_requested(player):
+        saver.abort_screensaver('video')
         return
     if total_time <= 0:
         # no valid duration: leave the label state consistent and stop
@@ -329,13 +346,15 @@ def run_playback_labels(player, kodi):
     while player.runp:
         if superseded():
             return
+        if player_abort_requested(player):
+            saver.abort_screensaver('video')
+            return
         if player.isPlayingVideo():
             if count_seconds == timecount1:
                 saver.set_label_fade('0')
             elif count_seconds == timecount2:
                 saver.set_label_fade('1')
-                player.runp = False
-                continue
+            # keep watching until the video ends
         else:
             player.runp = False
             continue
@@ -393,6 +412,19 @@ class RenderSession:
                     saver.removeControl(control)
             saver.getControl(BACKG[0]).setImage('')
             saver.getControl(BACKG[1]).setImage('')
+
+    def _abort_requested(self):
+        """Stop the screensaver when Kodi asked the script to end.
+
+        Returns ``True`` when the render loop has to end. The loop's
+        ``finally`` closes the windows as for every other stop.
+        """
+
+        if not self.saver.abort_requested():
+            return False
+        self.kodi.log("UMSA SSaver: Kodi asked to stop, ending the render loop", self.kodi.LOGWARNING)
+        self._stop_saver()
+        return True
 
     def _stop_saver(self):
         """Stop the screensaver through the established lifecycle path."""
@@ -456,7 +488,7 @@ class RenderSession:
 
         remaining = ARTWORK_RETRY_DELAY
         while remaining > 0:
-            if self.saver.running == 'no':
+            if self.saver.running == 'no' or self._abort_requested():
                 return
             step = min(WAIT_POLL_INTERVAL, remaining)
             self.kodi.sleep(step)
@@ -555,6 +587,8 @@ class RenderSession:
             # screensaver loop
             while saver.running != 'no':
                 # safe point: the previous artwork is complete
+                if self._abort_requested():
+                    break
                 if self._mode_expired() and self._switch_mode():
                     break
                 art = saver.parent.umsa.ggdb.get_random_art(saver.art_types)
@@ -636,7 +670,8 @@ class RenderSession:
                     count += 1
                     kodi.sleep(1000)
                     # the mode switch does not wait for the whole ssaver_time
-                    if saver.running == 'no' or self._mode_expired():
+                    if (saver.running == 'no' or self._abort_requested()
+                            or self._mode_expired()):
                         break
 
                 ctx.order.reverse()

@@ -33,7 +33,8 @@ SCREEN_ASPECTS = {
 # Aspect ratio used when the image file cannot be measured
 FALLBACK_ASPECTS = {
     SCREEN: 4 / 3,
-    ARTWORK: 3 / 4,
+    #ARTWORK: 3 / 4,
+    ARTWORK: 1.0,  # square fallback for artwork, to avoid stretching
 }
 
 
