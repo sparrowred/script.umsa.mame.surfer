@@ -8,6 +8,7 @@
 **P1 UP030/UP031 cleanup:** 2026-10-27 at HEAD `41a415b6ee8d1bb19b817a9f71db599638173342`
 **P1 six-rule cleanup:** 2026-10-28 at HEAD `63688a7f0c0d5b2949060b1103d0997505c31f02`
 **P1 follow-up revalidation:** 2026-10-29 on top of HEAD `63688a7f0c0d5b2949060b1103d0997505c31f02`
+**P1 UP007 cleanup:** 2026-11-01, starting and final HEAD `fb7c6cad0373fe9fa5752fd10ee0891b47300542` (changes uncommitted)
 **Tools:** Ruff (primary), mypy (limited), Architecture boundary tests (AST-based)  
 **Scope:** All production Python in three add-ons
 
@@ -17,9 +18,9 @@
 
 | Tool | Version | Config | Status |
 |------|---------|--------|--------|
-| **Ruff** | 0.16.10 (via `.venv-debian-vm`) | default | ✅ Active — 227 baseline / 196 after P0 round 1 / 193 after P0 round 2 / 188 after P0 round 3 / 185 after P0 round 8 / 173 after P1 UP030/UP031 / **167 at `63688a7`** (default rules) |
+| **Ruff** | 0.17.3 (this round; 0.16.10 in earlier rounds, via `.venv-debian-vm`) | default | ✅ Active — 227 baseline / 196 after P0 round 1 / 193 after P0 round 2 / 188 after P0 round 3 / 185 after P0 round 8 / 173 after P1 UP030/UP031 / **167 at `63688a7`** / 168 at the start of the UP007 round / **162 at `fb7c6ca` after P1 UP007** (default rules) |
 | **mypy** | 1.x (via `.venv-debian-vm`) | `mypy.ini` / default | ⚠️ Partial — single modules only with `--follow-imports=skip` |
-| **pytest** | 9.x | default | ✅ Active — P0 round 8 full suite: **1178 passed**; P1 follow-up at `63688a7`: **1185 passed, 0 failed, 5 skipped, 18 subtests** |
+| **pytest** | 9.x | default | ✅ Active — P0 round 8 full suite: **1178 passed**; P1 follow-up at `63688a7`: **1185 passed, 0 failed, 5 skipped, 18 subtests**; P1 UP007 at `fb7c6ca`: **1333 passed, 0 failed, 5 skipped, 18 subtests** |
 | **Architecture boundary tests** | Custom (AST) | `tests/test_architecture_boundaries.py` | ✅ 7/7 passed |
 
 ### Configuration Files
@@ -122,17 +123,18 @@ after round 3 it is 188 findings, after round 4 it is 189 findings, after round
 S110 -6), after round 7 it is 186 findings (S110 -1), and after round 8 it is
 185 findings (BLE001 +2, S110 -3).
 
-### Findings by rule (current at `63688a7`)
+### Findings by rule (current at `fb7c6ca`)
 
-Re-measured on 2026-10-29 at the actual current HEAD with the three production
-roots. The six P1 rules plus `UP030`/`UP031` are all zero.
+Re-measured on 2026-11-01 at HEAD `fb7c6ca` (UP007 changes in the working tree)
+with the three production roots. The six P1 rules, `UP030`/`UP031` and `UP007`
+are all zero.
 
 | Code | Count | Description | Fixable |
 |------|-------|-------------|---------|
 | **BLE001** | 122 | Blind `except Exception:` — catches too broadly | ❌ |
 | **S110** | **0** | `try: ... except Exception: pass` — silent failure | ✅ |
 | **F401** | 21 | Unused import | ✅ |
-| **UP007** | 6 | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ❌ |
+| **UP007** | **0** | Union syntax `Union[X, Y]` → `X \| Y` (Python 3.10+) | ❌ |
 | **SIM115** | 5 | `open()` without context manager | ❌ |
 | **SIM113** | 4 | `enumerate()` instead of manual index | ❌ |
 | **F841** | 4 | Unused variable | ❌ |
@@ -147,7 +149,15 @@ roots. The six P1 rules plus `UP030`/`UP031` are all zero.
 | **RUF059** | **0** | Unused unpacked variable | ✅ |
 | **UP030** | **0** | Explicit `.format()` positional index | ✅ |
 | **UP031** | **0** | Legacy `%` formatting → prefer f-strings | ❌ |
-| **Total** | **167** | | **24 safe fixes** |
+| **Total** | **162** | | **25 safe fixes** |
+
+Measured history: the historical baseline at `63688a7` was **167 default
+findings** with `UP007=6`; the starting point of this round at `fb7c6ca` was
+**168 default findings** because intervening commits added one `RUF100` row.
+The UP007 round removed its six findings, so the measured final total at the
+same HEAD is **162** (`RUF100` still 1). The six historical locations are
+listed in the UP007 section below. The other counts in this table are unchanged
+from `63688a7`.
 
 The six P1 rules were fixed in `63688a7`, **not** in `a0ac240`. Commit `a0ac240`
 only changed autoscroll timing and the `make_time_nice()` output; its
@@ -239,6 +249,52 @@ below 30 days, `M:DDm` below 360 days, and `Y:MMy` thereafter. The game-label,
 database, and repository tests were updated to this format (including the 0-,
 5-, 59- and 60-second boundaries). This is a formatting-contract change, not a
 manual Kodi test result.
+
+### P1 UP007 cleanup (starting and final HEAD `fb7c6ca`, 2026-11-01)
+
+Measured at HEAD `fb7c6cad0373fe9fa5752fd10ee0891b47300542`, before and after
+the uncommitted working-tree change, with the three production roots. The
+historical `63688a7` audit reported six UP007 findings; the current baseline
+reproduced exactly six at the same locations.
+
+| File:line | Before | After |
+|-----------|--------|-------|
+| `umsa_core/persistence.py:7` | `PathInput = Union[str, PathLike]` | `PathInput = str \| PathLike` |
+| `umsa_core/data_paths.py:8` | `PathInput = Union[str, PathLike]` | `PathInput = str \| PathLike` |
+| `umsa_core/process.py:10` | `ProcessCommand = Union[str, Sequence[str]]` | `ProcessCommand = str \| Sequence[str]` |
+| `umsa_core/process.py:11` | `WorkingDirectory = Union[str, PathLike]` | `WorkingDirectory = str \| PathLike` |
+| `umsa_core/sqlite.py:10` | `DatabasePath = Union[str, PathLike]` | `DatabasePath = str \| PathLike` |
+| `umsa_core/sqlite.py:11` | `RowFactory = Union[Callable[..., Any], None]` | `RowFactory = Callable[..., Any] \| None` |
+
+The `Union` imports were removed from all four modules; `Any` remains in
+`sqlite.py`. Alias names, visibility, `PathLike` parameterization and every
+other type component are unchanged. No runtime logic, signatures, defaults,
+path handling, database behavior or process execution was touched.
+
+**Runtime requirement:** Python 3.10+ is already a de facto import-time
+requirement, not a new one. For example, `umsa_core/vgm_socket.py` and
+`umsa_core/process.py` already evaluate `X | None` in function/dataclass
+annotations without `from __future__ import annotations`. The release baseline
+is Kodi 20+ (Python 3.11). No `__future__` import was added.
+
+| Measurement | Before | After |
+|-------------|--------|-------|
+| `ruff --select UP007` | 6 | **0** |
+| Default rules total | 168 | **162** |
+| `BLE001` / `S110` / `PLW1510` | 122 / 0 / 0 | **122 / 0 / 0** |
+
+Validation: focused `test_persistence.py`, `test_data_paths.py`,
+`test_process.py`, `test_sqlite.py` and `test_architecture_boundaries.py`
+ran **47 passed**; the screensaver module tests ran **400 passed**;
+`test_architecture_boundaries.py` alone ran **7 passed**; the full suite ran
+**1333 passed, 5 skipped, 18 subtests passed**. A direct import/alias
+evaluation smoke check passed for all four modules. No manual Kodi or
+Screensaver testing was performed.
+
+Per-module mypy (`--follow-imports=skip`) is unchanged: `data_paths.py`,
+`process.py` and `sqlite.py` report no issues; `persistence.py` still reports
+its three pre-existing `var-annotated` errors at lines 12, 66 and 81. Those are
+not caused by this round and were not fixed here.
 
 ### High-Priority Findings (Correctness Risk)
 
@@ -428,6 +484,21 @@ Cannot type-check without Kodi stubs (`Kodistubs` package). Requires Kodi runtim
 ---
 
 ## Test Suite Status
+
+### P1 UP007 verification (2026-11-01, HEAD `fb7c6ca` + working tree)
+
+| Command | Result |
+|---------|--------|
+| `pytest tests/test_persistence.py tests/test_data_paths.py tests/test_process.py tests/test_sqlite.py tests/test_architecture_boundaries.py -q` | **47 passed** |
+| `pytest tests/test_screensaver_*.py -q` (10 module files) | **400 passed** |
+| `pytest tests/test_architecture_boundaries.py -q` | **7 passed** |
+| `pytest tests/ -q` | **1333 passed, 5 skipped, 18 subtests passed** |
+| `ruff check plugin.program.umsa.mame.surfer screensaver.umsa.mame.surfer script.module.umsa.core --select UP007 --statistics` | **0 findings** (6 before) |
+| `ruff check ... --select BLE001,S110,PLW1510 --statistics` | **122 BLE001, 0 S110, 0 PLW1510** (unchanged) |
+| `ruff check ... --statistics` | **162 findings** (BLE001 122, F401 21, SIM115 5, SIM113 4, F841 4, I001 3, PERF402 1, EXE002 1, RUF100 1) |
+
+Direct import and alias evaluation succeeded for `persistence`, `data_paths`,
+`process` and `sqlite`. No manual Kodi testing was performed in this round.
 
 ### P1 follow-up verification (2026-10-29, HEAD `63688a7` + working tree)
 
@@ -636,6 +707,7 @@ the table is kept only for chronology.
 #   (BLE001=123, S110=0, PLW1510=0; 123 unique locations);
 #   at current HEAD 63688a7: 122 rows
 #   (BLE001=122, S110=0, PLW1510=0; 122 unique locations).
+#   At HEAD fb7c6ca (after UP007): unchanged at 122 rows.
 ```
 
 ### Recommended (P1 — Should Pass)
@@ -644,13 +716,18 @@ the table is kept only for chronology.
 # 5. Ruff style issues not increasing (UP031, UP007, etc.)
 .venv-debian-vm/bin/python -m ruff check . --statistics
 # → At 41a415b after P1: UP031 = 0, UP030 = 0, UP007 = 6, etc.
-# → At current HEAD 63688a7: 167 findings; UP031 = 0, UP030 = 0,
+# → At HEAD 63688a7: 167 findings; UP031 = 0, UP030 = 0, UP007 = 6,
 #   SIM102 = SIM118 = PLR1730 = C413 = RUF046 = RUF059 = 0.
+# → At HEAD fb7c6ca (after P1 UP007): 162 findings; UP007 = 0, all
+#   other P1 rule targets remain 0 (one RUF100 row is new since 63688a7).
 
 # 6. Mypy on Core modules (individual, skip imports)
 for f in sqlite.py vgm_header.py status_repository.py emulator_repository.py game_repository.py; do
   .venv-debian-vm/bin/python -m mypy script.module.umsa.core/lib/umsa_core/$f --follow-imports=skip
 done
+# The four UP007 modules were also checked individually at fb7c6ca:
+# data_paths.py, process.py and sqlite.py are clean; persistence.py still
+# has its 3 pre-existing var-annotated errors (lines 12, 66, 81).
 ```
 
 ### Ideal (P2 — Nice to Have)
@@ -673,11 +750,11 @@ done
 | Architecture boundary tests | 7/7 ✅ | 7/7 ✅ |
 | Core regression tests | ~200 passed | All pass |
 | Integration tests (stubs) | 140 passed | All pass |
-| Ruff correctness issues | Historical: baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); round 8 at `8f5191e` 123 rows / 123 locations (BLE001=123, S110=0, PLW1510=0). Current at `63688a7`: **122 rows / 122 locations (BLE001=122, S110=0, PLW1510=0)** | **S110 eliminated**; continue B1 triage |
-| Ruff style issues | Current at `63688a7`: **45** (167 default total minus BLE001=122; S110/PLW1510=0). P1 six rules and UP030/UP031 are 0 | P1: UP031/UP030 → 0 ✅ |
-| Mypy (`vgm_header.py` only) | Clean | Clean |
+| Ruff correctness issues | Historical: baseline 163 rows / 108 unique locations (BLE001=108, S110=54, PLW1510=1); round 8 at `8f5191e` 123 rows / 123 locations (BLE001=123, S110=0, PLW1510=0). At `63688a7`: **122 rows / 122 locations**. Current at `fb7c6ca`: **122 rows / 122 locations (BLE001=122, S110=0, PLW1510=0)** | **S110 eliminated**; continue B1 triage |
+| Ruff style issues | Current at `fb7c6ca`: **40** (162 default total minus BLE001=122; S110/PLW1510=0). P1 six rules, UP030/UP031 and UP007 are 0 | P1: UP031/UP030/UP007 → 0 ✅ |
+| Mypy (per-module only) | `vgm_header.py` clean; `data_paths.py`, `process.py`, `sqlite.py` clean at `fb7c6ca`; `persistence.py` has 3 pre-existing `var-annotated` errors. Full-project mypy is not clean | Clean where already documented |
 | Pre-existing test failures | 0 (13 historical resolved); one transient network failure in round 1, not reproducible | No new |
-| Full suite | **1185 passed, 5 skipped, 18 subtests** at `63688a7` (P1 follow-up, 2026-10-29) | No new failures |
+| Full suite | **1333 passed, 5 skipped, 18 subtests** at `fb7c6ca` (P1 UP007, 2026-11-01); previous **1185 passed** at `63688a7` | No new failures |
 
 ---
 
@@ -686,11 +763,12 @@ done
 | Priority | Action | Owner |
 |----------|--------|-------|
 | P0 | Close the 3 open manual areas (emulator matrix, Retroplayer, clean install/upgrade) | Maintainer |
-| P0 | Continue B1 triage (remaining BLE001=122, S110=0 at `63688a7`); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, VGM socket lifecycle cleanup, VGM player callback diagnostics, and final emulator/scan UI cleanup are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
+| P0 | Continue B1 triage (remaining BLE001=122, S110=0 at `fb7c6ca`, unchanged from `63688a7`); `emulator_launcher.py` startup risks, `gui.py` shutdown cleanup, the DAT/artwork/GB64 scanner cleanup paths, `DBMod` open/close cleanup, VGM socket lifecycle cleanup, VGM player callback diagnostics, and final emulator/scan UI cleanup are fixed and their broad handlers log; the rest are UI/scan/optional-plugin boundaries | Dev |
 | ~~P0~~ | ~~Fix PLW1510~~ ✅ **Fixed in round 1** at `emulation.py` terminal fallback with regression tests | Dev |
 | ~~P1~~ | ~~Convert UP031 (10 f-string candidates) and UP030 (1)~~ ✅ **Fixed at `41a415b`/`910e46c`** | Dev |
 | ~~P1~~ | ~~Fix SIM102, SIM118, PLR1730, C413, RUF046, RUF059~~ ✅ **Fixed at `63688a7`**; the follow-up preserves tied-key ordering and applies the current `SSs`/`M:SSM`/`H:MMH`/`D:HHd`/`M:DDm`/`Y:MMy` time format | Dev |
-| P1 | Fix UP007 (6 union syntax), SIM115 (5 context managers) | Dev |
+| ~~P1~~ | ~~Fix UP007 (6 union syntax)~~ ✅ **Fixed at `fb7c6ca`** (UP007 6→0; default rules 168→162) | Dev |
+| P1 | Fix SIM115 (5 context managers) | Dev |
 | P1 | Reduce remaining BLE001 by adding specific exception types + logging | Dev |
 | P2 | Run full Ruff `--fix` with review | Dev |
 | P2 | Implement standalone `umsa_core` CLI example | Dev |

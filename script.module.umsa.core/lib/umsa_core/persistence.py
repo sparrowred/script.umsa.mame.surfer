@@ -2,9 +2,8 @@
 
 from collections.abc import Iterator
 from os import PathLike
-from typing import Union
 
-PathInput = Union[str, PathLike]
+PathInput = str | PathLike
 
 
 def load_filter(filter_path: PathInput) -> dict[str, list[str]]:

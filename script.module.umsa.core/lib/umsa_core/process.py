@@ -5,10 +5,9 @@ from dataclasses import dataclass
 from enum import Enum
 from os import PathLike
 from subprocess import PIPE, Popen
-from typing import Union
 
-ProcessCommand = Union[str, Sequence[str]]
-WorkingDirectory = Union[str, PathLike]
+ProcessCommand = str | Sequence[str]
+WorkingDirectory = str | PathLike
 
 
 class ProcessState(Enum):

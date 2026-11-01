@@ -3,9 +3,8 @@
 from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
-from typing import Union
 
-PathInput = Union[str, PathLike]
+PathInput = str | PathLike
 
 
 @dataclass(frozen=True)

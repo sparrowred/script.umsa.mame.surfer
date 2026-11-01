@@ -4,11 +4,11 @@ import os
 import sqlite3
 from collections.abc import Callable
 from os import PathLike
-from typing import Any, Union
+from typing import Any
 from urllib.request import pathname2url
 
-DatabasePath = Union[str, PathLike]
-RowFactory = Union[Callable[..., Any], None]
+DatabasePath = str | PathLike
+RowFactory = Callable[..., Any] | None
 
 
 def connect_sqlite(
