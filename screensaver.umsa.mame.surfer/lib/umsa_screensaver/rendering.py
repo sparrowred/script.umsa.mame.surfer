@@ -304,8 +304,8 @@ def run_playback_labels(player, kodi):
     def superseded():
         return getattr(player, '_playback_instance', None) != instance
 
-    # clear video label
-    saver.set_label_fade('1')
+    # hide the info of the previous video at once, before the new content
+    saver.hide_label_now()
     # wait until the video starts, bounded and interruptible
     total_time = wait_for_duration(player, kodi)
     if superseded():
@@ -620,6 +620,9 @@ class RenderSession:
 
                 # set scaling
                 aspect = aspect_for(art)
+
+                # the new content must not show up in a running fade-out
+                saver.hide_label_now()
 
                 # get machine pic
                 saver.overlay_control(PIC_MACHINE).setImage(

@@ -7,12 +7,12 @@
     <zorder>2</zorder>
     <controls>
         <control type="group">
-            <description>game info, faded by LabelView.Fade, switched off by ssaver_info</description>
-            <visible>!String.IsEqual(Window.Property(GameInfo.Hidden),true)</visible>
-            <animation type="Conditional" condition="String.IsEqual(Window.Property(LabelView.Fade),0)">
+            <description>game info, switched off by ssaver_info. LabelView.Fade: 0 = fade in, 1 = fade out, empty = hidden at once (new content)</description>
+            <visible>!String.IsEqual(Window.Property(GameInfo.Hidden),true) + String.IsEqual(Window.Property(LabelView.Fade),0)</visible>
+            <animation type="Visible">
                 <effect type="fade" start="0" end="100" time="1000"/>
             </animation>
-            <animation type="Conditional" condition="String.IsEqual(Window.Property(LabelView.Fade),1)">
+            <animation type="Hidden" condition="String.IsEqual(Window.Property(LabelView.Fade),1)">
                 <effect type="fade" start="100" end="0" time="1000"/>
             </animation>
             <control type="image" id="104">

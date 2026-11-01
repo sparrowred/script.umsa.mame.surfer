@@ -293,6 +293,16 @@ class Saver(xbmcgui.WindowXMLDialog):
 
         self._overlay.setProperty('LabelView.Fade', value)
 
+    def hide_label_now(self):
+        """Hide the game info at once, without the fade-out.
+
+        Called before new content goes into the game info: a fade-out that
+        is still running would show the new name and pictures for a moment.
+        The skin only fades out for ``'1'``; an empty value hides at once.
+        """
+
+        self._overlay.setProperty('LabelView.Fade', '')
+
     def close(self):
         """Close the overlay first, then the screensaver window.
 
@@ -837,7 +847,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         for name in ('SlideView.Slide1', 'SlideView.Slide2',
                      'SlideView.Fade11', 'SlideView.Fade12'):
             self.clearProperty(name)
-        self.set_label_fade('1')
+        self.hide_label_now()
         self.running = mode
         self.set_mode_property(mode)
 
