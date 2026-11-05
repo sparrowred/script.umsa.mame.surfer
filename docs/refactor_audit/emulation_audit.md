@@ -41,7 +41,7 @@ UMSA.run_emulator(emu_infos)
     │                   ├─ folder = temp_dir/swl_set
     │                   ├─ find_nonmame_roms() OR find_roms()
     │                   ├─ extract_rom() / extract_chd() if not zip mode
-    │                   ├─ Special handling: demul, fs-uae, flycast
+    │                   ├─ Special handling: demul, fs-uae
     │                   └─ Sets emurun['args'] / emurun['emu_exe']
     │
     ├─ Pause media (video stop / audio pause)
@@ -75,7 +75,7 @@ UMSA.run_emulator(emu_infos)
 | **1. Database-backed metadata lookup** | Game/software/set/machine/device/part/sharedfeat queries | `GameRepository` (Core) | `get_swl_options`, `get_machine_id`, `get_devices_for_machine`, `get_sharedfeat_requirement`, `get_parts_for_set_id`, `get_disks` |
 | **2. Deterministic command-line assembly** | Argument list construction from metadata | `DBMod` (Core) | `get_cmd_line_options` (orchestrates repo reads), `create_cmdline` (pure assembly) |
 | **3. ROM/CHD discovery & extraction** | Filesystem search, ZIP/CHD extraction, temp folder management | `Emulation` (Core) | `find_roms`, `find_nonmame_roms`, `extract_rom`, `extract_chd`, `prepare_exodos_run`, `prepare_marp_run` |
-| **4. Emulator-specific launch preparation** | Per-emulator argument building, working dir, env, special handling | `Emulation` (Core) | `prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`, `mame` (stub) |
+| **4. Emulator-specific launch preparation** | Per-emulator argument building, working dir, env, special handling | `Emulation` (Core) | `prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `mame` (stub) |
 | **5. Process startup, monitoring, cancellation, cleanup** | Process ownership, output capture, terminate/kill, wait | `ProcessRunner` + `Emulation` (Core) | `ProcessRunner.start/status/terminate/kill/read_output`, `Emulation.start_managed_process/wait_for_completion/run/terminate/kill/after_run` |
 | **6. GUI progress, notifications, window lifecycle** | Dialogs, progress updates, screensaver control, TEXTLIST output, final notification | `emulator_launcher.py` + `gui.py` (GUI) | `LaunchCtx` callbacks (`emu_dialog`, `dialog`, `sleep`, `stop_screensaver`, `set_emulator_running`, `notify_final`, `add_or_update_emu_output`, `search_snaps`, `show_artwork`) |
 | **7. Retroplayer cache & launch** | Kodi Retroplayer-specific cache folder, ROM copy, game Item creation | `retroplayer_cache.py` (GUI) | `run_retroplayer(ctx)` |
@@ -140,30 +140,31 @@ def prepare_mame_run(self, ggdb, actset, dialog=None):
 |--------|----------|-----------|
 | `prepare_exodos_run` | eXoDOS | `find_nonmame_roms('shell'|'alt')` → sets `emurun['args']=[]`, `emulation_start=2` (fallback/terminal) |
 | `prepare_marp_run` | MARP replay | `marp_download(inp_url, input_dir)` → args = `[set_name, "-playback", inp_file, "-exit_after_playback"]` |
-| `other_emulator` | All others | Sets `folder`, `emu_exe`, `working_dir`, `emulation_start`; calls `find_nonmame_roms()` or `find_roms()`; if not zip mode: `extract_rom()` + `extract_chd()`; special cases: `demul()`, `fsuae()`, `flycast()` |
-| `demul` | Demul | Dreamcast: `-run=dc -image=<CHD>`; other systems: parses `-listroms` output → `-run=section -rom=name` |
+| `other_emulator` | All others | Sets `folder`, `emu_exe`, `working_dir`, `emulation_start`; calls `find_nonmame_roms()` or `find_roms()`; if Extract is selected: `extract_rom()` + `extract_chd()`; only for direct-start MAME sets, creates a temporary CHD directory link when needed; special cases: `demul()`, `fsuae()` |
+| `demul` | Demul | Dreamcast: `-run=dc -image=<CHD>`; other systems: parses `-listroms` output → `-run=section -rom=name`; no Demul-specific symlinks |
 | `fsuae` | FS-UAE | Model from SWL; CDROM or floppy args; `--floppies_dir` + `--floppy_image_N` |
-| `flycast` | Flycast | Adds a temporary ROM-layout directory link for an unextracted CHD stored outside the selected ROM root |
 
-#### Demul/Flycast CHD symlink lifecycle
+#### Non-MAME CHD symlink lifecycle
 
-For in-place CHD launches, Core resolves the CHD file and the ROM root selected
-for the current set (the root containing its ROM ZIP, or the first configured
-`rompath` entry). A CHD directory already under that root needs no directory
-symlink. If it is in a different configured location, a temporary link is made
-at `<rom root>/<software list>/<set name>` and points to the resolved directory
-containing the CHD. The layout matches `find_roms()`; CHD files are never moved
-or copied. When `extractcd` is present, the CHD has already been extracted and
-neither Demul nor Flycast creates this directory link.
+Every standard non-MAME launch searches configured MAME ROM paths before
+emulator-specific handling. CHDs are found as `<set-dir>/<set>.chd`, not as
+ZIP files. A temporary directory symlink is considered only when the selected
+software list is `mame` and the emulator's Extract option is off (direct
+start). Core compares the expected MAME set directory, derived from the found
+ROM ZIP at `<root>/<set>.zip`, with the directory of the first found CHD. If
+they differ, it links `<root>/<set>/` to that CHD directory. Other software
+lists and NONMAME data sources never create this link. If Extract is selected,
+the CHD is extracted and no symlink is created.
 
-Demul retains its Linux-only, temporary file link for direct Dreamcast images
-when the CHD is used in place. Both link types are registered to the launch.
-The GUI calls `Emulation.after_run()` in a `finally` block covering preparation,
-startup and waiting. Cleanup removes only links created by that launch; matching
-pre-existing links are reused without being claimed, collisions are rejected,
-and active launches share a reference-counted link so one launch cannot remove
-it while another still uses it. Replaced links and real directories are left
-untouched.
+The GUI calls `Emulation.after_run()` in a `finally` block covering
+preparation, startup and waiting. Cleanup removes only the link created by
+that launch, identified by its path and filesystem identity. Matching
+pre-existing links are reused without being claimed; unrelated paths and links
+replaced during the run are left untouched. Normal/watch modes wait on the
+managed child process. Fallback invokes the configured terminal with blocking
+`subprocess.run()` and then returns; this assumes the terminal command remains
+in the foreground until the emulator exits. Runs are therefore serialized and
+the link is not reference-counted.
 
 ---
 
@@ -206,7 +207,7 @@ untouched.
 | `ProcessRunner` | Owns one `Popen`; `start(command, cwd, capture_output, env)`, `status() → ProcessState`, `terminate()`, `kill()`, `read_output() → (stdout, stderr)` |
 | `Emulation.start_managed_process(capture_output)` | Delegates to `ProcessRunner.start()` with `emurun['args']`, `working_dir`, `env` |
 | `Emulation.wait_for_completion(dialog, sleep)` | Polls `ProcessRunner.status()` or `process.poll()`; handles dialog cancel → terminate → kill; returns captured output if `emulation_start==1` |
-| `Emulation.run()` | Fallback/terminal: raw `subprocess.Popen` (no capture) or terminal wrapper (`terminal -e "cmd"`) |
+| `Emulation.run()` | Fallback/terminal: blocking terminal wrapper (`subprocess.run([terminal, "-e", cmd])`) |
 | `Emulation.terminate()` / `kill()` | Raw process terminate/kill (for fallback mode) |
 | `Emulation.after_run()` | Releases launch-owned symlinks; called by the GUI launcher's `finally` block |
 
@@ -294,7 +295,7 @@ def run_emulator(self, emu_infos):
 |------|----------|--------|
 | `run_emulator` legacy body (lines 2545–2636) | `gui.py` | **Dead** — after `launch_emulator`/`run_retroplayer` return |
 | `Emulation.mame()` | `emulation.py:1139` | **Stub** — only docstring/TODOs, never called |
-| `Emulation.other_emulator` → `demul`/`fsuae`/`flycast` | `emulation.py` | **Active** — called from `other_emulator` for those emulators |
+| `Emulation.other_emulator` → `demul`/`fsuae` | `emulation.py` | **Active** — called from `other_emulator` for those emulators |
 | `batomame` mapping | `gui.py` + `retroplayer_cache.py` | **Active** — Retroplayer cache folders |
 | `vgmplay_exe` setting | Core settings → `Emulation.vgmplay_exe` | **Active** — VGM playback uses dedicated exe |
 
@@ -314,7 +315,7 @@ GUI (gui.py)
              │     │     └─ GameRepository reads (Core)
              │     ├─ prepare_exodos_run → find_nonmame_roms (Core)
              │     ├─ prepare_marp_run → marp_download (Core support)
-             │     └─ other_emulator → find_roms/extract_rom/extract_chd/demul/fsuae/flycast (Core)
+             │     └─ other_emulator → find_roms/extract_rom/extract_chd/demul/fsuae (Core)
              └─ ctx.emulation.start_managed_process/wait_for_completion → ProcessRunner (Core)
 ```
 
@@ -347,7 +348,7 @@ GUI (gui.py)
 ## Behavior That Must Remain Compatible
 
 - `LaunchCtx` / `RetroplayerCtx` dataclass fields — `emulator_launcher`/`retroplayer_cache` depend on them
-- `Emulation.emurun` dict structure — keys: `emu_exe`, `args`, `working_dir`, `emulation_start`, `swl_name`, `set_name`, `description`, `publisher`, `set_clone`, `disks`, `folder`, `zips`, `chds`, `extract_files`, `extractcd`, `symlink`, `env`
+- `Emulation.emurun` dict structure — keys: `emu_exe`, `args`, `working_dir`, `emulation_start`, `swl_name`, `set_name`, `description`, `publisher`, `set_clone`, `disks`, `folder`, `zips`, `chds`, `extract_files`, `extractcd`, `_chd_directory_symlink`, `env`
 - `Emulation.prepare_mame_run(ggdb, actset, dialog)` signature — called by `emulator_launcher`
 - `Emulation.other_emulator(emu_infos, dialog, sleep)` signature — called by `emulator_launcher`
 - `ProcessRunner.start(command, cwd, capture_output, env)` — used by `Emulation.start_managed_process`
@@ -368,7 +369,7 @@ GUI (gui.py)
    - `MameLaunchPreparer` (wraps `prepare_mame_run` + `get_cmd_line_options` delegation)
    - `ExodosLaunchPreparer` (`prepare_exodos_run`)
    - `MarpLaunchPreparer` (`prepare_marp_run`)
-   - `GenericLaunchPreparer` (`other_emulator` + `demul`/`fsuae`/`flycast`)
+   - `GenericLaunchPreparer` (`other_emulator` + `demul`/`fsuae`)
    - `RomFinder` (`find_roms`, `find_nonmame_roms`)
    - `ChdExtractor` (`extract_chd`)
    - `RomExtractor` (`extract_rom`)
@@ -389,7 +390,7 @@ The following modules have been extracted from `Emulation` (originally 1221 line
 | `rom_finder.py` | 143 | ROM and non-MAME file discovery (`find_roms`, `find_nonmame_roms`) |
 | `rom_extractor.py` | 67 | ZIP extraction and ROM-specific post-processing (`extract_rom`) |
 | `chd_extractor.py` | 123 | CHD extraction, cancellation and cleanup (`extract_chd`, `CHDExtractionCancelled`, `CHDExtractionError`) |
-| `launch_preparer.py` | 259 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`, `flycast`) |
+| `launch_preparer.py` | 259 | Emulator-specific launch preparation (`prepare_mame_run`, `prepare_exodos_run`, `prepare_marp_run`, `other_emulator`, `demul`, `fsuae`) |
 | `vgm_player.py` | 333 | VGM playback logic, header parsing, callbacks (`prepare_vgm_run`, `play_random_vgm_thread`, `play_vgm`) |
 
 ### Emulation Facade (592 lines)
@@ -400,7 +401,7 @@ The `Emulation` class now serves as a focused facade and lifecycle coordinator:
 - **VGM state properties**: `playvgm`, `playintrovgm`, `playrandomvgm`, `vgm_info_callback`, `vgm_stopped_callback` (delegated to `VgmPlayer`)
 - **Socket state & management**: `lua_socket`, `lua_server`, `lua_log_thread`, `lua_log_stop`, `vgm_port_env`, `_start_vgm_server`, `_accept_vgm_conn`, `_close_vgm_sockets`, `_close_accepted_conn`, `_stop_lua_log_reader`, `_start_lua_log_reader`, `_lua_log_reader`, `_drain_lua_log`, `_log_lua_line`, `send_vgmaction`, `_vgm_process_env`
 - **Process lifecycle**: `run`, `_process_args`, `start_managed_process`, `managed_process_status`, `terminate_managed_process`, `kill_managed_process`, `read_managed_process_output`, `wait_for_completion`, `terminate`, `kill`, `after_run`
-- **Delegated methods**: `prepare_exodos_run`, `prepare_marp_run`, `prepare_mame_run`, `find_nonmame_roms`, `find_roms`, `extract_chd`, `extract_rom`, `demul`, `fsuae`, `flycast`, `other_emulator` (delegate to `LaunchPreparer`)
+- **Delegated methods**: `prepare_exodos_run`, `prepare_marp_run`, `prepare_mame_run`, `find_nonmame_roms`, `find_roms`, `extract_chd`, `extract_rom`, `demul`, `fsuae`, `other_emulator` (delegate to `LaunchPreparer`)
 - **VGM playback**: `play_vgm`, `play_vgm_thread`, `play_random_vgm`, `play_random_vgm_thread` (thread management and socket lifecycle stay in `Emulation`; the candidate loop and the run preparation are delegated to `VgmPlayer`)
 
 ### Dead-code candidate review

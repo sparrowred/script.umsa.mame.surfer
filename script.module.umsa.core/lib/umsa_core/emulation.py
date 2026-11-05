@@ -567,15 +567,6 @@ class Emulation:
         """
         self.launch_preparer.fsuae(self.emurun)
 
-    def flycast(self):
-        """Create symlink for Naomi GD-ROMs.
-
-        TODO check if we have mame chds as disks and if found: only use dir and symlink
-        to path where zip is found. if no disks: use zip name and check for dir with name
-        in rompath and if not same path: symlink
-        """
-        self.launch_preparer.flycast(self.emurun)
-
     def mame(self):
         """MAME handling.
 
