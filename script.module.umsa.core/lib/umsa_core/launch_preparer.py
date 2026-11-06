@@ -16,10 +16,16 @@ def _remove_owned_symlink(emurun: dict) -> None:
     owned = emurun.pop("_chd_directory_symlink", None)
     if owned is None:
         return
+    launch_id = emurun.get("launch_id", "unknown")
     link_path, device, inode = owned
     try:
         info = os.lstat(link_path)
     except FileNotFoundError:
+        log(
+            f"UMSA Emu: launch={launch_id} temporary CHD symlink already "
+            f"absent: {link_path}",
+            level="debug",
+        )
         return
     if (
         not os.path.islink(link_path)
@@ -27,20 +33,32 @@ def _remove_owned_symlink(emurun: dict) -> None:
         or info.st_ino != inode
     ):
         log(
-            f"UMSA Emu: preserving replaced symlink during cleanup: {link_path}",
+            f"UMSA Emu: launch={launch_id} preserving replaced symlink "
+            f"during cleanup: {link_path}",
             level="warning",
         )
         return
     try:
         os.unlink(link_path)
     except FileNotFoundError:
-        pass
+        log(
+            f"UMSA Emu: launch={launch_id} temporary CHD symlink already "
+            f"absent: {link_path}",
+            level="debug",
+        )
     except OSError as error:
         log(
-            f"UMSA Emu: could not remove temporary symlink {link_path}: {error}",
+            f"UMSA Emu: launch={launch_id} could not remove temporary "
+            f"symlink {link_path}: {error}",
             level="error",
         )
         raise
+    else:
+        log(
+            f"UMSA Emu: launch={launch_id} removed temporary CHD symlink: "
+            f"{link_path}",
+            level="debug",
+        )
 
 
 def update_dialog(dialog, percent, msg):
@@ -194,9 +212,29 @@ class LaunchPreparer:
     def _prepare_chd_directory_symlink(self, emurun):
         """Link an unextracted MAME CHD beside its discovered ROM ZIP if needed."""
 
+        launch_id = emurun.get("launch_id", "unknown")
         chds = emurun.get('chds') or []
         zips = emurun.get('zips') or []
-        if 'extractcd' in emurun or not chds or not chds[0] or not zips or not zips[0]:
+        if 'extractcd' in emurun:
+            log(
+                f"UMSA Emu: launch={launch_id} CHD symlink skipped: "
+                "CHD was extracted",
+                level="debug",
+            )
+            return None
+        if not chds or not chds[0]:
+            log(
+                f"UMSA Emu: launch={launch_id} CHD symlink skipped: "
+                "no CHD was discovered",
+                level="debug",
+            )
+            return None
+        if not zips or not zips[0]:
+            log(
+                f"UMSA Emu: launch={launch_id} CHD symlink skipped: "
+                "no ROM ZIP was discovered",
+                level="debug",
+            )
             return None
 
         chd_file = Path(chds[0]).resolve(strict=True)
@@ -209,10 +247,21 @@ class LaunchPreparer:
         link_path = zip_file.with_suffix("")
         source_dir = chd_file.parent
         if os.path.realpath(link_path) == str(source_dir):
+            log(
+                f"UMSA Emu: launch={launch_id} CHD symlink not needed: "
+                f"ROM set directory {link_path} already contains CHD "
+                f"directory {source_dir}",
+                level="debug",
+            )
             return None
 
         if os.path.lexists(link_path):
             if link_path.is_symlink() and os.path.realpath(link_path) == str(source_dir):
+                log(
+                    f"UMSA Emu: launch={launch_id} reusing existing CHD "
+                    f"symlink {link_path} -> {source_dir}",
+                    level="debug",
+                )
                 return str(link_path)
             raise FileExistsError(
                 f"refusing to replace existing path: {link_path}"
@@ -222,6 +271,11 @@ class LaunchPreparer:
         info = os.lstat(link_path)
         emurun["_chd_directory_symlink"] = (
             str(link_path), info.st_dev, info.st_ino)
+        log(
+            f"UMSA Emu: launch={launch_id} created temporary CHD symlink "
+            f"{link_path} -> {source_dir}",
+            level="debug",
+        )
         return str(link_path)
 
     def cleanup_symlinks(self, emurun):
@@ -244,7 +298,20 @@ class LaunchPreparer:
             emurun['emulation_start'] = emu_infos['mode']
 
         # find file by the name of the set
-        log(f'UMSA Emu: check for nonmame: {emurun["swl_name"]}', level='debug')
+        launch_id = emurun.get("launch_id", "unknown")
+        log(
+            f'UMSA Emu: launch={launch_id} preparing emulator='
+            f'{emu_infos.get("name", "")!r} exe={emu_infos.get("exe", "")!r} '
+            f'swl={emurun["swl_name"]!r} set={emurun["set_name"]!r} '
+            f'mode={emurun.get("emulation_start")} '
+            f'extract={not emu_infos.get("zip", False)}',
+            level='debug',
+        )
+        log(
+            f'UMSA Emu: launch={launch_id} searching for non-MAME source '
+            f'{emurun["swl_name"]!r}',
+            level='debug',
+        )
         find_nonmame = self._find_nonmame_roms
         if find_nonmame is None:
             from umsa_core.rom_finder import find_nonmame_roms
@@ -259,13 +326,29 @@ class LaunchPreparer:
         else:
             find_roms_func(emurun, self.mame_ini.get('rompath', []))
 
-        if not emurun['zips'] + emurun['chds']:
-            log('UMSA Emu err: rom/chd not found', level='warning')
+        zips = emurun.get('zips') or []
+        chds = emurun.get('chds') or []
+        log(
+            f"UMSA Emu: launch={launch_id} ROM/CHD search complete: "
+            f"zips={zips!r} chds={chds!r}",
+            level="debug",
+        )
+        if not zips + chds:
+            log(
+                f'UMSA Emu err: rom/chd not found; launch={launch_id} '
+                f'swl={emurun["swl_name"]!r} set={emurun["set_name"]!r}',
+                level='warning',
+            )
             ret_val = False
         # extract rom_file if needed
         elif not emu_infos.get('zip', False):
+            log(
+                f"UMSA Emu: launch={launch_id} extraction requested "
+                f"for ZIPs={zips!r} CHDs={chds!r}",
+                level="debug",
+            )
             # TODO check len of zips, should not happen?
-            if emurun['zips'] and emurun['zips'][0]:
+            if zips and zips[0]:
                 update_dialog(dialog, 20, 'extracting zip...')
                 extract_rom_func = self._extract_rom
                 if extract_rom_func is None:
@@ -273,13 +356,19 @@ class LaunchPreparer:
                     extract_rom_func = extract_rom
                 extract_rom_func(emurun)
             # extract 1st chd
-            if emurun['chds'] and emurun['chds'][0]:
+            if chds and chds[0]:
                 update_dialog(dialog, 20, 'extracting chd...')
                 extract_chd_func = self._extract_chd
                 if extract_chd_func is None:
                     from umsa_core.chd_extractor import extract_chd
                     extract_chd_func = extract_chd
                 extract_chd_func(emurun, self.chdman_exe, sleep, dialog)
+            log(
+                f"UMSA Emu: launch={launch_id} extraction complete: "
+                f"extract_files={emurun.get('extract_files')!r} "
+                f"extractcd={emurun.get('extractcd')!r}",
+                level="debug",
+            )
             # set args
             if emurun.get('extract_files'):
                 emurun['args'] = os.path.join(
@@ -289,13 +378,37 @@ class LaunchPreparer:
                     emurun['folder'], emurun['extractcd'][0])
         # set 1st rom or chd as argument
         else:
-            if emurun['zips'] and emurun['zips'][0]:
-                emurun['args'] = emurun['zips'][0]
-            elif emurun['chds'] and emurun['chds'][0]:
-                emurun['args'] = emurun['chds'][0]
+            if zips and zips[0]:
+                emurun['args'] = zips[0]
+            elif chds and chds[0]:
+                emurun['args'] = chds[0]
+            log(
+                f"UMSA Emu: launch={launch_id} direct-start selected "
+                f"argument={emurun.get('args')!r}",
+                level="debug",
+            )
 
         if emurun['swl_name'] == 'mame' and emu_infos.get('zip', False):
-            self._prepare_chd_directory_symlink(emurun)
+            try:
+                self._prepare_chd_directory_symlink(emurun)
+            except OSError as error:
+                log(
+                    f"UMSA Emu: launch={launch_id} CHD symlink preparation "
+                    f"failed for swl={emurun['swl_name']!r} "
+                    f"set={emurun['set_name']!r}: {error}",
+                    level="error",
+                )
+                raise
+        else:
+            reason = (
+                "software list is not mame"
+                if emurun['swl_name'] != 'mame'
+                else "extraction is enabled"
+            )
+            log(
+                f"UMSA Emu: launch={launch_id} CHD symlink skipped: {reason}",
+                level="debug",
+            )
 
         # special emulator handling
         exe_lower = emu_infos['exe'].lower()
@@ -310,4 +423,12 @@ class LaunchPreparer:
         elif 'fs-uae' in exe_lower:
             self.fsuae(emurun)
 
+        log(
+            f"UMSA Emu: launch={launch_id} preparation complete: "
+            f"emulator={emu_infos.get('name', '')!r} "
+            f"exe={emurun.get('emu_exe')!r} "
+            f"working_dir={emurun.get('working_dir')!r} "
+            f"args={emurun.get('args')!r} success={ret_val}",
+            level="debug",
+        )
         return ret_val

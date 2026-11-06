@@ -8,6 +8,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from umsa_core import log
 from umsa_core.emulation import CHDExtractionCancelled, CHDExtractionError
@@ -44,6 +45,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
     Preserves existing behavior and error/cleanup semantics.
     """
     emu_infos = ctx.emu_infos or {}
+    launch_id = uuid4().hex[:8]
 
     # stop playing mame vgm
     if getattr(ctx.emulation, 'playvgm', False):
@@ -68,6 +70,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
 
     # build emurun
     ctx.emulation.emurun = {
+        'launch_id': launch_id,
         'emulation_start': ctx.emulation_start,
         'working_dir': ctx.mame_dir,
         'swl_name': ctx.actset.get('swl_name'),
@@ -77,6 +80,14 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
         'set_clone': ctx.ggdb.get_set_name(ctx.actset.get('clone')) if ctx.ggdb else None,
         'disks': ctx.ggdb.get_disks(ctx.actset.get('swl_name'), ctx.actset.get('name')) if ctx.ggdb else [],
     }
+    log(
+        f'UMSA gui: launch={launch_id} selected emulator='
+        f'{emu_infos.get("name", "")!r} exe={emu_infos.get("exe", "")!r} '
+        f'swl={ctx.actset.get("swl_name")!r} set={ctx.actset.get("name")!r} '
+        f'description={ctx.actset.get("gamename")!r} '
+        f'mode={ctx.emulation_start} zip_setting={emu_infos.get("zip")!r}',
+        level='debug',
+    )
 
     # disk selection
     emurun_disks = ctx.emulation.emurun.get('disks') or []
@@ -139,6 +150,10 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
             error = ctx.emulation.other_emulator(
                 emu_infos, sleep=ctx.sleep, dialog=ctx.emu_dialog)
         except CHDExtractionCancelled:
+            log(
+                f'UMSA gui: launch={launch_id} CHD extraction cancelled for '
+                f'{ctx.actset.get("swl_name")!r}/{ctx.actset.get("name")!r}',
+                level='debug')
             ctx.stop_screensaver()
             try:
                 ctx.emu_dialog.close()
@@ -148,6 +163,11 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                     f'cancellation: {error}', level='warning')
             return
         except CHDExtractionError as error:
+            log(
+                f'UMSA gui: launch={launch_id} CHD extraction failed for '
+                f'{ctx.actset.get("swl_name")!r}/{ctx.actset.get("name")!r}: '
+                f'{error}',
+                level='error')
             ctx.stop_screensaver()
             try:
                 ctx.emu_dialog.close()
@@ -173,10 +193,18 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                     f'UMSA gui: could not close emulator dialog after '
                     f'preparation error: {close_error}', level='warning')
             log(
-                f'UMSA gui: emulator preparation failed: {error}',
+                f'UMSA gui: launch={launch_id} emulator preparation failed '
+                f'for {ctx.actset.get("swl_name")!r}/'
+                f'{ctx.actset.get("name")!r} with '
+                f'{emu_infos.get("name", "")!r}: {error}',
                 level='error')
             raise
         if not error:
+            log(
+                f'UMSA gui: launch={launch_id} emulator preparation stopped: '
+                f'ROM/CHD not found for {ctx.actset.get("swl_name")!r}/'
+                f'{ctx.actset.get("name")!r}',
+                level='warning')
             ctx.stop_screensaver()
             try:
                 ctx.emu_dialog.close()
@@ -243,6 +271,11 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
     start = time.time()
     try:
         try:
+            log(
+                f'UMSA gui: launch={launch_id} starting emulator='
+                f'{emu_infos.get("name", "")!r} '
+                f'mode={emurun.get("emulation_start")}',
+                level='debug')
             if uses_process_runner:
                 ctx.emulation.start_managed_process(
                     capture_output=(emurun.get('emulation_start') == 1)
@@ -251,7 +284,8 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                 ctx.emulation.run()
         except OSError as error:
             log(
-                f'UMSA gui: {emu_infos.get("name", "")} launch failed: {error}',
+                f'UMSA gui: launch={launch_id} '
+                f'{emu_infos.get("name", "")} launch failed: {error}',
                 level='error')
             try:
                 ctx.emu_dialog.close()
@@ -306,9 +340,17 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
             exit_code = getattr(st, 'exit_code', None)
         except Exception as error:
             log(
-                f'UMSA gui: could not read emulator exit status: {error}',
+                f'UMSA gui: launch={launch_id} could not read emulator exit '
+                f'status: {error}',
                 level='warning')
             exit_code = None
+    log(
+        f'UMSA gui: launch={launch_id} emulator run completed: '
+        f'emulator={emu_infos.get("name", "")!r} '
+        f'swl={ctx.actset.get("swl_name")!r} set={ctx.actset.get("name")!r} '
+        f'mode={emurun.get("emulation_start")} '
+        f'duration={end - start:.3f}s managed_exit_code={exit_code!r}',
+        level='debug')
     if exit_code is not None and exit_code != 0:
         try:
             cmd_args = ctx.emulation.emurun.get('args', [])

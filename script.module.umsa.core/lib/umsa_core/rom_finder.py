@@ -21,7 +21,7 @@ EXTENSIONS = {
 
 
 def find_roms(emurun, rom_paths):
-    """Search for rom zipfiles and chd files within MAME rompath.
+    """Search for ROM ZIPs and CHDs within MAME rompath.
 
     Args:
         emurun: Emulation run state dict containing swl_name, set_name, set_clone, disks
@@ -29,6 +29,10 @@ def find_roms(emurun, rom_paths):
 
     Returns:
         The first zip path if called with explicit swl_name/set_name (for VGM), otherwise None.
+
+    MAME CHDs are discovered by scanning each set directory because the
+    database does not provide their filenames. Software-list CHDs continue to
+    use the disk names from ``emurun['disks']``.
     """
     zips, chds, all_chds = [], [], []
     swl_name = emurun.get('swl_name')
@@ -45,27 +49,51 @@ def find_roms(emurun, rom_paths):
     else:
         zip_name = os.path.join(swl_name, set_name + '.zip')
 
-    # create chd filenames
-    for i in disks:
-        try:
-            disk_name = i['disk']
-        except (KeyError, IndexError, TypeError):
-            continue
-        if not disk_name:
-            continue
-        all_chds.append(os.path.join(
-            swl_name, set_name,
-            f'{disk_name}.chd'))
-        # also check parent in case we have merged sets
-        if set_clone:
+    if swl_name == 'mame':
+        set_dirs = [set_name]
+        if set_clone and set_clone != set_name:
+            set_dirs.append(set_clone)
+        seen_chds = set()
+        for path in rom_paths:
+            for directory_name in set_dirs:
+                chd_dir = os.path.join(path, directory_name)
+                try:
+                    with os.scandir(chd_dir) as entries:
+                        for entry in sorted(
+                            entries, key=lambda item: (item.name.casefold(), item.name)
+                        ):
+                            if (
+                                entry.name.lower().endswith('.chd')
+                                and entry.is_file()
+                                and entry.path not in seen_chds
+                            ):
+                                chds.append(entry.path)
+                                seen_chds.add(entry.path)
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+    else:
+        # Create CHD filenames from software-list disk metadata.
+        for i in disks:
+            try:
+                disk_name = i['disk']
+            except (KeyError, IndexError, TypeError):
+                continue
+            if not disk_name:
+                continue
             all_chds.append(os.path.join(
-                swl_name, set_clone,
+                swl_name, set_name,
                 f'{disk_name}.chd'))
+            # Also check parent in case we have merged sets.
+            if set_clone:
+                all_chds.append(os.path.join(
+                    swl_name, set_clone,
+                    f'{disk_name}.chd'))
 
     # search filename
     for path in rom_paths:
-        # check for chd
-        if all_chds:
+        # Software-list CHDs use explicit filenames; MAME CHDs were scanned
+        # directly from the set directories above.
+        if swl_name != 'mame' and all_chds:
             for i in all_chds:
                 chd_file = os.path.join(path, i)
                 if os.path.isfile(chd_file):

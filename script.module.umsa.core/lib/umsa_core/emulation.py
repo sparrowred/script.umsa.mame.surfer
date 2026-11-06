@@ -5,6 +5,7 @@ import socket  # noqa: F401
 import subprocess
 from platform import platform
 from threading import Thread
+from time import monotonic
 from time import sleep as time_sleep
 
 from umsa_core import (
@@ -276,20 +277,34 @@ class Emulation:
             for i in args:
                 run += f'"{i}" '
             torun = [self.terminal, '-e', run]
-            log(f'UMSA Emulation run {torun}', level='debug')
+            launch_id = self.emurun.get("launch_id", "unknown")
+            started_at = monotonic()
+            log(
+                f'UMSA Emulation: launch={launch_id} starting terminal '
+                f'fallback command={args!r} working_dir='
+                f'{self.emurun.get("working_dir")!r} terminal_command={torun!r}',
+                level='debug')
             try:
                 completed = subprocess.run(torun, check=False)
             except OSError as error:
                 log(
-                    f'UMSA Emulation: could not start terminal fallback '
+                    f'UMSA Emulation: launch={launch_id} could not start '
+                    f'terminal fallback '
                     f'{torun!r}: {error}', level='error')
                 raise ProcessLaunchError(
                     f'could not start terminal fallback {torun!r}: {error}'
                 ) from error
+            duration = monotonic() - started_at
+            log(
+                f'UMSA Emulation: launch={launch_id} terminal fallback '
+                f'completed with exit code {completed.returncode} after '
+                f'{duration:.3f}s',
+                level='debug')
             if completed.returncode != 0:
                 log(
-                    f'UMSA Emulation: terminal fallback exited with code '
-                    f'{completed.returncode}: {torun!r}', level='error')
+                    f'UMSA Emulation: launch={launch_id} terminal fallback '
+                    f'exited with code {completed.returncode}: {torun!r}',
+                    level='error')
 
     def _process_args(self):
         """Build the command used by direct process launches."""
@@ -307,11 +322,30 @@ class Emulation:
         """Start a non-VGM process using Core process ownership."""
 
         args = self._process_args()
-        self.process_runner.start(
-            args,
-            cwd=self.emurun['working_dir'],
-            capture_output=capture_output,
-            env=self.emurun.get('env'),
+        launch_id = self.emurun.get("launch_id", "unknown")
+        working_dir = self.emurun['working_dir']
+        log(
+            f"UMSA Emulation: launch={launch_id} starting managed process "
+            f"command={args!r} working_dir={working_dir!r}",
+            level="debug",
+        )
+        try:
+            self.process_runner.start(
+                args,
+                cwd=working_dir,
+                capture_output=capture_output,
+                env=self.emurun.get('env'),
+            )
+        except OSError as error:
+            log(
+                f"UMSA Emulation: launch={launch_id} managed process "
+                f"startup failed: {error}",
+                level="error",
+            )
+            raise
+        log(
+            f"UMSA Emulation: launch={launch_id} managed process started",
+            level="debug",
         )
 
     def managed_process_status(self) -> ProcessStatus:
