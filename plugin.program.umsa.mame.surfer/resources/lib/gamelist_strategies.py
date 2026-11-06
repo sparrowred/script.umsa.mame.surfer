@@ -86,7 +86,7 @@ def machine(ctx):
     if ctx.actset['swl_name'] == "mame":
         emus = ctx.db.get_emulators(source=ctx.actset['source'])
         gl_label = 'Emulators for source {} ({})'.format(
-            ctx.actset['source'][:-4], len(results))
+            ctx.actset['source'][:-4], len(emus))
     else:
         emus = ctx.db.get_emulators(swl_name=ctx.actset['swl_name'])
         temp_results, pos = ctx.db.get_machines(

@@ -96,6 +96,10 @@ def marp_replayer(gui, dl_file=None, set_name=None, random=None):
     if not dl_file:
         rand_version = randint(178, 218)
         all_marps = marp_search(version=rand_version)
+        if not all_marps:
+            gui.dialog.notification(
+                "MARP", f"no replays found for version {rand_version}")
+            return
         if random:
             marp_rand = choice(all_marps)
             dl_file = marp_rand['download']
@@ -107,11 +111,11 @@ def marp_replayer(gui, dl_file=None, set_name=None, random=None):
                     i['gamename'], i['player'], i['rank'], i['percentage'], i['points']))
             ret = gui.dialog.select(
                 f"Select MARP {rand_version} replay:", marp_list, useDetails=True)
-            if ret:
-                dl_file = all_marps[ret]['download']
-                set_name = all_marps[ret]['set_name']
-            else:
+            # select() returns -1 on cancel; index 0 is a valid choice
+            if ret < 0:
                 return
+            dl_file = all_marps[ret]['download']
+            set_name = all_marps[ret]['set_name']
 
     gui.run_emulator({
         'name': "MARP Replay", 'exe': "marp", 'set_name': set_name, 'marp_dl': dl_file})

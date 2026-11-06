@@ -176,7 +176,7 @@ def youtube_search(gamename, machine):
     - curl -o /tmp/ytsearch.html the resulting url, open in browser, search for id of video
     """
 
-    query_string = urlencode({"search_query" : f'{gamename.split()}+{machine}'})
+    query_string = urlencode({"search_query": f"{gamename} {machine}"})
     with urlopen(f"{YT_URL}/results?{query_string}", timeout=30) as url_open:
         html_content = unescape(url_open.read().decode('utf-8', errors='ignore'))
     return findall(r'{"videoId":"(.{11})".*?"text":"(.*?)"', html_content)

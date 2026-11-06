@@ -123,7 +123,7 @@ def create_artworklist(gui):
                     set_info['manual'] = filename[:-4] + '.' + art['extension']
                     man += 1
                 else:
-                    xbmc.log("UMSA gui: create_artworklist: cant identify artwork type = {art}")
+                    xbmc.log(f"UMSA gui: create_artworklist: cant identify artwork type = {art}")
 
     gui.vidman = (vid, man)
     minutes = divmod(gui.played['played'], 60)[0]

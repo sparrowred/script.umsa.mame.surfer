@@ -100,8 +100,8 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
                 (filter_lists.get('Machine Categories'))):
             cursor.execute("SELECT COUNT(id) FROM category")
             cat_count = _fetch_scalar(cursor)
-            cat_ids = (filter_lists['Game Categories'] +
-                       filter_lists['Machine Categories'])
+            cat_ids = (filter_lists.get('Game Categories', []) +
+                       filter_lists.get('Machine Categories', []))
             log(f"UMSA database: filter categories {cat_count}, {len(cat_ids)}",
                 level='debug')
             if cat_count > len(cat_ids):
@@ -179,6 +179,11 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
     mirror the historical reset.
     """
 
+    if prevnext not in (None, '', 'prev', 'next'):
+        log(f"UMSA database: execute_statement: invalid prevnext {prevnext!r}",
+            level='debug')
+        return [], 0, 0
+
     time_start = time.time()
     result_count = 0
     where = ""
@@ -242,21 +247,29 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
     cursor = connection.cursor()
     try:
         # get software name
+        sname = None
         if set_id:
             name_statement = "SELECT software.name FROM software \
                     JOIN sets ON software.id = sets.softwarelink_id \
                     WHERE sets.id = ?"
             cursor.execute(name_statement, (set_id,))
-            sname = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            sname = row[0] if row else None
         elif software_id:
             cursor.execute(
                 "SELECT software.name FROM software WHERE software.id = ?",
                 (software_id,)
             )
-            sname = cursor.fetchone()[0]
+            row = cursor.fetchone()
+            sname = row[0] if row else None
         else:
             log("UMSA database: execute_statement: no set or software id error",
                 level='debug')
+        if prevnext and sname is None:
+            # Prev/Next needs the name of the current software as boundary
+            log("UMSA database: execute_statement: no software name for "
+                f"{prevnext}, empty result", level='debug')
+            return [], 0, 0
         # add ordering
         order = _ORDER_SQL.get(state.order)
         if order is None:
@@ -296,7 +309,7 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                     i_params = [sname]
                 limit = "ASC LIMIT 100"
             else:
-                log("UMSA database execute_statement: prevnext error {prevnext}",
+                log(f"UMSA database execute_statement: prevnext error {prevnext}",
                     level='debug')
             # fetch software list
             select_statement = f"SELECT DISTINCT \

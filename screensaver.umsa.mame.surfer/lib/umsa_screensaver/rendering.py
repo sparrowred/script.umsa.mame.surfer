@@ -378,20 +378,13 @@ class RenderSession:
         self.next_mode = None
 
     def _wait_time(self):
-        """Return how long the artwork stays on screen."""
+        """Return how long the artwork stays on screen.
 
-        saver = self.saver
-        kodi = self.kodi
-        if saver.running == 'videos':
-            kodi.log(f"UMSA SSaver isPlayingVideo {saver.parent.player.isPlayingVideo()}", kodi.LOGDEBUG)
-            while not saver.parent.player.isPlayingVideo():
-                kodi.sleep(250)
-                kodi.log(f"UMSA SSaver isPlayingVideo {saver.parent.player.isPlayingVideo()}", kodi.LOGDEBUG)
-            # get total time in sec
-            wait_time = int(saver.parent.player.getTotalTime())+1
-            kodi.log("UMSA SSaver wait_time {wait_time}", kodi.LOGDEBUG)
-            return wait_time
-        return saver.settings['time']
+        The video mode never reaches the artwork wait loop: ``run()`` hands
+        it over to the player callbacks before the loop starts.
+        """
+
+        return self.saver.settings['time']
 
     def _cleanup(self, ctx):
         """Clear the images of the finished screensaver."""

@@ -157,11 +157,7 @@ def gamelist_move(gui):
 
     # check label if we have games in list
     g_label = gui.getControl(GAME_LIST_LABEL).getLabel()
-    if (g_label in 'Machines for'
-            or g_label in 'Choose Media'
-            or g_label in 'Emulators'
-            or g_label in 'Select'
-           ):
+    if g_label.startswith(('Machines for', 'Choose Media', 'Emulators', 'Select')):
         xbmc.log(f"UMSA gui: gamelist_move: label {g_label} = return")
         return
     # get infos

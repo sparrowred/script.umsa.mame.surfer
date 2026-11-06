@@ -59,9 +59,9 @@ def extract_rom(emurun):
             if os.path.splitext(zfiles[0])[1] != EXTENSIONS[emurun['swl_name']]:
                 os.rename(
                     os.path.join(emurun['folder'], zfiles[0]),
-                    os.path.join(emurun['folder'], "{}.{}".format(
-                        zfiles[0], EXTENSIONS[emurun['swl_name']]
-                    ))
+                    # EXTENSIONS values already start with a dot
+                    os.path.join(emurun['folder'],
+                                 zfiles[0] + EXTENSIONS[emurun['swl_name']])
                 )
             zfiles = os.listdir(emurun['folder'])
     emurun['extract_files'] = zfiles

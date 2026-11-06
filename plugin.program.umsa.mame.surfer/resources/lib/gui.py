@@ -647,6 +647,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 return
             # exit add-on
             self.exit()
+            return
 
         # ACTION SOFTWARE_BUTTON
         if self.selected_control_id == SOFTWARE_BUTTON:
