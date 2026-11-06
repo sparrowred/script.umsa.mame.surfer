@@ -13,10 +13,21 @@ from umsa_core.database import (
     download_and_update_umsa_db,
     run_scan_with_progress,
 )
+from umsa_core.umsa_db_download import UmsaDbDownloadError
+
+
+class _DownloadCancelled(Exception):
+    """The user pressed cancel in the download progress dialog."""
 
 
 def update(gui, what, core_data_paths):
-    """Update UMSA database, artwork or support files"""
+    """Update UMSA database, artwork or support files
+
+    For ``what == 'db'`` it returns True when the new umsa.db is open and False
+    when the download failed or was cancelled. In that case the previous
+    umsa.db (left untouched by the Core download) is reopened if there was one;
+    on a first start ``gui.ggdb`` stays None.
+    """
 
     settings_folder = core_data_paths.filters_dir
 
@@ -30,12 +41,31 @@ def update(gui, what, core_data_paths):
             gui.ggdb.close_umsa_db()
 
         def progress(percent, title, message):
+            if progress_dialog.iscanceled():
+                raise _DownloadCancelled()
             if message is None:
                 progress_dialog.update(percent)
             else:
                 progress_dialog.update(percent, message)
 
-        download_and_update_umsa_db(core_data_paths.data_dir, progress)
+        try:
+            download_and_update_umsa_db(core_data_paths.data_dir, progress)
+        except _DownloadCancelled:
+            xbmc.log("UMSA gui: update: umsa.db download cancelled", xbmc.LOGINFO)
+            failure = ('download cancelled', xbmcgui.NOTIFICATION_INFO)
+        except (UmsaDbDownloadError, OSError) as exc:
+            xbmc.log(f"UMSA gui: update: umsa.db download failed: {exc}", xbmc.LOGERROR)
+            failure = (f'download failed: {exc}', xbmcgui.NOTIFICATION_ERROR)
+        else:
+            failure = None
+
+        if failure:
+            progress_dialog.close()
+            # the old umsa.db is unchanged, reopen it
+            if gui.ggdb:
+                gui.ggdb.open_db(settings_folder)
+            gui.dialog.notification('UMSA database', failure[0], failure[1], 5000)
+            return False
 
         # re-connect to db
         if gui.ggdb:
@@ -51,6 +81,7 @@ def update(gui, what, core_data_paths):
             )
 
         progress_dialog.close()
+        return True
 
     # scan support files / eXoDOS / GameBase64 / artwork
     elif what in ('dat', 'exo', 'gb64', 'art'):

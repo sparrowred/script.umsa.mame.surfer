@@ -76,6 +76,14 @@ def create_dat_tables(db_cursor: sqlite3.Cursor) -> None:
         """
     )
     _ensure_origin_column(db_cursor)
+    # lookups by set id, the dat row join and the per-origin cleanup of the
+    # GB64/eXoDOS scans would otherwise scan the whole tables
+    db_cursor.execute(
+        "CREATE INDEX IF NOT EXISTS dat_set_id_idx ON dat_set(id)")
+    db_cursor.execute(
+        "CREATE INDEX IF NOT EXISTS dat_set_dat_id_idx ON dat_set(dat_id)")
+    db_cursor.execute(
+        "CREATE INDEX IF NOT EXISTS dat_origin_idx ON dat(origin)")
     _backfill_origin(db_cursor)
 
 

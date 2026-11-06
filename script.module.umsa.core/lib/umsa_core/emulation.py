@@ -1,6 +1,7 @@
 """Module for general emulation handling."""
 
 import os
+import shlex
 import socket  # noqa: F401
 import subprocess
 from platform import platform
@@ -272,11 +273,9 @@ class Emulation:
                 args, cwd=self.emurun['working_dir'], **popen_env)
         elif self.emurun['emulation_start'] == 2: # Fallback
             self.process = None
-            run = ''
-            # escape parameters with double quotes
-            for i in args:
-                run += f'"{i}" '
-            torun = [self.terminal, '-e', run]
+            # most terminals hand the -e string to a shell; shlex.join quotes
+            # every argument so names with quotes, $() or backticks stay data
+            torun = [self.terminal, '-e', shlex.join(args)]
             launch_id = self.emurun.get("launch_id", "unknown")
             started_at = monotonic()
             log(

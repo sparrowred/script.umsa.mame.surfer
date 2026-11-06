@@ -403,7 +403,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.ggdb = DBMod(SETTINGS_FOLDER, self.nonmame, self.filter_lists, self.pref_country)
         else:
             # DB download in foreground, dat+art scan in background
-            self.update('db')
+            if not self.update('db'):
+                xbmc.log("UMSA gui: onInit: no umsa.db after download, closing",
+                         xbmc.LOGERROR)
+                self.close()
+                return
             self.scan_thread = Thread(target=self.update, args=('dat',))
             self.scan_thread.start()
 
