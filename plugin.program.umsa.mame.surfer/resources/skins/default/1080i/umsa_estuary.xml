@@ -51,6 +51,8 @@
       <loop>Container(2233).NumItems &gt; 1</loop>
       <aspectratio align="center" aligny="center">keep</aspectratio>
       <visible>!Container(2233).ListItem.Property(NotEnabled)</visible>
+      <!-- video preview 2004 covers y 23..623: shrink towards the bottom centre -->
+      <animation effect="zoom" start="100" end="40" center="1406,1020" time="400" tween="cubic" easing="out" condition="Player.HasVideo">Conditional</animation>
     </control>
     <control type="image">
       <description>Default focus marker</description>
@@ -199,10 +201,12 @@
       </focusedlayout>
     </control>
     <control type="image" id="2405">
-      <description>System artwork background placeholder</description>
+      <description>System artwork border (width/texture set by software_selector.py)</description>
       <posx>57</posx>
       <posy>147</posy>
+      <width>186</width>
       <height>141</height>
+      <texture>border1.png</texture>
       <visible>true</visible>
     </control>
     <control type="image" id="4210">
@@ -213,6 +217,18 @@
       <height>126</height>
       <texture>arrow.png</texture>
       <visible>true</visible>
+    </control>
+    <control type="label" id="4211">
+      <description>Number of machines (set from 6 machines on)</description>
+      <posx>826</posx>
+      <posy>255</posy>
+      <width>50</width>
+      <height>30</height>
+      <align>left</align>
+      <aligny>bottom</aligny>
+      <font>font-15</font>
+      <textcolor>FF91C98A</textcolor>
+      <label/>
     </control>
     <control type="wraplist" id="4005">
       <description>System artwork list</description>
@@ -372,11 +388,11 @@
       <height>45</height>
       <visible>true</visible>
       <orientation>horizontal</orientation>
-      <itemlayout width="720" height="45">
+      <itemlayout width="180" height="45">
         <control type="label">
           <posx>0</posx>
           <posy>0</posy>
-          <width>720</width>
+          <width>170</width>
           <height>45</height>
           <font>font-17</font>
           <textcolor>FF91C98A</textcolor>
@@ -384,15 +400,16 @@
           <info>ListItem.Label</info>
         </control>
       </itemlayout>
-      <focusedlayout width="720" height="45">
+      <focusedlayout width="180" height="45">
         <control type="label">
           <posx>0</posx>
           <posy>0</posy>
-          <width>720</width>
+          <width>170</width>
           <height>45</height>
           <font>font-17</font>
           <textcolor>FF35F04E</textcolor>
           <selectedcolor>FF35F04E</selectedcolor>
+          <scroll>Control.HasFocus(4033)</scroll>
           <info>ListItem.Label</info>
         </control>
       </focusedlayout>
@@ -419,9 +436,9 @@
       <aspectratio>stretch</aspectratio>
     </control>
     <control type="label" id="2005">
-      <posx>1080</posx>
+      <posx>900</posx>
       <posy>15</posy>
-      <width>983</width>
+      <width>1013</width>
       <height>38</height>
       <label>$INFO[VideoPlayer.Title]</label>
       <font>font10</font>
@@ -456,7 +473,7 @@
       <control type="label" id="4117">
         <posx>908</posx>
         <posy>83</posy>
-        <width>675</width>
+        <width>612</width>
         <height>42</height>
         <label/>
         <font>font-17</font>
@@ -468,7 +485,7 @@
       <control type="label" id="4217">
         <posx>908</posx>
         <posy>83</posy>
-        <width>675</width>
+        <width>612</width>
         <height>30</height>
         <label/>
         <font>font10</font>
@@ -476,29 +493,33 @@
         <visible>false</visible>
       </control>
       <control type="image">
-        <posx>1575</posx>
+        <description>Shared green underline: 4117 (list focus) / 4118 / 4119, moves with the focus</description>
+        <posx>620</posx>
         <posy>128</posy>
-        <width>150</width>
+        <width>900</width>
         <height>5</height>
         <texture>focus_h.png</texture>
         <colordiffuse>FF35F04E</colordiffuse>
-        <visible>Control.HasFocus(4118)</visible>
+        <visible>Control.HasFocus(4007) | Control.HasFocus(4118) | Control.HasFocus(4119)</visible>
+        <animation effect="zoom" end="1530,128,180,5" time="250" tween="cubic" easing="out" condition="Control.HasFocus(4118)">Conditional</animation>
+        <animation effect="zoom" end="1715,128,180,5" time="250" tween="cubic" easing="out" condition="Control.HasFocus(4119)">Conditional</animation>
+        <animation effect="slide" start="1350,0" end="0,0" time="350" tween="cubic" easing="out">VisibleChange</animation>
       </control>
       <control type="wraplist" id="4118">
         <description>Game list options</description>
         <visible allowhiddenfocus="true">ControlGroup(407).HasFocus</visible>
         <onleft>4007</onleft>
         <onright>4119</onright>
-        <posx>1575</posx>
+        <posx>1530</posx>
         <posy>83</posy>
-        <width>300</width>
+        <width>180</width>
         <height>45</height>
         <orientation>vertical</orientation>
-        <itemlayout width="300" height="45">
+        <itemlayout width="180" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
-            <width>278</width>
+            <width>150</width>
             <height>45</height>
             <font>font-15</font>
             <textcolor>FF91C98A</textcolor>
@@ -506,11 +527,11 @@
             <info>ListItem.Label</info>
           </control>
         </itemlayout>
-        <focusedlayout width="300" height="45">
+        <focusedlayout width="180" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
-            <width>278</width>
+            <width>150</width>
             <height>45</height>
             <font>font-15</font>
             <textcolor>FF35F04E</textcolor>
@@ -519,30 +540,21 @@
           </control>
         </focusedlayout>
         <animation effect="slide" start="1350,0" end="0,0" time="350" tween="cubic" easing="out">VisibleChange</animation>
-      </control>
-      <control type="image">
-        <posx>1725</posx>
-        <posy>128</posy>
-        <width>150</width>
-        <height>5</height>
-        <texture>focus_h.png</texture>
-        <colordiffuse>FF35F04E</colordiffuse>
-        <visible>Control.HasFocus(4119)</visible>
       </control>
       <control type="wraplist" id="4119">
         <description>Game list filter switch</description>
         <visible allowhiddenfocus="true">ControlGroup(407).HasFocus</visible>
         <onleft>4118</onleft>
-        <posx>1725</posx>
+        <posx>1715</posx>
         <posy>83</posy>
-        <width>300</width>
+        <width>180</width>
         <height>45</height>
         <orientation>vertical</orientation>
-        <itemlayout width="300" height="45">
+        <itemlayout width="180" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
-            <width>278</width>
+            <width>150</width>
             <height>45</height>
             <font>font-15</font>
             <textcolor>FF91C98A</textcolor>
@@ -550,11 +562,11 @@
             <info>ListItem.Label</info>
           </control>
         </itemlayout>
-        <focusedlayout width="300" height="45">
+        <focusedlayout width="180" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
-            <width>278</width>
+            <width>150</width>
             <height>45</height>
             <font>font-15</font>
             <textcolor>FF35F04E</textcolor>
@@ -562,16 +574,6 @@
             <info>ListItem.Label</info>
           </control>
         </focusedlayout>
-        <animation effect="slide" start="1350,0" end="0,0" time="350" tween="cubic" easing="out">VisibleChange</animation>
-      </control>
-      <control type="image">
-        <posx>570</posx>
-        <posy>143</posy>
-        <width>960</width>
-        <height>5</height>
-        <texture>focus_h.png</texture>
-        <colordiffuse>FF35F04E</colordiffuse>
-        <visible>Control.HasFocus(4007)</visible>
         <animation effect="slide" start="1350,0" end="0,0" time="350" tween="cubic" easing="out">VisibleChange</animation>
       </control>
       <control type="fixedlist" id="4007">
@@ -581,9 +583,9 @@
         <posx>570</posx>
         <posy>150</posy>
         <width>1260</width>
-        <height>765</height>
+        <height>630</height>
         <orientation>vertical</orientation>
-        <focusposition>8</focusposition>
+        <focusposition>6</focusposition>
         <movement>7</movement>
         <itemlayout width="1260" height="45">
           <control type="label">
@@ -663,9 +665,9 @@
       <control type="textbox" id="4114">
         <description>Selected game description</description>
         <posx>630</posx>
-        <posy>915</posy>
-        <width>945</width>
-        <height>75</height>
+        <posy>795</posy>
+        <width>900</width>
+        <height>195</height>
         <font>font-17</font>
         <textcolor>FF83C97A</textcolor>
         <visible>ControlGroup(407).HasFocus</visible>
@@ -701,7 +703,7 @@
         <height>465</height>
         <orientation>vertical</orientation>
         <visible allowhiddenfocus="true">Control.HasFocus(4902)</visible>
-        <itemlayout width="450" height="45">
+        <itemlayout width="330" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
@@ -713,7 +715,7 @@
             <info>ListItem.Label</info>
           </control>
         </itemlayout>
-        <focusedlayout width="450" height="45">
+        <focusedlayout width="330" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
@@ -795,7 +797,7 @@
       <control type="image">
         <posx>1725</posx>
         <posy>128</posy>
-        <width>150</width>
+        <width>165</width>
         <height>5</height>
         <texture>focus_h.png</texture>
         <colordiffuse>FF35F04E</colordiffuse>
@@ -807,14 +809,14 @@
         <onleft>4088</onleft>
         <posx>1725</posx>
         <posy>83</posy>
-        <width>300</width>
+        <width>165</width>
         <height>45</height>
         <orientation>vertical</orientation>
-        <itemlayout width="300" height="45">
+        <itemlayout width="165" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
-            <width>278</width>
+            <width>140</width>
             <height>45</height>
             <font>font-15</font>
             <textcolor>FF91C98A</textcolor>
@@ -822,11 +824,11 @@
             <info>ListItem.Label</info>
           </control>
         </itemlayout>
-        <focusedlayout width="300" height="45">
+        <focusedlayout width="165" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
-            <width>278</width>
+            <width>140</width>
             <height>45</height>
             <font>font-15</font>
             <textcolor>FF35F04E</textcolor>
@@ -839,7 +841,7 @@
         <description>Category list focus</description>
         <posx>450</posx>
         <posy>150</posy>
-        <width>1005</width>
+        <width>300</width>
         <height>765</height>
         <texture>focus.png</texture>
         <colordiffuse>1808C85A</colordiffuse>
@@ -851,15 +853,15 @@
         <onright>4088</onright>
         <posx>450</posx>
         <posy>150</posy>
-        <width>1005</width>
+        <width>300</width>
         <height>765</height>
         <orientation>vertical</orientation>
         <visible allowhiddenfocus="true">ControlGroup(408).HasFocus</visible>
-        <itemlayout width="1005" height="45">
+        <itemlayout width="300" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
-            <width>975</width>
+            <width>270</width>
             <height>45</height>
             <font>font-15</font>
             <textcolor>FF91C98A</textcolor>
@@ -867,11 +869,11 @@
             <info>ListItem.Label</info>
           </control>
         </itemlayout>
-        <focusedlayout width="1005" height="45">
+        <focusedlayout width="300" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
-            <width>975</width>
+            <width>270</width>
             <height>45</height>
             <font>font-15</font>
             <textcolor>FF35F04E</textcolor>
@@ -912,7 +914,7 @@
             <font>font-15</font>
             <textcolor>FF91C98A</textcolor>
             <selectedcolor>FF35F04E</selectedcolor>
-            <scroll>true</scroll>
+            <scroll>false</scroll>
             <info>ListItem.Label</info>
           </control>
         </itemlayout>
@@ -925,7 +927,7 @@
             <font>font-15</font>
             <textcolor>FF35F04E</textcolor>
             <selectedcolor>FF35F04E</selectedcolor>
-            <scroll>true</scroll>
+            <scroll>Control.HasFocus(4088)</scroll>
             <info>ListItem.Label</info>
           </control>
         </focusedlayout>
@@ -962,7 +964,7 @@
             <font>font-15</font>
             <textcolor>FF91C98A</textcolor>
             <selectedcolor>FF35F04E</selectedcolor>
-            <scroll>true</scroll>
+            <scroll>false</scroll>
             <info>ListItem.Label</info>
           </control>
         </itemlayout>
@@ -975,7 +977,7 @@
             <font>font-15</font>
             <textcolor>FF35F04E</textcolor>
             <selectedcolor>FF35F04E</selectedcolor>
-            <scroll>true</scroll>
+            <scroll>Control.HasFocus(4089)</scroll>
             <info>ListItem.Label</info>
           </control>
         </focusedlayout>
@@ -1015,7 +1017,7 @@
         <orientation>vertical</orientation>
         <visible allowhiddenfocus="true">ControlGroup(490).HasFocus</visible>
         <animation effect="slide" start="-360,0" end="0,0" time="300" tween="quadratic" easing="out">VisibleChange</animation>
-        <itemlayout width="450" height="45">
+        <itemlayout width="360" height="45">
           <control type="label">
             <posx>15</posx>
             <posy>0</posy>
@@ -1027,7 +1029,7 @@
             <info>ListItem.Label</info>
           </control>
         </itemlayout>
-        <focusedlayout width="450" height="45">
+        <focusedlayout width="360" height="45">
           <control type="image">
             <posx>0</posx>
             <posy>0</posy>
@@ -1062,14 +1064,13 @@
       <shadowcolor>FF000000</shadowcolor>
     </control>
     <control type="label" id="4101">
-      <posx>1290</posx>
+      <posx>1463</posx>
       <posy>1035</posy>
-      <width>600</width>
+      <width>450</width>
       <height>30</height>
       <font>font-15</font>
       <textcolor>FF91C98A</textcolor>
       <align>right</align>
-      <info>Container(2223).ListItem.Property(AspectRatio)</info>
       <shadowcolor>80000000</shadowcolor>
     </control>
   </controls>

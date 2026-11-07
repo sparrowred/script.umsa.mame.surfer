@@ -59,8 +59,9 @@ def update_gamelist(gui, item, lastsaver_path):
         gui.choose_media()
         return
 
-    # show loading status
+    # show loading status (popup title and status line)
     gui.getControl(GAME_LIST_LABEL).setLabel('loading...')
+    gui.getControl(LABEL_STATUS).setLabel('loading...')
     time1 = time.time()
 
     strategy = GAMELIST_STRATEGIES.get(item)
@@ -81,11 +82,13 @@ def update_gamelist(gui, item, lastsaver_path):
             # Ensure the submenu is populated for strategies that open a gamelist
             # (Series, Recommended) so that left navigation from the gamelist works.
             gui.build_sublist_menu(item)
+            gui.getControl(LABEL_STATUS).setLabel('')
             return
         results, pos, gl_label, gl_options = outcome
 
     # no results = close list
     if len(results) == 0:
+        gui.getControl(LABEL_STATUS).setLabel('')
         if item == M_SEARCH:
             gui.searchold = None
         gui.dialog.notification('Search', 'found nothing...',

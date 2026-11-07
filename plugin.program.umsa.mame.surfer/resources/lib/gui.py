@@ -114,6 +114,7 @@ from umsa_gui.constants import (
     M_SWL,
     M_UPD,
     M_YEAR,
+    MACHINE_COUNT,
     MACHINE_PLUS,
     MACHINE_SEP1,
     MACHINE_SEP2,
@@ -195,6 +196,7 @@ __all__ = [
     "LEFT_IMAGE_HORI",
     "LEFT_IMAGE_VERT",
     "LISTMODE_MENU",
+    "MACHINE_COUNT",
     "MACHINE_PLUS",
     "MACHINE_SEP1",
     "MACHINE_SEP2",
@@ -762,7 +764,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     open_core_settings()
                     self.read_settings()
                 else:
-                    self.setFocus(self.getControl(GAME_LIST_LABEL))
+                    # close the menu; 'loading...' shows in LABEL_STATUS until the list pops up
+                    self.setFocus(self.getControl(self.main_focus))
                     self.update_gamelist(menu_item)
 
             elif action.getId() in ACTION_CONTEXT:

@@ -14,6 +14,7 @@ from umsa_core.database import split_gamename
 from .constants import (
     COMPILATION_LABEL,
     LABEL_STATUS,
+    MACHINE_COUNT,
     MACHINE_PLUS,
     MACHINE_SEP1,
     MACHINE_SEP2,
@@ -242,13 +243,13 @@ def select_software(gui, software_id):
         gui.getControl(COMPILATION_LABEL).setVisible(False)
 
     xbmc.log("UMSA gui: select_software: set number of machines")
-    # set number of machines
-    if no_machines > 4:
-        gui.getControl(LABEL_STATUS).setLabel(
-            f"{len(gui.info)!s} machines"
-        )
+    # number of machines next to the "more" marker, from 6 machines on
+    if no_machines >= 6:
+        gui.getControl(MACHINE_COUNT).setLabel(str(no_machines))
     else:
-        gui.getControl(LABEL_STATUS).setLabel('')
+        gui.getControl(MACHINE_COUNT).setLabel('')
+    # loading done: clear 'loading software...'
+    gui.getControl(LABEL_STATUS).setLabel('')
 
     time2 = time.time()
     xbmc.log("UMSA gui: select_software: complete  %0.3f ms" % ((time2 - time1) * 1000.0))
