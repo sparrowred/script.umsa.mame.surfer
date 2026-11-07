@@ -94,7 +94,7 @@ def marp_replayer(gui, dl_file=None, set_name=None, random=None):
     """
 
     if not dl_file:
-        rand_version = randint(178, 218)
+        rand_version = randint(178, 289)
         all_marps = marp_search(version=rand_version)
         if not all_marps:
             gui.dialog.notification(
