@@ -8,6 +8,7 @@ import os
 
 import xbmc
 import xbmcgui
+from umsa_core import ShutdownRequested
 from umsa_core.database import (
     DBMod,
     download_and_update_umsa_db,
@@ -18,6 +19,15 @@ from umsa_core.umsa_db_download import UmsaDbDownloadError
 
 class _DownloadCancelled(Exception):
     """The user pressed cancel in the download progress dialog."""
+
+
+def _cancel_pressed(progress_dialog):
+    """Return whether the cancel button of ``progress_dialog`` was pressed."""
+
+    try:
+        return bool(progress_dialog.iscanceled())
+    except Exception:  # noqa: BLE001 - a closed dialog counts as not cancelled
+        return False
 
 
 def update(gui, what, core_data_paths):
@@ -110,8 +120,21 @@ def update(gui, what, core_data_paths):
         def progress(percent, title, message):
             gui.progress_dialog.update(percent, title, message)
 
-        scan_result = run_scan_with_progress(
-            gui.ggdb, scan_method, scan_args, progress, title, xbmc.sleep)
+        try:
+            scan_result = run_scan_with_progress(
+                gui.ggdb, scan_method, scan_args, progress, title, xbmc.sleep,
+                wait=getattr(gui, 'abort_wait', None),
+                is_cancelled=lambda: _cancel_pressed(gui.progress_dialog))
+        except ShutdownRequested:
+            xbmc.log(f"UMSA gui: update: Kodi shuts down, {what} scan stopped", xbmc.LOGWARNING)
+            try:
+                gui.progress_dialog.close()
+            except Exception as error:  # noqa: BLE001 - a dialog failure must not block the shutdown
+                xbmc.log(
+                    f'UMSA gui: could not close scan progress dialog: {error}',
+                    xbmc.LOGWARNING)
+            gui.exit()
+            return
 
         if isinstance(scan_result, dict) and scan_result.get('busy'):
             gui.progress_dialog.close()
@@ -120,6 +143,7 @@ def update(gui, what, core_data_paths):
                 xbmcgui.NOTIFICATION_ERROR, 4000)
             return
 
+        cancelled = _cancel_pressed(gui.progress_dialog)
         # Scanner workflows now write directly to the authoritative source databases
         # (artwork.db, dat.db). No post-scan synchronization copy is needed.
         try:
@@ -128,3 +152,7 @@ def update(gui, what, core_data_paths):
             xbmc.log(
                 f'UMSA gui: could not close scan progress dialog: {error}',
                 xbmc.LOGWARNING)
+        if cancelled:
+            xbmc.log(f"UMSA gui: update: {what} scan cancelled by the user", xbmc.LOGINFO)
+            gui.dialog.notification(
+                'Scan Status', 'scan cancelled', xbmcgui.NOTIFICATION_INFO, 4000)

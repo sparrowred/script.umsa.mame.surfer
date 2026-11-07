@@ -235,3 +235,20 @@ def parse_software_open_method(method: str):
         return int(value)
     except ValueError:
         return None
+
+
+def make_abort_wait(monitor=None):
+    """Return an abort-aware ``wait(milliseconds) -> bool`` for Core loops.
+
+    The callback waits through ``Monitor.waitForAbort`` and returns ``True``
+    as soon as Kodi asks the script to end (``umsa_core.abort.Wait``). Pass
+    the caller's own monitor; without one a new ``xbmc.Monitor`` is used.
+    """
+
+    if monitor is None:
+        monitor = xbmc.Monitor()
+
+    def wait(milliseconds):
+        return bool(monitor.waitForAbort(max(0, milliseconds) / 1000.0))
+
+    return wait

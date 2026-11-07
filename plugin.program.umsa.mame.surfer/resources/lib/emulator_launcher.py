@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from umsa_core import log
+from umsa_core import ShutdownRequested, log
 from umsa_core.emulation import CHDExtractionCancelled, CHDExtractionError
 
 
@@ -37,6 +37,21 @@ class LaunchCtx:
     add_or_update_emu_output: Callable[[str, str, int, list], None] = lambda out, err, code, args: None
     notify_final: Callable[[str, str, str], None] = lambda notif, name, mode: None
     sleep: Callable[[int], None] = lambda ms: None
+    # abort-aware wait (umsa_core.abort.Wait): True when Kodi shuts down
+    wait: Callable[[int], bool] = lambda ms: False
+    # called once after a shutdown request ended the launch (closes the GUI)
+    on_shutdown: Callable[[], None] = lambda: None
+    # set when Kodi shut down while the emulator ran: it keeps running
+    detached: bool = False
+
+
+def _close_emu_dialog(ctx: LaunchCtx, reason: str) -> None:
+    try:
+        ctx.emu_dialog.close()
+    except Exception as error:  # noqa: BLE001 - a dialog failure must not block the shutdown
+        log(
+            f'UMSA gui: could not close emulator dialog after {reason}: '
+            f'{error}', level='warning')
 
 
 def _launch_emulator(ctx: LaunchCtx) -> None:
@@ -148,7 +163,15 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
         import xbmcgui
         try:
             error = ctx.emulation.other_emulator(
-                emu_infos, sleep=ctx.sleep, dialog=ctx.emu_dialog)
+                emu_infos, sleep=ctx.sleep, dialog=ctx.emu_dialog,
+                wait=ctx.wait)
+        except ShutdownRequested:
+            log(
+                f'UMSA gui: launch={launch_id} Kodi shuts down, emulator '
+                f'preparation stopped', level='warning')
+            _close_emu_dialog(ctx, 'shutdown')
+            ctx.on_shutdown()
+            return
         except CHDExtractionCancelled:
             log(
                 f'UMSA gui: launch={launch_id} CHD extraction cancelled for '
@@ -294,9 +317,21 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                     f'UMSA gui: could not close emulator dialog after launch '
                     f'failure: {close_error}', level='warning')
             raise
-        out, err = ctx.emulation.wait_for_completion(dialog=ctx.emu_dialog, sleep=ctx.sleep)
+        try:
+            out, err = ctx.emulation.wait_for_completion(
+                dialog=ctx.emu_dialog, sleep=ctx.sleep, wait=ctx.wait)
+        except ShutdownRequested:
+            # the emulator keeps running; nothing is recorded or shown
+            ctx.detached = True
+            log(
+                f'UMSA gui: launch={launch_id} Kodi shuts down, emulator '
+                f'{emu_infos.get("name", "")!r} left running', level='warning')
+            _close_emu_dialog(ctx, 'shutdown')
     finally:
         ctx.set_emulator_running(False)
+    if ctx.detached:
+        ctx.on_shutdown()
+        return
 
     end = time.time()
     try:
@@ -403,11 +438,21 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
 
 
 def launch_emulator(ctx: LaunchCtx) -> None:
-    """Run the launch workflow and always release launch-owned symlinks."""
+    """Run the launch workflow and release launch-owned symlinks.
+
+    The symlinks are kept only when Kodi shut down while the emulator ran:
+    the emulator is left running and still uses them.
+    """
 
     try:
         _launch_emulator(ctx)
     finally:
-        cleanup = getattr(ctx.emulation, 'after_run', None)
-        if callable(cleanup):
-            cleanup()
+        if ctx.detached:
+            # the still running emulator uses the launch symlinks
+            log(
+                'UMSA gui: emulator left running at shutdown, launch '
+                'symlinks are kept', level='warning')
+        else:
+            cleanup = getattr(ctx.emulation, 'after_run', None)
+            if callable(cleanup):
+                cleanup()

@@ -283,8 +283,12 @@ class LaunchPreparer:
 
         _remove_owned_symlink(emurun)
 
-    def other_emulator(self, emurun, emu_infos, dialog=None, sleep=None):
-        """Prepare run for other emulators."""
+    def other_emulator(self, emurun, emu_infos, dialog=None, sleep=None, wait=None):
+        """Prepare run for other emulators.
+
+        ``wait`` (``umsa_core.abort.Wait``) makes a CHD extraction stop on a
+        shutdown request (``ShutdownRequested``).
+        """
         ret_val = True
         update_dialog(dialog, 10, 'searching roms/chds...')
 
@@ -362,7 +366,7 @@ class LaunchPreparer:
                 if extract_chd_func is None:
                     from umsa_core.chd_extractor import extract_chd
                     extract_chd_func = extract_chd
-                extract_chd_func(emurun, self.chdman_exe, sleep, dialog)
+                extract_chd_func(emurun, self.chdman_exe, sleep, dialog, wait)
             log(
                 f"UMSA Emu: launch={launch_id} extraction complete: "
                 f"extract_files={emurun.get('extract_files')!r} "

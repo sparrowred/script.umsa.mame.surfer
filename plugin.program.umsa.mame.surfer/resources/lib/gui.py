@@ -31,6 +31,7 @@ from umsa_core_kodi import (
     get_core_vgmplay_script,
     is_emulator_running,
     is_frontend_close_method,
+    make_abort_wait,
     open_core_settings,
     parse_software_open_method,
     parse_vgm_action_method,
@@ -287,6 +288,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # initialize
         self.quit = False
+        # set once release_resources() ran (exit() or Kodi shutdown)
+        self._resources_released = False
         self.selected_control_id = SOFTWARE_BUTTON # holds the old control id from skin
         self.main_focus = SOFTWARE_BUTTON # remember main select when in gamelist
         self.info = None # contains all sets for actual software
@@ -397,6 +400,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # receive VGM control commands from the screensaver add-on
         if not hasattr(self, 'vgm_monitor'):
             self.vgm_monitor = VgmCommandMonitor(self)
+            # abort-aware wait for long Core loops (emulator run, CHD, scans)
+            self.abort_wait = make_abort_wait(self.vgm_monitor)
 
         # filters are loaded from status.db after the database is open and the
         # one-time legacy import has run (the migration runs at DBMod open)
@@ -1174,6 +1179,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
             add_or_update_emu_output=self._add_or_update_emu_output,
             notify_final=self._notify_final_launch,
             sleep=xbmc.sleep,
+            wait=self.abort_wait,
+            on_shutdown=self.exit,
         )
         launch_emulator(ctx)
 
@@ -1185,6 +1192,21 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
     def exit(self):
         """Exit add-on: stop video, close database."""
+
+        self.release_resources()
+        self.close()
+
+    def release_resources(self):
+        """Stop VGM and scans, close the databases; repeated calls are safe.
+
+        ``exit()`` calls it before closing the window; ``main()`` calls it
+        when Kodi closed the window without ``exit()`` (shutdown), so a
+        playing VGM or a running scan does not keep the script alive.
+        """
+
+        if getattr(self, '_resources_released', False):
+            return
+        self._resources_released = True
 
         if self.emulation.playvgm:
             self.emulation.playrandomvgm = None
@@ -1221,7 +1243,6 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # databases are closed: the maintenance script may go on
         set_frontend_running(False)
-        self.close()
 
 
 def main():
@@ -1240,6 +1261,11 @@ def main():
             xbmc.log("UMSA gui: invalid software selection argument", xbmc.LOGERROR)
     try:
         gui.doModal()
+        # Kodi closes the window at shutdown without exit(): stop VGM and
+        # scans anyway, a non-daemon VGM thread would block the script end
+        monitor = getattr(gui, 'vgm_monitor', None)
+        if monitor is not None and monitor.abortRequested():
+            gui.release_resources()
     finally:
         # also covers windows closed without exit() (e.g. failed first start)
         set_frontend_running(False)

@@ -4,6 +4,8 @@ import os
 import shutil
 import subprocess
 
+from .abort import ShutdownRequested, resolve_wait
+
 CHD_PROCESS_STOP_TIMEOUT = 2
 
 
@@ -40,24 +42,29 @@ def _remove_partial_chd(folder):
         shutil.rmtree(folder)
 
 
-def extract_chd(emurun, chdman_exe, sleep=None, dialog=None):
+def extract_chd(emurun, chdman_exe, sleep=None, dialog=None, wait=None):
     """Extract MAME chd CD-ROM to CUE/BIN.
 
     Args:
         emurun: Emulation run state dict containing chds, folder, swl_name, set_name
         chdman_exe: Path to chdman executable
-        sleep: Optional sleep callback (milliseconds)
+        sleep: Optional legacy sleep callback (milliseconds)
         dialog: Optional dialog for progress updates
+        wait: Optional abort-aware ``wait(milliseconds) -> bool``; ``True``
+            stops chdman, removes the partial output and raises
+            ``ShutdownRequested``
 
     Returns:
         Empty string on success.
 
     Raises:
         CHDExtractionCancelled: If user cancels via dialog
+        ShutdownRequested: If the host asks to stop during the extraction
         CHDExtractionError: If chdman fails
     """
     import logging
     log = logging.getLogger(__name__)
+    wait = resolve_wait(wait, sleep)
 
     log.info("UMSA Emu: starting chd extract")
     chd_name = os.path.basename(emurun['chds'][0])
@@ -96,11 +103,11 @@ def extract_chd(emurun, chdman_exe, sleep=None, dialog=None):
                 _terminate_and_reap_process(proc)
                 _remove_partial_chd(emurun['folder'])
                 raise CHDExtractionCancelled("CHD extraction canceled")
-            if sleep:
-                sleep(250)
-            else:
-                import time
-                time.sleep(0.25)
+            if wait(250):
+                log.warning("UMSA Emu: shutdown requested, stopping chdman")
+                _terminate_and_reap_process(proc)
+                _remove_partial_chd(emurun['folder'])
+                raise ShutdownRequested("shutdown during CHD extraction")
         return_code = proc.wait()
         log.debug(f"UMSA Emu extract_rom: chd extract: RC = {return_code}")
         if return_code == 0:
@@ -109,7 +116,7 @@ def extract_chd(emurun, chdman_exe, sleep=None, dialog=None):
         _remove_partial_chd(emurun['folder'])
         raise CHDExtractionError(
             f"chdman extraction failed with exit code {return_code}")
-    except CHDExtractionCancelled:
+    except (CHDExtractionCancelled, ShutdownRequested):
         raise
     except Exception:
         if proc is not None:

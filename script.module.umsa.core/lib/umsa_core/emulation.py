@@ -7,7 +7,6 @@ import subprocess
 from platform import platform
 from threading import Thread
 from time import monotonic
-from time import sleep as time_sleep
 
 from umsa_core import (
     ProcessLaunchError,
@@ -18,6 +17,7 @@ from umsa_core import (
 )
 
 # Compatibility re-exports for existing code that imports from emulation.
+from umsa_core.abort import ShutdownRequested, resolve_wait
 from umsa_core.chd_extractor import (
     CHDExtractionCancelled,  # noqa: F401
     CHDExtractionError,  # noqa: F401
@@ -52,12 +52,6 @@ PLATFORM = platform()
 CHD_PROCESS_STOP_TIMEOUT = 2
 VGM_RANDOM_BATCH_SIZE = 100
 VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
-
-
-def _time_sleep_ms(milliseconds):
-    """Sleep for milliseconds via ``time.sleep`` (Kodi-free default)."""
-
-    time_sleep(milliseconds / 1000.0)
 
 
 def format_vgm_info(track_filename, gamename, header, plan):
@@ -379,22 +373,31 @@ class Emulation:
         """Prepare ``emurun['args']`` for MAME based on ``actset``."""
         self.launch_preparer.prepare_mame_run(self.emurun, ggdb, actset, dialog)
 
-    def wait_for_completion(self, dialog=None, sleep=None):
+    def wait_for_completion(self, dialog=None, sleep=None, wait=None):
         """Wait for the running emulator to stop or the user to cancel.
 
-        Returns ``(stdout, stderr)``. ``sleep`` takes milliseconds so the GUI
-        can pass ``xbmc.sleep``; the default maps them to ``time.sleep``.
+        Returns ``(stdout, stderr)``. ``wait`` is an abort-aware
+        ``wait(milliseconds) -> bool`` (``umsa_core.abort.Wait``); without it
+        the legacy millisecond ``sleep`` (for example ``xbmc.sleep``) or
+        ``time.sleep`` is used and no stop request is ever seen.
+
+        Raises ``ShutdownRequested`` when the host asks to stop while the
+        emulator runs. The emulator keeps running (it is detached, neither
+        terminated nor killed) and its captured output is not read.
         """
 
-        if sleep is None:
-            sleep = _time_sleep_ms
-        sleep_ms = sleep
+        wait = resolve_wait(wait, sleep)
         uses_process_runner = self.emurun['emulation_start'] in (0, 1)
         out, err = '', ''
         # wait for emulator process to stop or cancel press to kill
         wait_cancel = True
         while wait_cancel:
-            sleep_ms(1000)
+            if wait(1000):
+                log(
+                    "UMSA Emulation: shutdown requested, leaving the emulator "
+                    "running (detached)",
+                    level='warning')
+                raise ShutdownRequested("shutdown while the emulator runs")
             if uses_process_runner:
                 if self.managed_process_status().state is not ProcessState.RUNNING:
                     wait_cancel = False
@@ -408,7 +411,8 @@ class Emulation:
                     self.terminate_managed_process()
                 else:
                     self.terminate()
-                sleep(3000)
+                # a shutdown request ends the grace time early: kill at once
+                wait(3000)
                 if (uses_process_runner and
                         self.managed_process_status().state is ProcessState.RUNNING):
                     log(
@@ -576,9 +580,9 @@ class Emulation:
             find_roms(self.emurun, self.rom_paths)
             return None
 
-    def extract_chd(self, sleep=None, dialog=None):
+    def extract_chd(self, sleep=None, dialog=None, wait=None):
         """Extract MAME chd CD-ROM to CUE/BIN."""
-        return extract_chd(self.emurun, self.chdman_exe, sleep, dialog)
+        return extract_chd(self.emurun, self.chdman_exe, sleep, dialog, wait)
 
     def extract_rom(self):
         """Extract MAME rom zipfile."""
@@ -618,6 +622,7 @@ class Emulation:
         - saturn: own nvram (needed for others?)
         """
 
-    def other_emulator(self, emu_infos, dialog=None, sleep=None):
+    def other_emulator(self, emu_infos, dialog=None, sleep=None, wait=None):
         """Prepare run for other emulators."""
-        return self.launch_preparer.other_emulator(self.emurun, emu_infos, dialog, sleep)
+        return self.launch_preparer.other_emulator(
+            self.emurun, emu_infos, dialog, sleep, wait=wait)

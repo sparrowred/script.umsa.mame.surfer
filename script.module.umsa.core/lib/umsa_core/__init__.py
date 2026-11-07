@@ -1,5 +1,6 @@
 """Kodi-independent shared functionality for UMSA add-ons."""
 
+from .abort import ShutdownRequested
 from .artwork import (
     IMAGE_ART_TYPES,
     LEFT_IMAGELIST,
@@ -44,6 +45,7 @@ __all__ = [
     "ScanBusyError",
     "ScanLockContext",
     "SharedSettings",
+    "ShutdownRequested",
     "VGMHeader",
     "build_artwork_path",
     "calculate_playback_plan",
