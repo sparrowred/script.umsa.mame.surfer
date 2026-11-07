@@ -36,6 +36,35 @@ _ORDER_SQL = {
     "publisher": "maker.name, software.name",
 }
 _ORDER_FALLBACK = "software.name"
+# sort key columns per order; Prev/Next pages along exactly these columns
+_ORDER_KEYS = {
+    "name": ("software.name",),
+    "year": ("year.name", "software.name"),
+    "publisher": ("maker.name", "software.name"),
+}
+# rows per Prev/Next page
+PAGE_SIZE = 100
+
+
+def _page_condition(keys, values, direction):
+    """Return ``(sql, params)`` for rows at or after/before ``values``.
+
+    Keyset condition over the sort ``keys``: for ``next`` the rows whose key
+    tuple is ``>=`` the boundary, for ``prev`` the rows ``<=`` it. Written out
+    without row values so old SQLite builds work too. The boundary row itself
+    is included, so the page starts (next) or ends (prev) with it.
+    """
+
+    strict = '>' if direction == 'next' else '<'
+    inclusive = strict + '='
+    clauses, params = [], []
+    for index, key in enumerate(keys):
+        last = index == len(keys) - 1
+        parts = [f"{k} = ?" for k in keys[:index]]
+        parts.append(f"{key} {inclusive if last else strict} ?")
+        params.extend(values[:index + 1])
+        clauses.append("(" + " AND ".join(parts) + ")")
+    return "(" + " OR ".join(clauses) + ")", params
 
 
 def _placeholders(values) -> str:
@@ -246,25 +275,26 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
 
     cursor = connection.cursor()
     try:
-        # get software name
+        # get software name (and the other sort keys for Prev/Next)
         sname = None
+        boundary = None
+        boundary_select = "SELECT software.name, year.name, maker.name FROM software \
+                JOIN year ON year.id = software.year_id \
+                JOIN maker ON maker.id = software.developer_id"
         if set_id:
-            name_statement = "SELECT software.name FROM software \
-                    JOIN sets ON software.id = sets.softwarelink_id \
-                    WHERE sets.id = ?"
-            cursor.execute(name_statement, (set_id,))
-            row = cursor.fetchone()
-            sname = row[0] if row else None
+            cursor.execute(
+                f"{boundary_select} JOIN sets ON software.id = sets.softwarelink_id "
+                "WHERE sets.id = ?", (set_id,))
+            boundary = cursor.fetchone()
         elif software_id:
             cursor.execute(
-                "SELECT software.name FROM software WHERE software.id = ?",
-                (software_id,)
-            )
-            row = cursor.fetchone()
-            sname = row[0] if row else None
+                f"{boundary_select} WHERE software.id = ?", (software_id,))
+            boundary = cursor.fetchone()
         else:
             log("UMSA database: execute_statement: no set or software id error",
                 level='debug')
+        if boundary is not None:
+            sname = boundary[0]
         if prevnext and sname is None:
             # Prev/Next needs the name of the current software as boundary
             log("UMSA database: execute_statement: no software name for "
@@ -275,6 +305,16 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
         if order is None:
             state.order = _ORDER_FALLBACK
             order = _ORDER_FALLBACK
+        if prevnext:
+            keys = _ORDER_KEYS.get(state.order, (_ORDER_FALLBACK,))
+            key_values = {"software.name": boundary[0], "year.name": boundary[1],
+                          "maker.name": boundary[2]}
+            page_where, page_params = _page_condition(
+                keys, [key_values[k] for k in keys], prevnext)
+            direction = "ASC" if prevnext == 'next' else "DESC"
+            # one row more than a page tells whether another page follows
+            page_order = ", ".join(f"{k} {direction}" for k in keys)
+            page_limit = f"LIMIT {PAGE_SIZE + 1}"
         time_rampup = time.time()
 
         # fetch: at most two attempts. The second attempt is the selector-only
@@ -292,25 +332,16 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                     i_where = ""
                 i_params = list(where_params)
                 limit = ""
-            elif prevnext == 'prev':
-                if where:
-                    i_where = f'WHERE software.name <= ? AND {where}'
-                    i_params = [sname] + list(where_params)
-                else:
-                    i_where = 'WHERE software.name <= ?'
-                    i_params = [sname]
-                limit = "DESC LIMIT 100"
-            elif prevnext == 'next':
-                if where:
-                    i_where = f'WHERE software.name >= ? AND {where}'
-                    i_params = [sname] + list(where_params)
-                else:
-                    i_where = 'WHERE software.name >= ?'
-                    i_params = [sname]
-                limit = "ASC LIMIT 100"
+                i_order = order
             else:
-                log(f"UMSA database execute_statement: prevnext error {prevnext}",
-                    level='debug')
+                if where:
+                    i_where = f'WHERE {page_where} AND {where}'
+                    i_params = page_params + list(where_params)
+                else:
+                    i_where = f'WHERE {page_where}'
+                    i_params = list(page_params)
+                i_order = page_order
+                limit = page_limit
             # fetch software list
             select_statement = f"SELECT DISTINCT \
                     software.id, software.name, year.name as year, maker.name as maker \
@@ -318,7 +349,7 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                     JOIN software ON software.id = sets.softwarelink_id \
                     JOIN year ON year.id = software.year_id \
                     JOIN maker ON maker.id = software.developer_id \
-                {i_where} ORDER BY {order} {limit}"
+                {i_where} ORDER BY {i_order} {limit}"
             cursor.execute(select_statement, i_params)
             slist = [dict(row) for row in cursor.fetchall()]
             if slist:
@@ -343,45 +374,41 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
         # get position and set prevnext
         if not prevnext:
             result_count = len(slist)
-            # search for name
-            # TODO rework
-            count, pos = 0, 0
-            for i in slist:
-                count += 1
-                if sname == i['name']:
-                    pos = count
-                    break
-            # TODO do we need new_slist?
-            if count < 50: # begin of list
-                pos -= 1
-                # TODO get rid of flag, try without new_slist
-                flag = None
-                if len(slist) > 100:
-                    flag = True
-                new_slist = slist[:count+50+(50-count)]
-                if flag:
-                    new_slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-            elif count > len(slist)-100: # end of list
-                pos = pos-(len(slist)-100)
-                new_slist = slist[count-(count-(len(slist)-100)):]
-                new_slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-            else: # middle of list
-                pos = 50
-                new_slist = slist[count-50:count+50]
-                new_slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-                new_slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-            slist = new_slist
-        elif prevnext == 'next':
-            pos = 1
-            slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-            if len(slist) == 100:
-                slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-        else: # prev
-            pos = len(slist)
-            slist.reverse()
-            slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-            if len(slist) == 100:
+            # index of the current software; when it is not part of the
+            # (filtered) list the window starts at the top of the list
+            index = next(
+                (i for i, row in enumerate(slist) if row['name'] == sname), 0)
+            # a window of PAGE_SIZE rows with the current software as row 50
+            # (1-based), clamped to the list: never a negative start, and a
+            # short list is shown completely
+            start = max(0, min(index - (PAGE_SIZE // 2 - 1),
+                               len(slist) - PAGE_SIZE))
+            window = slist[start:start + PAGE_SIZE]
+            pos = index - start
+            if start > 0:
+                window.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
+                pos += 1
+            if start + PAGE_SIZE < len(slist):
+                window.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
+            slist = window
+        else:
+            # a page holds PAGE_SIZE rows including the boundary row; the
+            # extra fetched row only signals that the list goes on
+            more = len(slist) > PAGE_SIZE
+            slist = slist[:PAGE_SIZE]
+            if prevnext == 'next':
+                # boundary row first, the way back is always possible
                 slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
+                if more:
+                    slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
+                pos = 1
+            else:  # prev
+                # fetched in descending order: boundary row last after reverse
+                slist.reverse()
+                slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
+                if more:
+                    slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
+                pos = len(slist) - 2  # the boundary row, before the next entry
         time_rest = time.time()
     finally:
         cursor.close()
