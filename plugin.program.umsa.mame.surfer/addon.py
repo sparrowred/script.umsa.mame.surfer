@@ -23,18 +23,6 @@ if COMMAND in (None, "select_software"):
     # start frontend
     import gui
     gui.main()
-elif COMMAND == "del_db":
-    try:
-        os.remove(CORE_DATA_PATHS.umsa_db)
-        os.remove(CORE_DATA_PATHS.dat_db)
-        os.remove(CORE_DATA_PATHS.artwork_db)
-    except FileNotFoundError:
-        pass
-elif COMMAND == "del_status":
-    try:
-        os.remove(CORE_DATA_PATHS.status_db)
-    except FileNotFoundError:
-        pass
 elif COMMAND == "retry_import":
     # Explicit recovery from a recorded `failed` legacy-import marker: the only
     # path that may clear it. A successful or cleanup-only marker is left alone.

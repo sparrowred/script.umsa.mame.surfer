@@ -99,8 +99,8 @@ class ScreensaverSettings:
         )
 
         return cls(
-            own_artwork=core_settings.own_artwork,
-            progettosnaps=core_settings.progettosnaps,
+            own_artwork=core_settings.own_artwork_dir,
+            progettosnaps=core_settings.progettosnaps_dir,
             ar_x=core_settings.aspect_ratio_factor,
             time=int(addon.getSetting(SETTING_TIME)),
             info=addon.getSetting(SETTING_INFO) == 'true',
@@ -108,8 +108,8 @@ class ScreensaverSettings:
             video_mute=addon.getSetting(SETTING_VIDEO_MUTE) == 'true',
             cross_prefill=addon.getSetting(SETTING_CROSS_PREFILL) == 'true',
             mode_switch_minutes=int(addon.getSetting(SETTING_MODE_SWITCH) or 0),
-            # ssaver_musicinfo of the Core settings: VGM info and Kodi music line
-            music_info=core_settings.musicinfo_enabled,
+            # show_music_info of the Core settings: VGM info and Kodi music line
+            music_info=core_settings.show_music_info,
             wall=wall,
         )
 

@@ -1,144 +1,285 @@
 <?xml version="1.0" ?>
 <settings version="1">
 	<section id="script.module.umsa.core">
-		<category id="shared" label="30000" help="30000">
+		<category id="emulators" label="30010" help="">
+			<group id="1" label="30020">
+				<setting id="mame_exe" type="path" label="30100" help="30200">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="file">
+						<heading>30100</heading>
+					</control>
+				</setting>
+				<setting id="mame_ini" type="path" label="30101" help="30201">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="file">
+						<heading>30101</heading>
+					</control>
+				</setting>
+				<setting id="mame_working_dir" type="path" label="30102" help="30202">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="path">
+						<heading>30102</heading>
+					</control>
+				</setting>
+				<setting id="chdman_exe" type="path" label="30103" help="30203">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="file">
+						<heading>30103</heading>
+					</control>
+				</setting>
+			</group>
+			<group id="2" label="30021">
+				<setting id="emulation_start" type="integer" label="30104" help="30204">
+					<level>0</level>
+					<default>0</default>
+					<constraints>
+						<options>
+							<option label="30300">0</option>
+							<option label="30301">1</option>
+							<option label="30302">2</option>
+						</options>
+					</constraints>
+					<control type="list" format="integer">
+						<heading>30104</heading>
+					</control>
+				</setting>
+				<setting id="terminal" type="path" label="30105" help="30205">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="file">
+						<heading>30105</heading>
+					</control>
+				</setting>
+			</group>
+			<group id="3" label="30022">
+				<setting id="exodos_dir" type="path" label="30106" help="30206">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="path">
+						<heading>30106</heading>
+					</control>
+				</setting>
+				<setting id="gb64_dir" type="path" label="30107" help="30207">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="path">
+						<heading>30107</heading>
+					</control>
+				</setting>
+				<setting id="whdload_dir" type="path" label="30108" help="30208">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="path">
+						<heading>30108</heading>
+					</control>
+				</setting>
+			</group>
+		</category>
+		<category id="media" label="30011" help="">
+			<group id="1" label="30023">
+				<setting id="open_screensaver_settings" type="action" label="30110" help="30210">
+					<level>0</level>
+					<data>Addon.OpenSettings(screensaver.umsa.mame.surfer)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
+				<setting id="progettosnaps_dir" type="path" label="30111" help="30211">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="path">
+						<heading>30111</heading>
+					</control>
+				</setting>
+				<setting id="own_artwork_dir" type="path" label="30112" help="30212">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="path">
+						<heading>30112</heading>
+					</control>
+				</setting>
+				<setting id="support_files_dir" type="path" label="30113" help="30213">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="path">
+						<heading>30113</heading>
+					</control>
+				</setting>
+			</group>
+			<group id="2" label="30024">
+				<setting id="vgmplay_exe" type="path" label="30114" help="30214">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="file">
+						<heading>30114</heading>
+					</control>
+				</setting>
+				<setting id="vgm_port" type="integer" label="30115" help="30215">
+					<level>0</level>
+					<default>1234</default>
+					<constraints>
+						<minimum>1024</minimum>
+						<step>1</step>
+						<maximum>65535</maximum>
+					</constraints>
+					<control type="edit" format="integer">
+						<heading>30115</heading>
+					</control>
+				</setting>
+				<setting id="show_music_info" type="boolean" label="30116" help="30216">
+					<level>0</level>
+					<default>true</default>
+					<control type="toggle"/>
+				</setting>
+			</group>
+		</category>
+		<category id="frontend" label="30012" help="">
 			<group id="1" label="">
-                <setting id="mame" type="path" label="30100" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="file">
-                		<heading>30100</heading>
-                	</control>
-                </setting>
-                <setting id="mameini" type="path" label="30111" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="file">
-                		<heading>30111</heading>
-                	</control>
-                </setting>
-                <setting id="mamedir" type="path" label="30112" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="path">
-                		<heading>30112</heading>
-                	</control>
-                </setting>
-                <setting id="vgmplay" type="path" label="30258" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="file">
-                		<heading>30258</heading>
-                	</control>
-                </setting>
+				<setting id="pref_country" type="string" label="30120" help="30220">
+					<level>0</level>
+					<default>USA</default>
+					<constraints>
+						<options>
+							<option label="30310">USA</option>
+							<option label="30311">Europe</option>
+							<option label="30312">Japan</option>
+						</options>
+					</constraints>
+					<control type="list" format="string">
+						<heading>30120</heading>
+					</control>
+				</setting>
+				<setting id="auto_play_videos" type="boolean" label="30121" help="30221">
+					<level>0</level>
+					<default>false</default>
+					<control type="toggle"/>
+				</setting>
+				<setting id="rom_temp_dir" type="path" label="30122" help="30222">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="path">
+						<heading>30122</heading>
+					</control>
+				</setting>
+				<setting id="batocera_layout" type="boolean" label="30123" help="30223">
+					<level>0</level>
+					<default>true</default>
+					<control type="toggle"/>
+				</setting>
+				<setting id="pdf_viewer" type="path" label="30124" help="30224">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<writable>false</writable>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="file">
+						<heading>30124</heading>
+					</control>
+				</setting>
+				<setting id="aspect_ratio" type="string" label="30125" help="30225">
+					<level>0</level>
+					<default>16:9</default>
+					<constraints>
+						<options>
+							<option>16:9</option>
+							<option>16:10</option>
+							<option>5:4</option>
+							<option>4:3</option>
+						</options>
+					</constraints>
+					<control type="list" format="string">
+						<heading>30125</heading>
+					</control>
+				</setting>
 			</group>
-			<group id="2" label="">
-                <setting id="progettosnaps" type="path" label="30201" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="path">
-                		<heading>30201</heading>
-                	</control>
-                </setting>
-                <setting id="own_artwork" type="path" label="30203" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="path">
-                		<heading>30203</heading>
-                	</control>
-                </setting>
-                <setting id="datdir" type="path" label="30202" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="path">
-                		<heading>30202</heading>
-                	</control>
-                </setting>
-			</group>
-			<group id="3" label="">
-                <setting id="exodos" type="path" label="30204" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="path">
-                		<heading>30204</heading>
-                	</control>
-                </setting>
-                <setting id="gb64" type="path" label="30205" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="path">
-                		<heading>30205</heading>
-                	</control>
-                </setting>
-                <setting id="whdload" type="path" label="30206" help="">
-                	<level>0</level>
-                	<default/>
-                	<constraints>
-                		<writable>false</writable>
-                		<allowempty>true</allowempty>
-                	</constraints>
-                	<control type="button" format="path">
-                		<heading>30206</heading>
-                	</control>
-                </setting>
-			</group>
-			<group id="4" label="">
-                <setting id="aspectratio" type="string" label="30251" help="">
-                	<level>0</level>
-                	<default>16:9</default>
-                	<constraints>
-                		<options>
-                			<option>16:9</option>
-                			<option>16:10</option>
-                			<option>5:4</option>
-                			<option>4:3</option>
-                		</options>
-                	</constraints>
-                	<control type="list" format="string">
-                		<heading>30251</heading>
-                	</control>
-                </setting>
-                <setting id="ssaver_musicinfo" type="boolean" label="30259" help="">
-                	<level>0</level>
-                	<default>true</default>
-                	<control type="toggle"/>
-                </setting>
+		</category>
+		<category id="maintenance" label="30013" help="">
+			<group id="1" label="">
+				<setting id="clean_status" type="action" label="30130" help="30230">
+					<level>0</level>
+					<data>RunScript(script.module.umsa.core,clean_status)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
+				<setting id="delete_umsa_db" type="action" label="30131" help="30231">
+					<level>0</level>
+					<data>RunScript(script.module.umsa.core,delete_umsa_db)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
+				<setting id="delete_status_db" type="action" label="30132" help="30232">
+					<level>0</level>
+					<data>RunScript(script.module.umsa.core,delete_status_db)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
+				<setting id="delete_media_db" type="action" label="30133" help="30233">
+					<level>0</level>
+					<data>RunScript(script.module.umsa.core,delete_media_db)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
 			</group>
 		</category>
 	</section>

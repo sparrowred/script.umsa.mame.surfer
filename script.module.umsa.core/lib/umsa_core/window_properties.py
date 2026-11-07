@@ -14,3 +14,5 @@ SCREENSAVER_MODE_PROPERTY = "UMSA.Screensaver.Mode"
 SCREENSAVER_RUNNING_PROPERTY = "UMSA.Screensaver.Running"
 SCREENSAVER_MANUAL_PROPERTY = "UMSA.Screensaver.Manual"
 EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"
+# set while the frontend window is open (maintenance closes it first)
+FRONTEND_RUNNING_PROPERTY = "UMSA.Frontend.Running"

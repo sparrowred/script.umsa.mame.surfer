@@ -60,8 +60,9 @@ Parts of the code have been developed with assistance from large language models
 - Back to Settings > Add-ons > Install from zip file.  
   Search for your downloaded file, select it and Kodi installs all three Add-ons.  
   The UMSA MAME surfer icon should appear in the Program and Games section.
-- Start the Add-on and the Add-on Settings will open.  
-  Now configure what you can and do not forget to also open the shared Core settings.  
+- Start the Add-on and the UMSA settings (owned by the UMSA Core Library) will open.  
+  Configure what you can; every setting shows a short help text.  
+  The frontend has no settings of its own, its menu entry 'Settings' opens the same dialog.  
   (Artwork: only extracted images supported, like cabinets/cabinets/set.png)
 - The Add-on should now start, download the UMSA database and scan the support files.
 - Optionally go to Updates and scan your artwork.  

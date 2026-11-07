@@ -30,9 +30,12 @@ from umsa_core_kodi import (
     get_core_settings,
     get_core_vgmplay_script,
     is_emulator_running,
+    is_frontend_close_method,
+    open_core_settings,
     parse_software_open_method,
     parse_vgm_action_method,
     set_emulator_running,
+    set_frontend_running,
 )
 from umsa_gui import (
     artwork_presenter,
@@ -261,6 +264,11 @@ class VgmCommandMonitor(xbmc.Monitor):
     def onNotification(self, sender, method, data):
         if sender != VGM_SENDER:
             return
+        if is_frontend_close_method(method):
+            # the maintenance script deletes databases: release them first
+            xbmc.log("UMSA gui: close requested by maintenance")
+            self.owner.exit()
+            return
         software_id = parse_software_open_method(method)
         if software_id is not None:
             self.owner.open_software(software_id)
@@ -321,10 +329,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # Clear stale emulator running state from any previous crashed instance
         self.set_emulator_running(False)
+        # tell the maintenance script that the frontend (and its databases) is open
+        set_frontend_running(True)
 
-        # no settings = open settings
+        # no settings yet = open the UMSA (Core) settings first
         if not os.path.exists(SETTINGS_FOLDER):
-            __addon__.openSettings()
+            open_core_settings()
         self.read_settings()
 
         xbmc.log("UMSA gui: __init__ done")
@@ -749,7 +759,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                             self.ggdb, None, SETTINGS_FOLDER, xbmc.sleep)
                 elif menu_item == M_ASETTINGS:
                     self.setFocus(self.getControl(self.main_focus))
-                    __addon__.openSettings()
+                    open_core_settings()
                     self.read_settings()
                 else:
                     self.setFocus(self.getControl(GAME_LIST_LABEL))
@@ -915,30 +925,30 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def read_settings(self):
         """Read settings for UMSA from Kodi and initialize."""
 
-        # read in shared settings from the Core module
+        # all UMSA settings are owned by the Core add-on
         core_settings = get_core_settings()
-        # read in settings specific to this add-on
-        gui_settings, emu_settings = load_all_settings(
-            core_settings, __addon__, __resource__, PLATFORM
+        # effective MAME paths (optional settings resolved) and computed values
+        emu_settings = load_all_settings(
+            core_settings, __resource__, PLATFORM, home=os.path.expanduser('~')
         )
 
-        self.mame_exe = core_settings.mame
-        self.mameini = core_settings.mameini
-        self.mame_dir = core_settings.mamedir
-        self.progettosnaps = core_settings.progettosnaps
-        self.own_artwork = core_settings.own_artwork
-        self.aratio = core_settings.aspectratio
-        self.datdir = core_settings.datdir
-        self.vgmplay_exe = core_settings.vgmplay
-        self.musicinfo = core_settings.musicinfo_enabled
+        self.mame_exe = core_settings.mame_exe
+        self.mameini = emu_settings.mame_ini
+        self.mame_dir = emu_settings.mame_working_dir
+        self.chdman_exe = emu_settings.chdman_exe
+        self.progettosnaps = core_settings.progettosnaps_dir
+        self.own_artwork = core_settings.own_artwork_dir
+        self.aratio = core_settings.aspect_ratio
+        self.datdir = core_settings.support_files_dir
+        self.vgmplay_exe = core_settings.vgmplay_exe
+        self.musicinfo = core_settings.show_music_info
 
-        self.pref_country = gui_settings.pref_country
-        self.temp_dir = gui_settings.temp_dir
-        self.pdfviewer = gui_settings.pdfviewer
-        self.chdman_exe = gui_settings.chdman_exe
-        self.terminal = gui_settings.terminal
-        self.emulation_start = gui_settings.emulation_start
-        self.playvideo = gui_settings.playvideo
+        self.pref_country = core_settings.pref_country
+        self.temp_dir = core_settings.rom_temp_dir
+        self.pdfviewer = core_settings.pdf_viewer
+        self.terminal = core_settings.terminal
+        self.emulation_start = core_settings.emulation_start
+        self.playvideo = True if core_settings.auto_play_videos else None
 
         self.nonmame = emu_settings.nonmame
         self.cab_path = emu_settings.cab_path
@@ -1206,6 +1216,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         except Exception as exc:
             xbmc.log(f"UMSA gui: exit: could not close database: {exc}", xbmc.LOGERROR)
 
+        # databases are closed: the maintenance script may go on
+        set_frontend_running(False)
         self.close()
 
 
@@ -1223,7 +1235,11 @@ def main():
             gui.initial_software_id = int(sys.argv[2])
         except ValueError:
             xbmc.log("UMSA gui: invalid software selection argument", xbmc.LOGERROR)
-    gui.doModal()
+    try:
+        gui.doModal()
+    finally:
+        # also covers windows closed without exit() (e.g. failed first start)
+        set_frontend_running(False)
     del gui
 
 

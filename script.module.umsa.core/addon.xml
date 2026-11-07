@@ -5,6 +5,8 @@
     <import addon="xbmc.python" version="3.0.0"/>
   </requires>
   <extension point="xbmc.python.module" library="lib"/>
+  <!-- maintenance actions of the settings (RunScript(script.module.umsa.core,<command>)) -->
+  <extension point="xbmc.python.script" library="maintenance.py"/>
   <extension point="xbmc.addon.metadata">
     <summary lang="en">UMSA Core Library (modules for Frontend and Screensaver)</summary>
     <description lang="en">Kodi-independent core package for UMSA add-ons.</description>

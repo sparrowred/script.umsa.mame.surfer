@@ -35,11 +35,7 @@ class ScreensaverRuntime:
         """Return the configured non-MAME roots for artwork path resolution."""
 
         settings = get_core_settings()
-        nonmame = {
-            'exodos': settings.exodos,
-            'gb64': settings.gb64,
-            'whdload': settings.whdload,
-        }
+        nonmame = settings.nonmame
         self.nonmame = nonmame
         return nonmame
 

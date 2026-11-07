@@ -62,3 +62,21 @@ class CoreDataPaths:
         if not name or Path(name).name != name or name in (".", ".."):
             raise ValueError("filter name must be a non-empty file name")
         return self.data_dir / f"filter_{name}.txt"
+
+
+# maintenance commands of the Core settings (script.module.umsa.core/maintenance.py)
+MAINTENANCE_DELETE_COMMANDS = ("delete_umsa_db", "delete_status_db", "delete_media_db")
+MAINTENANCE_COMMANDS = ("clean_status",) + MAINTENANCE_DELETE_COMMANDS
+
+
+def maintenance_targets(paths: CoreDataPaths, command: str) -> list[Path]:
+    """Return the database files a maintenance ``command`` deletes.
+
+    ``clean_status`` and unknown commands delete nothing.
+    """
+
+    return {
+        "delete_umsa_db": [paths.umsa_db],
+        "delete_status_db": [paths.status_db],
+        "delete_media_db": [paths.artwork_db, paths.dat_db],
+    }.get(command, [])

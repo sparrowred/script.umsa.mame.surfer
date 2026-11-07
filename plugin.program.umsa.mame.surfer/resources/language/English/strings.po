@@ -15,54 +15,6 @@ msgstr ""
 "Language: en\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-msgctxt "#30000"
-msgid "Basic"
-msgstr ""
-
-msgctxt "#30252"
-msgid "ROMs Temp folder"
-msgstr ""
-
-msgctxt "#30253"
-msgid "Preferred Country"
-msgstr ""
-
-msgctxt "#30254"
-msgid "Auto-Play Videos"
-msgstr ""
-
-msgctxt "#30255"
-msgid "PDF Viewer for Manuals"
-msgstr ""
-
-msgctxt "#30256"
-msgid "CHDMAN (for converting chd files)"
-msgstr ""
-
-msgctxt "#30257"
-msgid "Terminal (for Fallback Emulation start)"
-msgstr ""
-
-msgctxt "#31000"
-msgid "Misc"
-msgstr ""
-
-msgctxt "#31013"
-msgid "Emulation start"
-msgstr ""
-
-msgctxt "#31014"
-msgid "Delete UMSA database"
-msgstr ""
-
-msgctxt "#31015"
-msgid "Delete status database"
-msgstr ""
-
-msgctxt "#30199"
-msgid "Open shared Core settings"
-msgstr ""
-
 msgctxt "#32000"
 msgid "Screensaver"
 msgstr ""

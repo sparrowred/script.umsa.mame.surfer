@@ -232,8 +232,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         """Hide the parts of the overlay the user switched off.
 
         ``ssaver_info`` hides the game info (name, year/maker, machine and
-        left picture), the Core setting ``ssaver_musicinfo`` the Kodi music
-        line; the VGM info follows ``ssaver_musicinfo`` already, the
+        left picture), the Core setting ``show_music_info`` the Kodi music
+        line; the VGM info follows ``show_music_info`` already, the
         frontend does not publish it then. Both are on by default.
         """
 
@@ -389,7 +389,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         """Read shared Core settings and screensaver-specific settings."""
 
         core_settings = get_core_settings()
-        self.path = (core_settings.own_artwork, core_settings.progettosnaps)
+        self.path = (core_settings.own_artwork_dir, core_settings.progettosnaps_dir)
         parsed = screensaver_settings.ScreensaverSettings.from_addon(
             self.__addon__, core_settings)
         self.settings = parsed.as_legacy_dict()

@@ -55,7 +55,7 @@
             </control>
         </control>
         <control type="group">
-            <description>music info: one line, VGM info first, otherwise Kodi music (ssaver_musicinfo)</description>
+            <description>music info: one line, VGM info first, otherwise Kodi music (Core setting show_music_info)</description>
             <control type="label" id="4100">
                 <description>VGM info, text and format from UMSA.VGM.Info unchanged</description>
                 <posx>60</posx>

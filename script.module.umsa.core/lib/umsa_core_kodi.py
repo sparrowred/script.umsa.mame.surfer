@@ -1,5 +1,6 @@
 """Kodi adapter for resolving the UMSA Core add-on profile and shared settings."""
 
+import dataclasses
 import os
 
 import xbmc
@@ -9,7 +10,9 @@ import xbmcvfs
 from umsa_core import CoreDataPaths, SharedSettings
 from umsa_core.window_properties import (
     EMULATOR_RUNNING_PROPERTY,
+    FRONTEND_RUNNING_PROPERTY,
     SCREENSAVER_MANUAL_PROPERTY,
+    SCREENSAVER_RUNNING_PROPERTY,
     SHARED_WINDOW_ID,
 )
 
@@ -22,22 +25,10 @@ VGM_SENDER = CORE_ADDON_ID
 VGM_ACTION_METHOD = "UMSA.VGM.Action"
 
 SOFTWARE_OPEN_METHOD = "UMSA.Software.Open"
+FRONTEND_CLOSE_METHOD = "UMSA.Frontend.Close"
 
-
-_SHARED_SETTING_IDS = (
-    "mame",
-    "mameini",
-    "mamedir",
-    "progettosnaps",
-    "own_artwork",
-    "vgmplay",
-    "datdir",
-    "exodos",
-    "gb64",
-    "whdload",
-    "aspectratio",
-    "ssaver_musicinfo",
-)
+# used for extracted ROMs/CHDs when the rom_temp_dir setting is empty
+DEFAULT_ROM_TEMP_DIR = "special://temp/umsa"
 
 
 def _recompute_screensaver_inhibition() -> None:
@@ -111,18 +102,63 @@ def get_core_vgmplay_script() -> str:
 
 
 def get_core_settings() -> SharedSettings:
-    """Read the shared settings owned by the Core add-on."""
+    """Read all UMSA settings (they are owned by the Core add-on).
+
+    An empty ``rom_temp_dir`` is replaced by the Kodi temp folder.
+    """
 
     addon = xbmcaddon.Addon(id=CORE_ADDON_ID)
-    return SharedSettings(
-        **{name: addon.getSetting(name) for name in _SHARED_SETTING_IDS}
-    )
+    settings = SharedSettings.from_raw(addon.getSetting)
+    if not settings.rom_temp_dir:
+        settings = dataclasses.replace(
+            settings, rom_temp_dir=xbmcvfs.translatePath(DEFAULT_ROM_TEMP_DIR))
+    return settings
 
 
 def open_core_settings() -> None:
-    """Open the Core add-on settings dialog from a consuming add-on."""
+    """Open the UMSA settings dialog and return when it is closed.
 
-    xbmc.executebuiltin(f"Addon.OpenSettings({CORE_ADDON_ID})")
+    Blocking, so a caller (the frontend) can read the settings again
+    afterwards.
+    """
+
+    xbmcaddon.Addon(id=CORE_ADDON_ID).openSettings()
+
+
+def set_frontend_running(running: bool) -> None:
+    """Mark the frontend window as open/closed for the maintenance script."""
+
+    window = xbmcgui.Window(SHARED_WINDOW_ID)
+    if running:
+        window.setProperty(FRONTEND_RUNNING_PROPERTY, "true")
+    else:
+        window.clearProperty(FRONTEND_RUNNING_PROPERTY)
+
+
+def is_frontend_running() -> bool:
+    """Return True while the frontend window is open."""
+
+    return xbmcgui.Window(SHARED_WINDOW_ID).getProperty(
+        FRONTEND_RUNNING_PROPERTY) == "true"
+
+
+def is_screensaver_running() -> bool:
+    """Return True while the UMSA screensaver runs."""
+
+    return bool(xbmcgui.Window(SHARED_WINDOW_ID).getProperty(
+        SCREENSAVER_RUNNING_PROPERTY))
+
+
+def request_frontend_close() -> None:
+    """Ask a running frontend to close itself (it releases the databases)."""
+
+    xbmc.executebuiltin(f"NotifyAll({VGM_SENDER},{FRONTEND_CLOSE_METHOD})")
+
+
+def is_frontend_close_method(method: str) -> bool:
+    """Return True if an onNotification method is the frontend close request."""
+
+    return method.endswith(FRONTEND_CLOSE_METHOD)
 
 
 def publish_vgm_info(text: str, show: bool = True) -> None:
