@@ -4,6 +4,13 @@ Pure data only, no Kodi imports: the module can be imported by unit tests
 without a Kodi runtime and stays free of side effects.
 """
 
+from umsa_core.window_properties import (  # noqa: F401 - re-exported names
+    EMULATOR_RUNNING_PROPERTY,
+    SCREENSAVER_MODE_PROPERTY,
+    SCREENSAVER_RUNNING_PROPERTY,
+    SHARED_WINDOW_ID,
+)
+
 # Action codes (keyboard/remote)
 ACTION_PLAY_NEXTITEM = (14, 112)
 ACTION_MOVEMENT_RIGHT = (2,)
@@ -34,12 +41,11 @@ OVERLAY_XML = "umsa_overlay.xml"
 SCREEN_WIDTH = 1920
 SCREEN_HEIGHT = 1080
 
-# Window properties (UMSA.Screensaver.* is shared with the frontend)
-WINDOW_ID = 10000
-MODE_PROPERTY = "UMSA.Screensaver.Mode"
-RUNNING_PROPERTY = "UMSA.Screensaver.Running"
-# shared with plugin.program.umsa.mame.surfer: both depend on the identical name
-EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"
+# Window properties shared with the frontend and the Kodi adapter; the names
+# are defined once in umsa_core.window_properties
+WINDOW_ID = SHARED_WINDOW_ID
+MODE_PROPERTY = SCREENSAVER_MODE_PROPERTY
+RUNNING_PROPERTY = SCREENSAVER_RUNNING_PROPERTY
 
 # Kodi stops a woken Python screensaver 15 s later through this alarm
 # (SCRIPT_ALARM / SCRIPT_TIMEOUT in Kodi's ApplicationPowerHandling.cpp)

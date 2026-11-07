@@ -5,6 +5,9 @@ screensaver add-on. They must not change: ``gui.py`` re-exports them so the
 historic public names keep working.
 """
 
+# shared with the screensaver and the Kodi adapter; defined once in Core
+from umsa_core.window_properties import EMULATOR_RUNNING_PROPERTY  # noqa: F401
+
 # Action codes
 # See guilib/Key.h
 ACTION_CANCEL_DIALOG = (9, 10, 51, 92, 110)
@@ -19,8 +22,6 @@ ACTION_PLAY_NEXTITEM = (14, 112)
 ACTION_SOUND_VOLUME = (88, 89)
 ACTION_CONTEXT = (117,)
 ACTION_ENTER = (7,)
-
-EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"  # Shared with screensaver.umsa.mame.surfer; both depend on identical name.
 
 # ControlIds
 SERIES_LABEL = 2301

@@ -7,6 +7,11 @@ import xbmcaddon
 import xbmcgui
 import xbmcvfs
 from umsa_core import CoreDataPaths, SharedSettings
+from umsa_core.window_properties import (
+    EMULATOR_RUNNING_PROPERTY,
+    SCREENSAVER_MANUAL_PROPERTY,
+    SHARED_WINDOW_ID,
+)
 
 CORE_ADDON_ID = "script.module.umsa.core"
 
@@ -18,9 +23,6 @@ VGM_ACTION_METHOD = "UMSA.VGM.Action"
 
 SOFTWARE_OPEN_METHOD = "UMSA.Software.Open"
 
-SHARED_WINDOW_ID = 10000
-EMULATOR_RUNNING_PROPERTY = "UMSA.Emulator.Running"
-SCREENSAVER_MANUAL_PROPERTY = "UMSA.Screensaver.Manual"
 
 _SHARED_SETTING_IDS = (
     "mame",

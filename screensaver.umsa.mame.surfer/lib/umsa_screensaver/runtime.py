@@ -4,6 +4,7 @@ import xbmc
 import xbmcgui
 from umsa_core import set_log
 from umsa_core.database import DBMod
+from umsa_core.screensaver_request import decode_request
 from umsa_core_kodi import (
     get_core_data_paths,
     get_core_settings,
@@ -11,7 +12,6 @@ from umsa_core_kodi import (
     set_screensaver_manual,
 )
 
-from .arguments import decode_request
 from .availability import REASON_NO_VIDEOS, AvailabilityError, plan_request
 from .constants import (
     EMULATOR_RUNNING_PROPERTY,

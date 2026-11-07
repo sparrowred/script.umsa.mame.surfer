@@ -3,7 +3,9 @@
      Back to front: black base, video, wall/slide background with dimmer, slide images.
      Python adds the cross pictures and the wall mesh on top of these controls;
      the game info, the left artwork and the music info live in umsa_overlay.xml.
-     Visibility follows the mode on the home window (UMSA.Screensaver.Mode). -->
+     Visibility follows the mode on the home window (UMSA.Screensaver.Mode).
+     The name is defined in umsa_core/window_properties.py
+     (SCREENSAVER_MODE_PROPERTY); tests/test_window_properties.py keeps both in sync. -->
 <window>
     <!-- below umsa_overlay.xml (zorder 2) -->
     <zorder>1</zorder>

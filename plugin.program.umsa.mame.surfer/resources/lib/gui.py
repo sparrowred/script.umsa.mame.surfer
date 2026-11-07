@@ -726,7 +726,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     )
                     if ret == 0:
                         self.start_screensaver('videos')
-                    elif ret == 1 or ret == 2:
+                    elif (ret == 1 or ret == 2) and self.ensure_screensaver_available():
                         art_types = self.ggdb.get_art_types()
                         ret2 = self.dialog.multiselect(
                             "What do you want to see?", art_types
@@ -972,6 +972,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
     def get_screensaver_mode(self):
         """Return the active standalone screensaver mode, if any."""
         return screensaver_vgm.get_screensaver_mode(self)
+
+    def ensure_screensaver_available(self):
+        """Return True if the screensaver add-on can be started, else notify."""
+        return screensaver_vgm.ensure_screensaver_available(self)
 
     def start_screensaver(self, mode, art_types=None):
         """Launch the standalone screensaver with a validated request token."""

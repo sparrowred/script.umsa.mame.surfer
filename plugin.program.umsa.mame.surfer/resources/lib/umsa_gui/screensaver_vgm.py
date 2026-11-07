@@ -6,16 +6,41 @@ the VGM information of the running playback.
 
 import xbmc
 import xbmcgui
+from umsa_core.screensaver_request import encode_request
+from umsa_core.window_properties import SCREENSAVER_MODE_PROPERTY, SHARED_WINDOW_ID
 from umsa_core_kodi import clear_vgm_info, publish_vgm_info, set_screensaver_manual
-from umsa_screensaver.arguments import encode_request
 
 from .constants import MUSIC_INFO
+
+# optional dependency in addon.xml: check before every start
+SCREENSAVER_ADDON_ID = "screensaver.umsa.mame.surfer"
+
+
+def screensaver_available():
+    """True when the optional screensaver add-on is installed and enabled."""
+
+    return bool(xbmc.getCondVisibility(
+        f"System.HasAddon({SCREENSAVER_ADDON_ID}) + "
+        f"System.AddonIsEnabled({SCREENSAVER_ADDON_ID})"))
+
+
+def ensure_screensaver_available(gui):
+    """Return True if the screensaver add-on can be started, else notify."""
+
+    if screensaver_available():
+        return True
+    xbmc.log(f"UMSA gui: screensaver add-on {SCREENSAVER_ADDON_ID} is not "
+             "installed or disabled", xbmc.LOGWARNING)
+    gui.dialog.notification(
+        "Screensaver", "screensaver add-on is not installed or disabled",
+        xbmcgui.NOTIFICATION_WARNING, 5000)
+    return False
 
 
 def get_screensaver_mode(gui):
     """Return the active standalone screensaver mode, if any."""
 
-    mode = xbmcgui.Window(10000).getProperty("UMSA.Screensaver.Mode")
+    mode = xbmcgui.Window(SHARED_WINDOW_ID).getProperty(SCREENSAVER_MODE_PROPERTY)
     return mode or "no"
 
 
@@ -24,12 +49,15 @@ def start_screensaver(gui, mode, art_types=None):
 
     Also activates the manual-screensaver inhibition reason so that Kodi's
     idle screensaver does not compete with the explicitly started instance.
+    Returns False (after a notification) when the optional screensaver add-on
+    is missing or disabled; then nothing is started and no inhibit is set.
     """
     token = encode_request(mode, art_types)
-    xbmc.executebuiltin(
-        f"RunScript(screensaver.umsa.mame.surfer,{token})"
-    )
+    if not ensure_screensaver_available(gui):
+        return False
+    xbmc.executebuiltin(f"RunScript({SCREENSAVER_ADDON_ID},{token})")
     set_screensaver_manual(True)
+    return True
 
 
 def stop_screensaver(gui):
