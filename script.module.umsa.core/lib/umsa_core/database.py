@@ -1479,11 +1479,94 @@ class DBMod:
 
         return self._get_game_repository().get_searchresults(my_search)
 
+    _ART_COLUMNS = ("id, source, root_key, scan_unit, type, extension, "
+                    "relative_path, archive_member")
+
+    def _artwork_rows_for_ids(self, set_ids, art_type):
+        """Return the ``art_set`` rows of ``art_type`` for the given set ids."""
+
+        ids = sorted(set(set_ids))
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        # "+type" keeps SQLite on the id index: the type index would walk
+        # every row of a big artwork type
+        self.gdbc.execute(
+            f"SELECT {self._ART_COLUMNS} FROM art.art_set \
+             WHERE id IN ({placeholders}) AND +type = ?",
+            (*ids, art_type),
+        )
+        return [dict(row) for row in self.gdbc.fetchall()]
+
+    def _family_artwork(self, sets, art_type):
+        """Return ``{key: [art rows]}`` for sets with clone/parent fallback.
+
+        ``sets`` holds ``(key, set id, set name, cloneof_id)`` tuples. The
+        rows of a key are ordered: the set itself, its parent, the other
+        clones of the family (by name); within each step own artwork comes
+        first. Every row carries ``set_name``, the set the artwork belongs
+        to. umsa.db keeps clones in the software list and software of their
+        parent and has no clones of clones, so the family is the parent and
+        all its clones. Families are only looked up for sets without own
+        artwork of that type.
+        """
+
+        def source_rank(row):
+            return 0 if row["source"] == "own_artwork" else 1
+
+        own = {}
+        for row in self._artwork_rows_for_ids([s[1] for s in sets], art_type):
+            own.setdefault(row["id"], []).append(row)
+
+        result = {}
+        missing = []
+        for key, set_id, set_name, cloneof_id in sets:
+            rows = sorted(own.get(set_id, []), key=source_rank)
+            if rows:
+                result[key] = [dict(row, set_name=set_name) for row in rows]
+            else:
+                missing.append((key, set_id, cloneof_id))
+        if not missing:
+            return result
+
+        heads = sorted({cloneof_id or set_id for _key, set_id, cloneof_id in missing})
+        placeholders = ",".join("?" * len(heads))
+        self.gdbc.execute(
+            f"SELECT id, name, cloneof_id FROM sets \
+             WHERE id IN ({placeholders}) OR cloneof_id IN ({placeholders})",
+            (*heads, *heads),
+        )
+        members = {}
+        names = {}
+        for member_id, member_name, member_parent in self.gdbc.fetchall():
+            names[member_id] = member_name
+            members.setdefault(member_parent or member_id, []).append(member_id)
+
+        art = {}
+        for row in self._artwork_rows_for_ids(names, art_type):
+            art.setdefault(row["id"], []).append(row)
+
+        for key, set_id, cloneof_id in missing:
+            head = cloneof_id or set_id
+            family = [m for m in members.get(head, []) if m != set_id]
+            ordered = sorted(
+                family, key=lambda m: (0 if m == head else 1, names[m]))
+            rows = [
+                dict(row, set_name=names[member])
+                for member in ordered
+                for row in sorted(art.get(member, []), key=source_rank)
+            ]
+            if rows:
+                result[key] = rows
+        return result
+
     def get_machine_cabinets(self, machine_names):
         """Return ``{machine set name: art row}`` of scanned cabinets.
 
         Looks up the ``cabinets`` artwork of the MAME sets named in
-        ``machine_names`` in one query; own artwork wins over progettosnaps.
+        ``machine_names``: the machine itself, else its parent, else another
+        clone of the family; own artwork wins over progettosnaps on each
+        step. ``set_name`` of a row names the set the picture belongs to.
         Machines without a scanned cabinet are missing from the result, so
         callers fall back to the fixed progettosnaps path. Never raises.
         """
@@ -1494,24 +1577,47 @@ class DBMod:
         placeholders = ",".join("?" * len(names))
         try:
             self.gdbc.execute(
-                f"SELECT sets.name AS machine, art.source, art.root_key, art.scan_unit, \
-                        art.type, art.extension, art.relative_path, art.archive_member \
+                f"SELECT sets.name, sets.id, sets.cloneof_id \
                  FROM sets JOIN swl ON swl.id = sets.swllink_id \
-                 JOIN art.art_set art ON art.id = sets.id \
-                 WHERE swl.name = 'mame' AND art.type = 'cabinets' \
-                   AND sets.name IN ({placeholders}) \
-                 ORDER BY CASE art.source WHEN 'own_artwork' THEN 0 ELSE 1 END",
+                 WHERE swl.name = 'mame' AND sets.name IN ({placeholders})",
                 names,
             )
-            rows = self.gdbc.fetchall()
+            sets = [(row[0], row[1], row[0], row[2]) for row in self.gdbc.fetchall()]
+            family = self._family_artwork(sets, "cabinets")
         except sqlite3.Error as error:
             log(f"UMSA database get_machine_cabinets: {error}", level='warning')
             return {}
-        cabinets = {}
-        for row in rows:
-            entry = dict(row)
-            cabinets.setdefault(entry.pop('machine'), entry)
-        return cabinets
+        return {name: rows[0] for name, rows in family.items()}
+
+    def get_set_artwork(self, set_id, art_type, source_roots=None):
+        """Return the resolved path of an artwork of a set, ``''`` if none.
+
+        Uses the clone/parent fallback of ``_family_artwork``; rows whose
+        source root no longer matches the configuration are skipped. Never
+        raises.
+        """
+
+        try:
+            self.gdbc.execute(
+                "SELECT sets.name, sets.cloneof_id, swl.name \
+                 FROM sets JOIN swl ON swl.id = sets.swllink_id WHERE sets.id = ?",
+                (set_id,),
+            )
+            row = self.gdbc.fetchone()
+            if row is None:
+                return ''
+            set_name, cloneof_id, swl_name = row[0], row[1], row[2]
+            family = self._family_artwork(
+                [(set_id, set_id, set_name, cloneof_id)], art_type)
+        except sqlite3.Error as error:
+            log(f"UMSA database get_set_artwork: {error}", level='warning')
+            return ''
+        for art in family.get(set_id, []):
+            path = resolve_artwork_path(
+                art, {"name": art["set_name"], "swl_name": swl_name}, source_roots or {})
+            if path:
+                return path
+        return ''
 
     def get_machine_name(self, machine_id):
         """Get name of machine from id"""

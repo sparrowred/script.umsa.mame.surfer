@@ -45,25 +45,15 @@ def source_roots(paths, umsa):
     }
 
 
-def resolve_art_path(art, roots, art_type=None, extension=None):
+def resolve_art_path(art, roots):
     """Resolve an artwork path with the shared Core resolver.
 
     ``art`` carries the ``art_set`` fields (source, root_key,
-    relative_path, archive_member). When ``art_type`` is given, an
-    alternate artwork of the same set (the flyer, cover or snap shown
-    next to the main image) is resolved instead of the stored row.
+    relative_path, archive_member). Further artwork of the set (the left
+    picture) comes from the database: ``DBMod.get_set_artwork``.
     """
 
-    if art_type is None:
-        return resolve_artwork_path(art, art, roots)
-
-    derived = dict(art)
-    derived['type'] = art_type
-    derived['relative_path'] = None
-    derived['archive_member'] = None
-    if extension is not None:
-        derived['extension'] = extension
-    return resolve_artwork_path(derived, art, roots)
+    return resolve_artwork_path(art, art, roots)
 
 
 def machine_picture(use_set, ggdb, roots, media_folder):

@@ -428,17 +428,23 @@ class Saver(xbmcgui.WindowXMLDialog):
             use_set, umsa.ggdb, artwork_selector.source_roots(self.path, umsa),
             MEDIA_FOLDER)
 
-    def resolve_art_path(self, art, source_roots, art_type=None, extension=None):
-        """Resolve an artwork path with the shared Core resolver.
+    def get_set_artwork(self, art, art_type, source_roots):
+        """Return an artwork of the set of ``art`` from the artwork database.
 
-        ``art`` carries the new ``art_set`` fields (source, root_key,
-        relative_path, archive_member). When ``art_type`` is given, an
-        alternate artwork of the same set (the flyer, cover or snap shown
-        next to the main image) is resolved instead of the stored row.
+        Core's ``DBMod.get_set_artwork``: the set itself, else its parent,
+        else another clone; own artwork first. ``''`` when none is found.
         """
 
-        return artwork_selector.resolve_art_path(
-            art, source_roots, art_type=art_type, extension=extension)
+        return self.parent.umsa.ggdb.get_set_artwork(art['id'], art_type, source_roots)
+
+    def resolve_art_path(self, art, source_roots):
+        """Resolve the path of an artwork row with the shared Core resolver.
+
+        ``art`` carries the ``art_set`` fields (source, root_key,
+        relative_path, archive_member).
+        """
+
+        return artwork_selector.resolve_art_path(art, source_roots)
 
     def _extract_exodos_video(self, art, source_roots):
         """Extract an eXoDOS videosnap from a ZIP archive to Kodi's temp directory.
@@ -533,13 +539,9 @@ class Saver(xbmcgui.WindowXMLDialog):
 
             xbmc.log(f"UMSA SSaver: videoadd: added {filename}", xbmc.LOGDEBUG)
             machine_pic = self.get_machine_pic(rand_vid)
-            # get left pic
-            # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
-            snapshot = rand_vid.get('left_pic')
-            if not snapshot:
-                left_type = artwork_selector.left_picture_type(rand_vid)
-                snapshot = self.resolve_art_path(
-                    rand_vid, source_roots, art_type=left_type, extension='png')
+            # left picture: flyer/cover (eXoDOS/GB64 bring it along)
+            snapshot = rand_vid.get('left_pic') or self.get_set_artwork(
+                rand_vid, artwork_selector.left_picture_type(rand_vid), source_roots)
             xbmc.log(f"UMSA SSaver {snapshot}", xbmc.LOGDEBUG)
             video_item = video_playlist.build_video_item(
                 rand_vid, machine_pic, snapshot, attach_set_id, xbmcgui)

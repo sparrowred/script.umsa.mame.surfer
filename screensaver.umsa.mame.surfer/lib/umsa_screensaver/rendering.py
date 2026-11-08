@@ -184,26 +184,24 @@ def render_left_picture(ctx, art, roots):
 
     A snap/title/video row gets the flyer or cover of the set, every other
     row gets the snap. The snap is shown with the aspect ratio of the game
-    screen, the flyer/cover with the proportions of its file.
+    screen, the flyer/cover with the proportions of its file. Both come from
+    the artwork database with the clone/parent fallback of Core
+    (``DBMod.get_set_artwork``); eXoDOS/GB64 rows bring ``left_pic`` along.
     """
 
     saver = ctx.saver
-    # TODO get left pic: snap = cross,slide ; cover/flyer = video, wall
     if art['type'] in SCREEN_ROW_TYPES:
         if 'left_pic' in art:
             snapshot = art['left_pic']
         else:
-            left_type = left_picture_type(art)
-            snapshot = saver.resolve_art_path(art, roots, art_type=left_type)
+            snapshot = saver.get_set_artwork(art, left_picture_type(art), roots)
         saver.show_left_art(snapshot, left_art.ARTWORK, use_cache=False)
     elif 'left_pic' in art:
         saver.show_left_art(
             art['left_pic'], left_art.SCREEN, display_for(art), use_cache=False)
     else:
-        # TODO dirty hack, get from db! maybe get_random_art should return it!
-        snapshot = saver.resolve_art_path(
-            art, roots, art_type='snap', extension='png')
-        if saver.check_snapshot(snapshot):
+        snapshot = saver.get_set_artwork(art, 'snap', roots)
+        if snapshot and saver.check_snapshot(snapshot):
             saver.show_left_art(
                 snapshot, left_art.SCREEN, display_for(art), use_cache=False)
         else:

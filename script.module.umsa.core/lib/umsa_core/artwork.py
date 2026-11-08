@@ -282,8 +282,10 @@ def get_machine_artwork_path(
     if machine is not None:
         art = (cabinets or {}).get(machine)
         if art:
+            # set_name: parent or clone whose cabinet stands in for the machine
             path = resolve_artwork_path(
-                art, {"name": machine, "swl_name": "mame"}, source_roots or {})
+                art, {"name": art.get("set_name", machine), "swl_name": "mame"},
+                source_roots or {})
             # empty when the source root changed since the scan
             if path:
                 return path
