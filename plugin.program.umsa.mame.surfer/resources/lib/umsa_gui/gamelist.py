@@ -5,6 +5,7 @@
 entry lives in ``gamelist_actions``.
 """
 
+import threading
 import time
 from dataclasses import dataclass
 
@@ -18,6 +19,7 @@ from .constants import (
     GAME_LIST_LABEL_ID,
     GAME_LIST_OPTIONS,
     GAME_LIST_SORT,
+    GAMELIST_SETTLE_DELAY,
     LABEL_STATUS,
     M_ALLEMUS,
     M_CAT,
@@ -43,6 +45,46 @@ class GamelistCtx:
     popup_gamelist: object = None
     show_rec: object = None
     lastsaver_path: object = None
+
+
+class GamelistSettle:
+    """Deferred reload of the gamelist entry once the list stopped moving.
+
+    While a key is held (or the analog trigger scrolls) the ``onAction``
+    callbacks queue up behind the synchronous artwork lookups, and the entry
+    the list finally stops on may never be shown. Every movement restarts a
+    timer; when it fires, ``Action(noop)`` is sent to the window, and its
+    ``onAction`` handler reloads the selected entry on the script thread.
+
+    The timer thread only calls ``executebuiltin``: the database connection
+    and the controls stay on the script thread.
+    """
+
+    def __init__(self, delay=GAMELIST_SETTLE_DELAY):
+        self.delay = delay
+        self._timer = None
+        self._lock = threading.Lock()
+
+    def schedule(self):
+        """(Re)start the timer."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+            self._timer = threading.Timer(self.delay, self._fire)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def cancel(self):
+        """Stop a pending timer."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+
+    def _fire(self):
+        with self._lock:
+            self._timer = None
+        xbmc.executebuiltin('Action(noop)')
 
 
 def update_gamelist(gui, item, lastsaver_path):
@@ -151,42 +193,60 @@ def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None):
     gui.getControl(GAME_LIST).selectItem(pos)
 
     gui.setFocus(gui.getControl(GAME_LIST))
-    # load snap, all_machines for selectedItem in GAMELIST
-    gui.gamelist_move()
+    # load snap, all_machines for the entry at pos: selectItem() runs
+    # asynchronously in Kodi, getSelectedItem() would still return entry 0
+    gui.gamelist_move(pos)
+    # reload once Kodi applied the selection
+    gui.schedule_gamelist_settle()
 
 
-def gamelist_move(gui):
-    """Move in gamelist"""
+def gamelist_move(gui, pos=None, force=False):
+    """Load snap and machines for a gamelist entry.
+
+    ``pos`` names the entry explicitly (default: the selected one).
+    ``force`` re-applies already loaded data without a database lookup so
+    that Kodi refreshes the info labels of the selected entry.
+    """
 
     # check label if we have games in list
     g_label = gui.getControl(GAME_LIST_LABEL).getLabel()
     if g_label.startswith(('Machines for', 'Choose Media', 'Emulators', 'Select')):
         xbmc.log(f"UMSA gui: gamelist_move: label {g_label} = return")
         return
-    # get infos
-    gamelist_item = gui.getControl(GAME_LIST).getSelectedItem()
+    control = gui.getControl(GAME_LIST)
+    if pos is None:
+        pos = control.getSelectedPosition()
+        gamelist_item = control.getSelectedItem()
+    else:
+        gamelist_item = control.getListItem(pos) if 0 <= pos < control.size() else None
     # check if we have an item
     if not gamelist_item:
         xbmc.log("UMSA gui: gamelist_move: no selected item = return")
         return
-    #gameinfo = gui.getControl(GAME_LIST).getSelectedItem().getLabel()
-    gamelist_id = gui.getControl(GAME_LIST).getSelectedItem().getLabel2()
-    # check if gamelist_id is valid
-    if gamelist_id == "0":
-        xbmc.log("UMSA gui: gamelist_move: gamelist id invalid = return")
+    gamelist_id = gamelist_item.getLabel2()
+    # check if gamelist_id is valid (0 = invalid, prev/next = paging entries)
+    if gamelist_id in ("0", "prev", "next"):
+        xbmc.log(f"UMSA gui: gamelist_move: pos {pos}: no software id ({gamelist_id}) = return")
         return
-    # check if gamelist kodi obj already has property text
-    # return when text already present
+    # data already loaded: only refresh when forced
     if gamelist_item.getProperty('text'):
-        xbmc.log("UMSA gui: gamelist_move: text already there = return")
+        if force:
+            snap = gamelist_item.getProperty('snap')
+            if snap:
+                gamelist_item.setArt({'icon': snap})
+            gamelist_item.setProperty('text', gamelist_item.getProperty('text'))
+            xbmc.log(f"UMSA gui: gamelist_move: pos {pos}: refreshed {gamelist_id} (force)")
+        else:
+            xbmc.log(f"UMSA gui: gamelist_move: pos {pos}: text already there = return")
         return
     # get snap, machines
-    xbmc.log(f"UMSA gui: gamelist_move: db fetch snap, machines for {gamelist_id}")
+    xbmc.log(f"UMSA gui: gamelist_move: pos {pos}: db fetch snap, machines for {gamelist_id}")
     snap = gui.ggdb.get_artwork_by_software_id(
         gamelist_id, 'snap', gui.artwork_source_roots())
     # set info to gamelist item
     if snap[0]:
         gamelist_item.setArt({'icon': snap[0]})
+        gamelist_item.setProperty('snap', snap[0])
     gamelist_item.setProperty('text', snap[1])
     xbmc.log(f"UMSA gui: gamelist_move: properties set = {gamelist_item.getProperty('text')}")
 

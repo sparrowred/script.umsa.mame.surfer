@@ -22,6 +22,14 @@ ACTION_PLAY_NEXTITEM = (14, 112)
 ACTION_SOUND_VOLUME = (88, 89)
 ACTION_CONTEXT = (117,)
 ACTION_ENTER = (7,)
+# movement in a vertical list: up/down, page up/down, mouse wheel,
+# scroll up/down (analog trigger), next/previous letter
+ACTION_LIST_SCROLL = (3, 4, 5, 6, 104, 105, 111, 112, 159, 160)
+# sent by GamelistSettle via the builtin Action(noop)
+ACTION_NOOP = (999,)
+
+# seconds without list movement before the gamelist entry is (re)loaded
+GAMELIST_SETTLE_DELAY = 0.3
 
 # ControlIds
 SERIES_LABEL = 2301

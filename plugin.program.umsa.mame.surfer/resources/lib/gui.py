@@ -59,11 +59,13 @@ from umsa_gui.constants import (
     ACTION_CONTEXT,
     ACTION_ENTER,
     ACTION_INFO,
+    ACTION_LIST_SCROLL,
     ACTION_MOVEMENT,
     ACTION_MOVEMENT_DOWN,
     ACTION_MOVEMENT_LEFT,
     ACTION_MOVEMENT_RIGHT,
     ACTION_MOVEMENT_UP,
+    ACTION_NOOP,
     ACTION_PLAY_NEXTITEM,
     ACTION_PLAYFULLSCREEN,
     ACTION_SOUND_VOLUME,
@@ -85,6 +87,7 @@ from umsa_gui.constants import (
     GAME_LIST_OPTIONS,
     GAME_LIST_SORT,
     GAME_LIST_TEXT,
+    GAMELIST_SETTLE_DELAY,
     GROUP_FILTER,
     GROUP_GAME_LIST,
     IMAGE_BIG_LIST,
@@ -138,7 +141,7 @@ from umsa_gui.constants import (
     WAIT_PLAYER,
 )
 from umsa_gui.filter_ui import empty_filter_lists
-from umsa_gui.gamelist import GamelistCtx
+from umsa_gui.gamelist import GamelistCtx, GamelistSettle
 from umsa_gui.optional_plugins import KODIPDF, KODIYT, play_pdf
 from umsa_gui.paths import ADDON, ADDON_PATH, RESOURCE_LIB
 
@@ -159,11 +162,13 @@ __all__ = [
     "ACTION_CONTEXT",
     "ACTION_ENTER",
     "ACTION_INFO",
+    "ACTION_LIST_SCROLL",
     "ACTION_MOVEMENT",
     "ACTION_MOVEMENT_DOWN",
     "ACTION_MOVEMENT_LEFT",
     "ACTION_MOVEMENT_RIGHT",
     "ACTION_MOVEMENT_UP",
+    "ACTION_NOOP",
     "ACTION_PLAYFULLSCREEN",
     "ACTION_PLAY_NEXTITEM",
     "ACTION_SOUND_VOLUME",
@@ -178,6 +183,7 @@ __all__ = [
     "FILTER_LABEL2",
     "FILTER_LIST_BG",
     "FILTER_OPTIONS",
+    "GAMELIST_SETTLE_DELAY",
     "GAME_LIST",
     "GAME_LIST_BG",
     "GAME_LIST_IMAGE",
@@ -298,6 +304,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.dummy = None # needed to prevent a software jump
                           # when popup is quit by left or right
         self.enter = None # set when a gamelist select happens
+        # deferred reload of the gamelist entry once scrolling stopped
+        self.gamelist_settle = GamelistSettle()
         self.oldset = () # needed for show_info to see if set has changed
         # to assure only one thread is running
         self.scan_thread = None
@@ -604,6 +612,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if action.getId() == 0:
             return
 
+        # deferred gamelist reload (GamelistSettle): touch nothing else, so
+        # neither the screensaver nor the popup dummy logic reacts on it
+        if action.getId() in ACTION_NOOP:
+            if self.selected_control_id == GAME_LIST:
+                self.gamelist_move(force=True)
+            return
+
         # check if monitor runs
         screensaver_mode = self.get_screensaver_mode()
         if screensaver_mode in ('wall', 'cross', 'slide'):
@@ -870,8 +885,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.setFocus(self.getControl(LISTMODE_MENU))
             elif action.getId() in ACTION_CONTEXT:
                 self.gamelist_context()
-            elif action.getId() in ACTION_MOVEMENT_DOWN+ACTION_MOVEMENT_UP:
+            elif action.getId() in ACTION_LIST_SCROLL:
                 self.gamelist_move()
+                self.schedule_gamelist_settle()
 
         # ACTION FILTER_CATEGORY_LIST
         elif self.selected_control_id == FILTER_CATEGORY_LIST:
@@ -1029,9 +1045,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Shows the context menu."""
         return menu.build_main_menu(self, select)
 
-    def gamelist_move(self):
+    def gamelist_move(self, pos=None, force=False):
         """Move in gamelist"""
-        return gamelist_workflows.gamelist_move(self)
+        return gamelist_workflows.gamelist_move(self, pos=pos, force=force)
+
+    def schedule_gamelist_settle(self):
+        """Reload the selected gamelist entry once the list stopped moving."""
+        self.gamelist_settle.schedule()
 
     def gamelist_switch_filter(self):
         """Switch filter in gamelist"""
@@ -1207,6 +1227,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if getattr(self, '_resources_released', False):
             return
         self._resources_released = True
+
+        settle = getattr(self, 'gamelist_settle', None)
+        if settle is not None:
+            settle.cancel()
 
         if self.emulation.playvgm:
             self.emulation.playrandomvgm = None
