@@ -44,6 +44,8 @@ MAIN_MENU = 4901
 GROUP_GAME_LIST = 407
 GROUP_FILTER = 408
 TEXTLIST = 4033
+# TEXTLIST entry when there is no DAT text; it opens no text viewer
+NO_INFO_LABEL = 'no info'
 IMAGE_RIGHT = 2232
 IMAGE_BIG_LIST = 2233
 IMAGE_LIST = 2223

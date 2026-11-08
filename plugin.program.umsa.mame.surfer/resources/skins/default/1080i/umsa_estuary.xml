@@ -423,7 +423,6 @@
       <font>font-17</font>
       <textcolor>FF83C97A</textcolor>
       <visible>true</visible>
-      <autoscroll delay="4200" time="2600" repeat="7000"/>
       <label>$INFO[Container(4033).ListItem.Property(text)]</label>
     </control>
     <control type="videowindow" id="2004">

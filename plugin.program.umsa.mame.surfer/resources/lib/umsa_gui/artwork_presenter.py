@@ -19,6 +19,7 @@ from umsa_core import (
 from .constants import (
     IMAGE_BIG_LIST,
     IMAGE_LIST,
+    NO_INFO_LABEL,
     SHADOW_DAT,
     SYSTEM_WRAPLIST,
     TEXTLIST,
@@ -241,7 +242,7 @@ def show_artwork(gui, howmuch='all'):
 
     if len(list_items) == 0:
         list_item = xbmcgui.ListItem()
-        list_item.setLabel("no information...")
+        list_item.setLabel(NO_INFO_LABEL)
         list_item.setProperty('text', stattext)
         list_items.append(list_item)
 

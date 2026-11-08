@@ -128,6 +128,7 @@ from umsa_gui.constants import (
     MAIN_MENU,
     MEDIA_LABEL,
     MUSIC_INFO,
+    NO_INFO_LABEL,
     SERIES_LABEL,
     SET_LIST,
     SHADOW_DAT,
@@ -235,6 +236,7 @@ __all__ = [
     "M_SWL",
     "M_UPD",
     "M_YEAR",
+    "NO_INFO_LABEL",
     "PLATFORM",
     "SERIES_LABEL",
     "SETTINGS_FOLDER",
@@ -535,9 +537,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 series = self.ggdb.get_series(self.last[self.lastptr])
                 if series:
                     self.popup_gamelist(series, 'Series')
-            # text viewer
+            # placeholder without DAT text: nothing to show
+            elif item == NO_INFO_LABEL:
+                return
+            # text viewer: show the text of the entry itself, entries like
+            # 'Emulator output' exist only in the list, not in all_dat
             else:
-                self.dialog.textviewer(item, self.all_dat[self.actset['id']][item])
+                text = self.getControl(TEXTLIST).getSelectedItem().getProperty('text')
+                self.dialog.textviewer(item, text)
 
         elif control_id == GAME_LIST_OPTIONS:
             if item == "new search":
