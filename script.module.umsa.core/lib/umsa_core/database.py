@@ -1032,8 +1032,9 @@ class DBMod:
                 return False
             created = False
             if DEFAULT_FILTER_NAME not in repository.list_filter_names():
+                # collections without a folder in the settings start inactive
                 filter_lists = resolve_default_filter(
-                    self.gdb, load_default_filter_spec())
+                    self.gdb, load_default_filter_spec(), self.nonmame)
                 repository.save_filter_selections(DEFAULT_FILTER_NAME, filter_lists)
                 created = True
                 log("UMSA database: default filter created", level='info')
