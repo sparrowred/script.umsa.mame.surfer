@@ -1479,6 +1479,40 @@ class DBMod:
 
         return self._get_game_repository().get_searchresults(my_search)
 
+    def get_machine_cabinets(self, machine_names):
+        """Return ``{machine set name: art row}`` of scanned cabinets.
+
+        Looks up the ``cabinets`` artwork of the MAME sets named in
+        ``machine_names`` in one query; own artwork wins over progettosnaps.
+        Machines without a scanned cabinet are missing from the result, so
+        callers fall back to the fixed progettosnaps path. Never raises.
+        """
+
+        names = sorted({name for name in machine_names if name})
+        if not names:
+            return {}
+        placeholders = ",".join("?" * len(names))
+        try:
+            self.gdbc.execute(
+                f"SELECT sets.name AS machine, art.source, art.root_key, art.scan_unit, \
+                        art.type, art.extension, art.relative_path, art.archive_member \
+                 FROM sets JOIN swl ON swl.id = sets.swllink_id \
+                 JOIN art.art_set art ON art.id = sets.id \
+                 WHERE swl.name = 'mame' AND art.type = 'cabinets' \
+                   AND sets.name IN ({placeholders}) \
+                 ORDER BY CASE art.source WHEN 'own_artwork' THEN 0 ELSE 1 END",
+                names,
+            )
+            rows = self.gdbc.fetchall()
+        except sqlite3.Error as error:
+            log(f"UMSA database get_machine_cabinets: {error}", level='warning')
+            return {}
+        cabinets = {}
+        for row in rows:
+            entry = dict(row)
+            cabinets.setdefault(entry.pop('machine'), entry)
+        return cabinets
+
     def get_machine_name(self, machine_id):
         """Get name of machine from id"""
 

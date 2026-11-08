@@ -4,7 +4,6 @@ The module reacts on a click or a context action in the game list: it starts
 emulators, plays media, changes the machine of a set or selects a new software.
 """
 
-import os
 import zipfile
 from json import dumps
 
@@ -123,14 +122,16 @@ def gamelist_click(gui):
         gui.enter = True
         # get info from db
         machine_name, machine_label = gui.ggdb.get_machine_name(list_id)
-        # set new image and machine label
-        gui.getControl(SYSTEM_WRAPLIST).getSelectedItem().setArt(
-            {'icon': os.path.join(gui.cab_path, machine_name + '.png')})
-        gui.getControl(SET_LIST).getSelectedItem().setProperty(
-            'Machine', machine_label)
         # save machine for set in self.info
         gui.actset['machine_name'] = machine_name
         gui.actset['machine_label'] = machine_label
+        # scanned cabinet of the new machine (own artwork first)
+        gui.machine_cabinets.update(gui.ggdb.get_machine_cabinets([machine_name]))
+        # set new image and machine label
+        gui.getControl(SYSTEM_WRAPLIST).getSelectedItem().setArt(
+            {'icon': gui.get_machine_pic(gui.actset)})
+        gui.getControl(SET_LIST).getSelectedItem().setProperty(
+            'Machine', machine_label)
     # play media
     elif label == "Choose Media":
         # video

@@ -419,13 +419,14 @@ class Saver(xbmcgui.WindowXMLDialog):
     def get_machine_pic(self, use_set):
         """Return full path for a machine picture based on set
 
-        TODO all_art > to get cabinets/artpreview
-
-        Uses internal picture for pinballs, reels and arcade
+        Scanned cabinets from the artwork database first (own artwork before
+        progettosnaps), internal pictures for pinballs, reels and arcade.
         """
 
+        umsa = self.parent.umsa
         return artwork_selector.machine_picture(
-            use_set, self.path[1], MEDIA_FOLDER)
+            use_set, umsa.ggdb, artwork_selector.source_roots(self.path, umsa),
+            MEDIA_FOLDER)
 
     def resolve_art_path(self, art, source_roots, art_type=None, extension=None):
         """Resolve an artwork path with the shared Core resolver.

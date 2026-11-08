@@ -54,9 +54,16 @@ def create_gui_element_from_snap(set_info, image, art_type='unset'):
 
 
 def get_machine_pic(gui, use_set):
-    """Return the machine artwork path for the current game set."""
+    """Return the machine artwork path for the current game set.
 
-    return get_machine_artwork_path(use_set, gui.cab_path, SKIN_MEDIA_FOLDER)
+    Scanned cabinets (``gui.machine_cabinets``) win; without an artwork scan
+    the fixed progettosnaps path (``gui.cab_path``) is used.
+    """
+
+    return get_machine_artwork_path(
+        use_set, gui.cab_path, SKIN_MEDIA_FOLDER,
+        cabinets=getattr(gui, 'machine_cabinets', None),
+        source_roots=gui.artwork_source_roots())
 
 
 def search_snaps(gui, set_info):

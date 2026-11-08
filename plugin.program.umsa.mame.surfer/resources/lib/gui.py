@@ -310,6 +310,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.dummy = None # needed to prevent a software jump
                           # when popup is quit by left or right
         self.enter = None # set when a gamelist select happens
+        # scanned machine cabinets of the shown software (machine wraplist)
+        self.machine_cabinets = {}
         # deferred reload of the gamelist entry once scrolling stopped
         self.gamelist_settle = GamelistSettle()
         # drops software moves queued while a held left/right key is processed

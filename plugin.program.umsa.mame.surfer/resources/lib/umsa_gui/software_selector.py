@@ -9,6 +9,7 @@ from random import choice
 
 import xbmc
 import xbmcgui
+from umsa_core.artwork import machine_set_name
 from umsa_core.database import split_gamename
 
 from .constants import (
@@ -115,6 +116,10 @@ def select_software(gui, software_id):
 
     no_machines = len(gui.info)
     gui.actset = gui.info[pos_machine][pos_set]
+
+    # scanned cabinets for the machine wraplist (own artwork before progettosnaps)
+    gui.machine_cabinets = gui.ggdb.get_machine_cabinets(
+        {machine_set_name(set_info) for machine in gui.info for set_info in machine})
 
     # fill SET_LIST
     gui.getControl(SYSTEM_WRAPLIST).reset()

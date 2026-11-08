@@ -7,7 +7,8 @@ not touch Kodi controls.
 
 from os import path
 
-from umsa_core import check_image_aspect, resolve_artwork_path
+from umsa_core import check_image_aspect, get_machine_artwork_path, resolve_artwork_path
+from umsa_core.artwork import machine_set_name
 
 from .constants import ART_TYPES_BY_MODE
 
@@ -16,14 +17,6 @@ SNAPSHOT_TYPES = ('snap', 'titles', 'covers')
 
 # Artwork types that keep their aspect ratio
 ASPECT_TYPES = ('snap', 'titles')
-
-# Machine categories that use a dedicated fallback picture
-MACHINE_CATEGORIES = (
-    'Handheld / Electronic Game', "Handheld / Plug n' Play TV Game",
-    'Electromechanical / Reels', 'Casino / Reels',
-    'Slot Machine / Reels', 'Slot Machine / Video Slot'
-)
-
 
 def art_types_for_mode(mode):
     """Return the artwork types shown in the given screensaver mode."""
@@ -73,38 +66,19 @@ def resolve_art_path(art, roots, art_type=None, extension=None):
     return resolve_artwork_path(derived, art, roots)
 
 
-def machine_picture(use_set, progettosnaps, media_folder):
+def machine_picture(use_set, ggdb, roots, media_folder):
     """Return the full path of the machine picture of a set.
 
-    Uses the internal cabinet picture for pinballs, reels and arcade
-    machines of the MAME software list.
+    Same Core functions as the frontend's machine wraplist: the scanned
+    cabinet (``DBMod.get_machine_cabinets``, own artwork before progettosnaps)
+    wins, without an artwork scan the fixed progettosnaps cabinet path is
+    used; pinballs, reels and arcade games get the internal pictures.
     """
 
-    cab_path = path.join(progettosnaps, 'cabinets/cabinets')
-    pic = None
-    # set machine pic for mame
-    if use_set['machine_name'] == 'mame':
-        if use_set['is_machine']:
-            pic = path.join(cab_path, use_set['name']+'.png')
-        elif use_set['category'] == 'Electromechanical / Pinball':
-            pic = path.join(media_folder, "pinball.png")
-        elif use_set['category'] in MACHINE_CATEGORIES:
-            # TODO check if cabinet or artpreview is available for set
-            # fallback
-            if not pic:
-                if 'Reels' in use_set['category']:
-                    pic = path.join(media_folder, "reels.png")
-                if not pic:
-                    pic = path.join(media_folder, "arcade.png")
-        else:
-            if not pic:
-                pic = path.join(media_folder, "arcade.png")
-    # set machine pic for swl
-    else:
-        if not pic:
-            # TODO fallback media pic for missing swl machine cab
-            pic = path.join(cab_path, use_set['machine_name']+'.png')
-    return pic
+    machine = machine_set_name(use_set)
+    cabinets = ggdb.get_machine_cabinets([machine]) if machine else {}
+    cab_path = path.join(roots.get('progettosnaps', ''), 'cabinets/cabinets')
+    return get_machine_artwork_path(use_set, cab_path, media_folder, cabinets, roots)
 
 
 def aspect_for(art):

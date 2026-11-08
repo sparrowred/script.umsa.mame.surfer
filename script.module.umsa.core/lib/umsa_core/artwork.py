@@ -242,26 +242,52 @@ def build_artwork_path(art: dict, set_info: dict, progettosnaps: str, own_artwor
     return _build_legacy_path(art, set_info, source_roots)
 
 
+def machine_set_name(set_info: dict) -> str | None:
+    """Return the MAME set name whose cabinet shows the machine of ``set_info``.
+
+    Software list sets use their machine (``machine_name``), MAME machine sets
+    themselves; other MAME sets (arcade games) have none (``None``).
+    """
+
+    if set_info["machine_name"] != "mame":
+        return set_info["machine_name"]
+    if set_info["is_machine"]:
+        return set_info["name"]
+    return None
+
+
 def get_machine_artwork_path(
-    set_info: dict, cab_path: str, fallback_media_dir: str
+    set_info: dict, cab_path: str, fallback_media_dir: str,
+    cabinets: dict | None = None, source_roots: dict | None = None,
 ) -> str:
     """Return the machine artwork path for a game set.
 
     Args:
         set_info: Dict with keys 'machine_name', 'name', 'is_machine',
             'category'
-        cab_path: Base cabinet artwork path (e.g. /progettosnaps/cabinets/cabinets)
+        cab_path: Base cabinet artwork path (e.g. /progettosnaps/cabinets/cabinets),
+            used when the artwork database has no cabinet for the machine
+            (no artwork scan yet)
         fallback_media_dir: Directory with fallback images (pinball.png,
             reels.png, arcade.png)
+        cabinets: Optional ``{machine set name: art row}`` from
+            ``DBMod.get_machine_cabinets`` (own artwork already preferred)
+        source_roots: Artwork source roots to resolve the ``cabinets`` rows
 
     Returns:
         Full path to the machine artwork image
     """
 
-    if set_info["machine_name"] != "mame":
-        return os.path.join(cab_path, set_info["machine_name"] + ".png")
-    if set_info["is_machine"]:
-        return os.path.join(cab_path, set_info["name"] + ".png")
+    machine = machine_set_name(set_info)
+    if machine is not None:
+        art = (cabinets or {}).get(machine)
+        if art:
+            path = resolve_artwork_path(
+                art, {"name": machine, "swl_name": "mame"}, source_roots or {})
+            # empty when the source root changed since the scan
+            if path:
+                return path
+        return os.path.join(cab_path, machine + ".png")
     if set_info["category"] == "Electromechanical / Pinball":
         return os.path.join(fallback_media_dir, "pinball.png")
     if "Reels" in set_info["category"]:
