@@ -1,0 +1,17 @@
+<?xml version="1.0" ?>
+<settings version="1">
+	<!-- all UMSA settings live in script.module.umsa.core; this only opens them -->
+	<section id="plugin.program.umsa.mame.surfer">
+		<category id="general" label="32100" help="">
+			<group id="1">
+				<setting id="open_umsa_settings" type="action" label="32101" help="32201">
+					<level>0</level>
+					<data>Addon.OpenSettings(script.module.umsa.core)</data>
+					<control type="button" format="action">
+						<close>true</close>
+					</control>
+				</setting>
+			</group>
+		</category>
+	</section>
+</settings>

@@ -86,3 +86,15 @@ msgstr ""
 msgctxt "#30010"
 msgid "Amount of seconds to display each image"
 msgstr ""
+
+msgctxt "#32100"
+msgid "UMSA"
+msgstr ""
+
+msgctxt "#32101"
+msgid "Open UMSA settings"
+msgstr ""
+
+msgctxt "#32201"
+msgid "Opens the UMSA settings (emulators, media, frontend, maintenance) of the UMSA Core add-on."
+msgstr ""
