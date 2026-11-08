@@ -21,6 +21,7 @@ from retroplayer_cache import run_retroplayer
 from settings_adapter import load_all_settings
 from umsa_core import FILTER_CATEGORIES, set_log
 from umsa_core.database import DBMod, split_gamename
+from umsa_core.default_filter import DEFAULT_FILTER_NAME
 from umsa_core.emulation import Emulation
 from umsa_core.support import youtube_search
 from umsa_core_kodi import (
@@ -421,7 +422,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # filters are loaded from status.db after the database is open and the
         # one-time legacy import has run (the migration runs at DBMod open)
         self.filter_lists = empty_filter_lists()
-        self.act_filter = 'default'
+        self.act_filter = DEFAULT_FILTER_NAME
 
         # fill filter lists
         list_items = []
@@ -445,6 +446,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # one-time legacy import + load persisted filter selections and history
         self.run_startup_import()
+        # first start: create the default filter (status.db has none yet)
+        self.ggdb.ensure_default_filter()
         self.filter_lists = self.ggdb.load_filter_selections(self.act_filter)
         self.ggdb.define_filter(self.filter_lists)
         self.getControl(FILTER_LABEL2).setLabel(f'Filter: {self.act_filter}')

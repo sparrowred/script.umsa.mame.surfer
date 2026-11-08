@@ -363,6 +363,27 @@ class HistoryRepository:
 
         _write_within_savepoint(self._conn, operation)
 
+    def get_meta(self, key: str) -> str | None:
+        """Return the ``status_meta`` value for ``key`` (``None`` if unset)."""
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute("SELECT value FROM status_meta WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row["value"] if row else None
+        finally:
+            cursor.close()
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Store ``value`` for ``key`` in ``status_meta``."""
+
+        def operation(cursor: sqlite3.Cursor) -> None:
+            cursor.execute(
+                "INSERT OR REPLACE INTO status_meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+        _write_within_savepoint(self._conn, operation)
+
     def clear_import_marker(self) -> None:
         def operation(cursor: sqlite3.Cursor) -> None:
             cursor.execute(

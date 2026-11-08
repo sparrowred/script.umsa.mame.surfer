@@ -4,6 +4,7 @@ import xbmc
 import xbmcgui
 from umsa_core import set_log
 from umsa_core.database import DBMod
+from umsa_core.default_filter import DEFAULT_FILTER_NAME
 from umsa_core.screensaver_request import decode_request
 from umsa_core_kodi import (
     get_core_data_paths,
@@ -114,7 +115,10 @@ class ScreensaverRuntime:
                 return
 
             self.ggdb = DBMod(self.settings_folder, self._nonmame_roots())
-            self.ggdb.set_filter_enabled(False)
+            # random artwork follows the default filter (created on first start)
+            self.ggdb.ensure_default_filter()
+            self.ggdb.define_filter(self.ggdb.load_filter_selections(DEFAULT_FILTER_NAME))
+            self.ggdb.set_filter_enabled(True)
             if request is not None and request["art_types"] is not None:
                 available_art_types = set(self.ggdb.get_art_types())
                 unknown_art_types = set(request["art_types"]) - available_art_types

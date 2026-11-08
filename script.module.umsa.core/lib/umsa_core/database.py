@@ -41,6 +41,12 @@ from .artwork_scanner import ArtworkScanner
 from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .data_paths import CoreDataPaths
+from .default_filter import (
+    DEFAULT_FILTER_NAME,
+    DEFAULT_FILTER_SEEDED_KEY,
+    load_default_filter_spec,
+    resolve_default_filter,
+)
 from .emulator_repository import EmulatorRepository
 from .game_labels import make_time_nice, split_gamename  # noqa: F401
 from .game_repository import GameRepository
@@ -64,7 +70,7 @@ from .scan_progress import _scan_state_ownership, run_scan_with_progress  # noqa
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
 from .status_repository import StatusRepository
-from .umsa_db_download import download_and_update_umsa_db  # noqa: F401 - public import used by the GUI adapter
+from .umsa_db_download import download_and_update_umsa_db  # noqa: F401
 
 
 def _core_data_paths(db_path):
@@ -748,8 +754,8 @@ class DBMod:
         rand_art = None
         end_result = {}
 
-        # get with filter if on
-        if self.use_filter:
+        # get with filter if on (an empty filter would produce an invalid "AND")
+        if self.use_filter and self.filter_where:
             # TODO doesnt work when filter = everything but filter = on
             statement = "SELECT {} FROM art.art_set art JOIN sets ON sets.id = art.id {} \
                          WHERE art.type IN ({}) AND {} \
@@ -1011,6 +1017,32 @@ class DBMod:
         self._get_history_repository().save_filter_selections(
             filter_name, filter_lists
         )
+
+    def ensure_default_filter(self):
+        """Create the default filter once (first start); never raises.
+
+        Returns ``True`` when the filter was written now. An existing
+        ``default`` filter is kept; the ``status_meta`` marker prevents that
+        a filter the user deleted later is created again.
+        """
+
+        try:
+            repository = self._get_history_repository()
+            if repository.get_meta(DEFAULT_FILTER_SEEDED_KEY):
+                return False
+            created = False
+            if DEFAULT_FILTER_NAME not in repository.list_filter_names():
+                filter_lists = resolve_default_filter(
+                    self.gdb, load_default_filter_spec())
+                repository.save_filter_selections(DEFAULT_FILTER_NAME, filter_lists)
+                created = True
+                log("UMSA database: default filter created", level='info')
+            repository.set_meta(DEFAULT_FILTER_SEEDED_KEY, "1")
+        except Exception as error:  # noqa: BLE001 - the start must go on
+            log(f"UMSA database: could not create default filter: {error}",
+                level='error')
+            return False
+        return created
 
     def record_screensaver_display(self, set_id, software_id=None):
         """Record one successfully displayed set in ``screensaver_history``.
