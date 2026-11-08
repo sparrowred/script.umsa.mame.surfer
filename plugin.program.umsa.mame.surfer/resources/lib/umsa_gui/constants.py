@@ -30,6 +30,9 @@ ACTION_NOOP = (999,)
 
 # seconds without list movement before the gamelist entry is (re)loaded
 GAMELIST_SETTLE_DELAY = 0.3
+# an onAction callback starting less than this many seconds after the previous
+# handler ended was queued while that handler ran (held key) and is dropped
+ACTION_BACKLOG_THRESHOLD = 0.02
 
 # ControlIds
 SERIES_LABEL = 2301

@@ -53,8 +53,10 @@ from umsa_gui import (
 from umsa_gui import (
     gamelist as gamelist_workflows,
 )
+from umsa_gui.action_backlog import ActionBacklog
 from umsa_gui.artwork_presenter import create_gui_element_from_snap
 from umsa_gui.constants import (
+    ACTION_BACKLOG_THRESHOLD,
     ACTION_CANCEL_DIALOG,
     ACTION_CONTEXT,
     ACTION_ENTER,
@@ -158,6 +160,7 @@ SETTINGS_FOLDER = CORE_DATA_PATHS.filters_dir
 # Public API of this module. These names existed before the workflows were
 # split into the ``umsa_gui`` package and are re-exported unchanged.
 __all__ = [
+    "ACTION_BACKLOG_THRESHOLD",
     "ACTION_CANCEL_DIALOG",
     "ACTION_CONTEXT",
     "ACTION_ENTER",
@@ -306,6 +309,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.enter = None # set when a gamelist select happens
         # deferred reload of the gamelist entry once scrolling stopped
         self.gamelist_settle = GamelistSettle()
+        # drops software moves queued while a held left/right key is processed
+        self.software_backlog = ActionBacklog()
         self.oldset = () # needed for show_info to see if set has changed
         # to assure only one thread is running
         self.scan_thread = None
@@ -688,10 +693,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # ACTION SOFTWARE_BUTTON
         if self.selected_control_id == SOFTWARE_BUTTON:
             self.main_focus = SOFTWARE_BUTTON
-            if action.getId() in ACTION_MOVEMENT_RIGHT:
-                self.software_move('right')
-            elif action.getId() in ACTION_MOVEMENT_LEFT:
-                self.software_move('left')
+            if action.getId() in ACTION_MOVEMENT_RIGHT+ACTION_MOVEMENT_LEFT:
+                direction = 'right' if action.getId() in ACTION_MOVEMENT_RIGHT else 'left'
+                if self.software_backlog.is_backlog():
+                    xbmc.log("UMSA gui: onAction: software move skipped (backlog)", xbmc.LOGDEBUG)
+                else:
+                    self.software_move(direction)
+                self.software_backlog.done()
             elif action.getId() in ACTION_MOVEMENT_DOWN+ACTION_MOVEMENT_UP:
                 self.show_artwork()
             elif action.getId() in ACTION_CONTEXT:
@@ -711,6 +719,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
                 if menu_item == M_FILTER:
                     self.setFocus(self.getControl(FILTER_CATEGORY_LIST))
+                    # show the lists of the selected category right away
+                    self.show_filter_category_content(force=True)
 
                 elif menu_item == M_EXIT:
                     self.exit()
@@ -895,6 +905,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             if action.getId() in ACTION_ENTER:
                 self.filter_category()
+            elif action.getId() in ACTION_LIST_SCROLL:
+                self.show_filter_category_content()
 
         # ACTION FILTER_CONTENT_LIST_ACTIVE
         elif self.selected_control_id == FILTER_CONTENT_LIST_ACTIVE:
@@ -1097,9 +1109,13 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Move an entry between the active and the inactive filter list."""
         return filter_ui.filter_content(self, which_content)
 
-    def set_filter_content(self, cat, update=None):
+    def set_filter_content(self, cat, update=None, focus_lists=True):
         """Set filter content"""
-        return filter_ui.set_filter_content(self, cat, update)
+        return filter_ui.set_filter_content(self, cat, update, focus_lists)
+
+    def show_filter_category_content(self, force=False):
+        """Fill the filter content lists for the selected category."""
+        return filter_ui.show_category_content(self, force)
 
     def close_filterlist(self, no_update=None):
         """Close filter list window"""

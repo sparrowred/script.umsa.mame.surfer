@@ -94,6 +94,19 @@ def remember_and_select(gui, software_id):
     Pointer semantics match the previous insert-and-advance callers.
     """
 
+    # no identical entries next to each other in the history
+    if gui.last and 0 <= gui.lastptr < len(gui.last):
+        if str(gui.last[gui.lastptr]) == str(software_id):
+            xbmc.log(f"UMSA gui: remember_and_select: {software_id} already shown")
+            return True
+        if (gui.lastptr + 1 < len(gui.last)
+                and str(gui.last[gui.lastptr + 1]) == str(software_id)):
+            gui.lastptr += 1
+            if not gui.select_software(gui.last[gui.lastptr]):
+                gui.lastptr -= 1
+                return False
+            return True
+
     gui.lastptr += 1
     gui.last.insert(gui.lastptr, software_id)
     if not gui.select_software(software_id):

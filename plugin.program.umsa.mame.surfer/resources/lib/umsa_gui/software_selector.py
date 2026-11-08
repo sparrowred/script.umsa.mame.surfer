@@ -281,7 +281,13 @@ def software_move(gui, direction):
     if direction == 'right':
         if gui.lastptr + 1 >= len(gui.last):
             # moving past the newest entry appends a new random one
-            gui._remember_and_select(gui.ggdb.get_random_id())
+            software_id = gui.ggdb.get_random_id()
+            # do not draw the software that is already shown
+            for _retry in range(3):
+                if str(software_id) != str(gui.last[gui.lastptr]):
+                    break
+                software_id = gui.ggdb.get_random_id()
+            gui._remember_and_select(software_id)
         else:
             gui.lastptr += 1
             gui.select_software(gui.last[gui.lastptr])

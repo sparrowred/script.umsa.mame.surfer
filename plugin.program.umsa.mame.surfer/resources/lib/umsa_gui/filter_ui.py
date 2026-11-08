@@ -6,6 +6,7 @@ this module only drives the dialogs and the skin controls.
 
 import xbmc
 import xbmcgui
+from umsa_core import FILTER_CATEGORIES
 from umsa_core.database import build_filter_lists
 
 from .constants import (
@@ -17,6 +18,9 @@ from .constants import (
     FILTER_LABEL2,
     LABEL_STATUS,
 )
+
+# category shown after loading or saving a filter
+FILTER_START_CATEGORY = "Softwarelists"
 
 
 def empty_filter_lists():
@@ -56,11 +60,8 @@ def filter_category(gui):
                 f"{gui.ggdb.define_filter(gui.filter_lists)} filtered items"
             )
             gui.act_filter = files[ret]
-            gui.getControl(FILTER_CONTENT_LIST_ACTIVE).reset()
-            gui.getControl(FILTER_CONTENT_LIST_INACTIVE).reset()
-            gui.getControl(FILTER_LABEL).setLabel("Select category")
             gui.getControl(FILTER_LABEL2).setLabel(f'Filter: {gui.act_filter}')
-            gui.setFocus(gui.getControl(FILTER_CATEGORY_LIST))
+            show_start_category(gui)
 
         else:
             files.append(' or create a new filter')
@@ -81,13 +82,40 @@ def filter_category(gui):
             gui.ggdb.save_filter_selections(filter_filename, gui.filter_lists)
             gui.act_filter = filter_filename
             gui.getControl(FILTER_LABEL2).setLabel(f'Filter: {gui.act_filter}')
-            #gui.getControl(FILTER_LABEL).setLabel(
-            #    'saved ' + filter_filename
-            #)
+            show_start_category(gui)
 
-    # or set choosen category
-    else:
+    # or load the content lists of the chosen category and move into them
+    elif cat in FILTER_CATEGORY_KEYS:
         gui.set_filter_content(cat)
+
+
+def show_start_category(gui):
+    """Select the Softwarelists category and show its lists (focus stays)."""
+
+    gui.getControl(FILTER_CATEGORY_LIST).selectItem(
+        FILTER_CATEGORIES.index(FILTER_START_CATEGORY))
+    # selectItem() is applied asynchronously: name the category explicitly
+    gui.set_filter_content(FILTER_START_CATEGORY, focus_lists=False)
+
+
+def show_category_content(gui, force=False):
+    """Fill the active/inactive lists for the selected filter category.
+
+    The focus stays in the category list. Entries that are no category
+    (separator, Load/Save Filter) leave the lists as they are. Without
+    ``force`` an already shown category is not reloaded, so callbacks that
+    queued up while a key was held cost nothing.
+    """
+
+    item = gui.getControl(FILTER_CATEGORY_LIST).getSelectedItem()
+    if not item:
+        return
+    cat = item.getLabel()
+    if cat not in FILTER_CATEGORY_KEYS:
+        return
+    if not force and gui.getControl(FILTER_LABEL).getLabel() == cat:
+        return
+    gui.set_filter_content(cat, focus_lists=False)
 
 
 def filter_content(gui, which_content):
@@ -118,8 +146,12 @@ def filter_content(gui, which_content):
     gui.set_filter_content(filter_category_name, update=which_content)
 
 
-def set_filter_content(gui, cat, update=None):
-    """Set filter content"""
+def set_filter_content(gui, cat, update=None, focus_lists=True):
+    """Set filter content
+
+    ``focus_lists=False`` keeps the focus in the category list on the
+    initial fill (``update=None``).
+    """
 
     filter_content_id = 0
     f_select = 0
@@ -187,7 +219,7 @@ def set_filter_content(gui, cat, update=None):
             gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_INACTIVE))
         else:
             gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_ACTIVE))
-    else:
+    elif focus_lists:
         # switch to inactive when active is empty
         if len(active) > 0:
             gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_ACTIVE))
