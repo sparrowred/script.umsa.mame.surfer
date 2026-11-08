@@ -26,8 +26,9 @@ from .sqlite import require_row_connection
 def create_artwork_tables(db_cursor: sqlite3.Cursor) -> None:
     """Create artwork tables and indexes if they do not exist.
 
-    This is the authoritative schema definition for artwork tables. The
-    schema is preserved exactly as-is and must not be modified in this phase.
+    This is the authoritative schema definition for artwork tables.
+    ``art_scan_unit.dir_mtime`` (mtime of the unit directory at its last
+    successful scan) is added to older databases by ``ALTER TABLE``.
     """
 
     # Ensure tables exist (new schema only)
@@ -69,10 +70,14 @@ def create_artwork_tables(db_cursor: sqlite3.Cursor) -> None:
             status       TEXT NOT NULL,
             last_error   TEXT,
             updated_at   TEXT,
+            dir_mtime    REAL,
             PRIMARY KEY (source, root_key, scan_unit)
         )
         """
     )
+    db_cursor.execute("PRAGMA table_info(art_scan_unit)")
+    if "dir_mtime" not in {row[1] for row in db_cursor.fetchall()}:
+        db_cursor.execute("ALTER TABLE art_scan_unit ADD COLUMN dir_mtime REAL")
 
 
 class ArtworkRepository:
@@ -239,6 +244,24 @@ class ArtworkRepository:
             if row is None:
                 return None
             return row["status"]
+        finally:
+            cursor.close()
+
+    def get_scan_unit_state(
+        self, source: str, root_key: str, scan_unit: str
+    ) -> tuple[str | None, float | None]:
+        """Return ``(status, dir_mtime)`` of a scan unit, ``(None, None)`` if unknown."""
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                f"SELECT status, dir_mtime FROM {self._qt('art_scan_unit')} "
+                f"WHERE source=? AND root_key=? AND scan_unit=?",
+                (source, root_key, scan_unit),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None, None
+            return row["status"], row["dir_mtime"]
         finally:
             cursor.close()
 
@@ -441,7 +464,12 @@ class ArtworkRepository:
             cursor.close()
 
     def replace_scan_unit(
-        self, source: str, root_key: str, scan_unit: str, artwork_rows: Iterable[tuple]
+        self,
+        source: str,
+        root_key: str,
+        scan_unit: str,
+        artwork_rows: Iterable[tuple],
+        dir_mtime: float | None = None,
     ) -> None:
         """Replace artwork records for a scan unit and mark it done atomically.
 
@@ -450,7 +478,9 @@ class ArtworkRepository:
 
         1. Deletes only records for the specified (source, root_key, scan_unit).
         2. Inserts all artwork rows.
-        3. Marks the unit as done (clearing any previous error).
+        3. Marks the unit as done (clearing any previous error) and stores
+           ``dir_mtime``, the mtime of the unit directory taken before it was
+           listed; the scanner skips the unit later only while it is unchanged.
 
         The savepoint makes the replacement atomic without hijacking the
         caller's transaction. When no transaction is active, releasing the
@@ -489,9 +519,9 @@ class ArtworkRepository:
                     )
                 cursor.execute(
                     f"INSERT OR REPLACE INTO {self._qt('art_scan_unit')} "
-                    "(source,root_key,scan_unit,status,updated_at) "
-                    "VALUES (?,?,?,?,datetime('now'))",
-                    (source, root_key, scan_unit, "done"),
+                    "(source,root_key,scan_unit,status,updated_at,dir_mtime) "
+                    "VALUES (?,?,?,?,datetime('now'),?)",
+                    (source, root_key, scan_unit, "done", dir_mtime),
                 )
             except Exception:
                 cursor.execute("ROLLBACK TO umsa_art_replace_unit")

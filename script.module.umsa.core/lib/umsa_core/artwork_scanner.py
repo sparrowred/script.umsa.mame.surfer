@@ -199,12 +199,50 @@ class ArtworkScanner:
     """
 
     def __init__(self, db_paths, initialize_tables, progress=None,
-                 is_cancelled=None, listdir=None):
+                 is_cancelled=None, listdir=None, stat=None):
         self._db_paths = db_paths
         self._initialize_tables = initialize_tables
         self._progress = progress
         self._is_cancelled = is_cancelled or (lambda: False)
         self._listdir = listdir or os.listdir
+        self._stat = stat or os.stat
+
+    @staticmethod
+    def _remove_vanished_units(repo, units, complete_roots, only_types):
+        """Delete the records of units whose directory no longer exists.
+
+        Only roots listed completely are cleaned up, and with ``only_types``
+        only units of those types, so an unreadable root or a partial scan
+        never loses artwork. A failure is logged and leaves the records.
+        """
+
+        found = {(src, rkey, urel) for src, rkey, _path, urel, _swl, _type in units}
+        for src, rkey in complete_roots:
+            try:
+                vanished = [
+                    unit for unit in repo.list_scan_units(src, rkey)
+                    if (src, rkey, unit) not in found
+                    and (not only_types or unit.split('/', 1)[0] in only_types)
+                ]
+                if vanished:
+                    removed = repo.delete_scan_units(src, rkey, vanished)
+                    log(f"UMSA artwork scan: source '{src}': removed {len(vanished)} "
+                        f"vanished unit(s) with {removed} artwork record(s): "
+                        f"{', '.join(vanished[:10])}")
+            except sqlite3.Error as exc:
+                log(f"UMSA artwork scan: could not remove vanished units of "
+                    f"source '{src}': {exc}", level='error')
+
+    def _unit_mtime(self, unit_path):
+        """Return the mtime of a unit directory, ``None`` when it cannot be read."""
+
+        try:
+            return self._stat(unit_path).st_mtime
+        except (OSError, ValueError) as exc:
+            log(f"UMSA artwork scan: cannot stat '{unit_path}' "
+                f"({_format_os_error(exc)}); unit is scanned again",
+                level='debug')
+            return None
 
     def _report(self, percent=None, what=None):
         """Forward a progress update to the host, if a callback was given."""
@@ -271,15 +309,20 @@ class ArtworkScanner:
         again: ``<root>/<type>/<type>/<set>.<ext>``.
 
         Every ``<type>/<software_list>`` pair forms one scan unit. Discovered
-        units are stored in ``art_scan_unit`` (so an interrupted run resumes
-        and skips finished units) and matching files are recorded in
-        ``art_set``.
+        units are stored in ``art_scan_unit`` together with the mtime of their
+        directory, and matching files are recorded in ``art_set``. A later
+        scan skips a ``done`` unit only while its directory mtime is unchanged
+        (only equality counts, so a skewed share clock does not matter), so
+        added, removed or renamed files are picked up and an interrupted run
+        still resumes. After a scan that was not cancelled, units of a
+        completely listed root whose directory vanished are deleted.
 
         paths -- a single path or a sequence of paths.
         source -- artwork source name; defaults to ``progettosnaps`` for the
             first path and ``own_artwork`` for the rest.
         only_types -- optional restriction to a set of artwork types.
-        resume -- skip units already marked ``done``.
+        resume -- skip ``done`` units whose directory is unchanged; ``False``
+            scans every unit again.
         cancel_event -- optional ``threading.Event`` used to stop the scan and
             to interrupt retry waits.
 
@@ -454,6 +497,9 @@ class ArtworkScanner:
 
             # Discover scan units (type/software_list) without reading files yet.
             units = []
+            # roots listed without any error: only their vanished units are
+            # removed after the scan
+            complete_roots = []
             for idx, path in enumerate(path_list):
                 # Source identity is positional: the first root is always
                 # 'progettosnaps' and later roots 'own_artwork'. An empty or
@@ -466,6 +512,7 @@ class ArtworkScanner:
                         f"'{source_name}', skipping", level='warning')
                     continue
                 root_key = root_key_for_path(path)
+                errors_before_root = errors
                 entries = listing(path, 'root')
                 if entries is None:
                     # An unreadable root is not an empty root: count it and
@@ -534,6 +581,9 @@ class ArtworkScanner:
                         units.append((source_name, root_key, path,
                                       f"{art_type}/{swl}", swl, art_type))
 
+                if errors == errors_before_root:
+                    complete_roots.append((source_name, root_key))
+
             total = len(units)
             log(f"UMSA artwork scan: discovered {total} units")
 
@@ -544,9 +594,14 @@ class ArtworkScanner:
                     break
                 self._report(int((i / total) * 100) if total else 100, urel)
 
-                if resume:
-                    status = repo.get_scan_unit_status(src, rkey, urel)
-                    if status == 'done':
+                # mtime of the unit directory before it is listed: a finished
+                # unit is skipped only while its directory is unchanged (files
+                # added, removed or renamed change the directory mtime).
+                unit_path = os.path.join(rpath, urel)
+                dir_mtime = self._unit_mtime(unit_path)
+                if resume and dir_mtime is not None:
+                    status, done_mtime = repo.get_scan_unit_state(src, rkey, urel)
+                    if status == 'done' and done_mtime == dir_mtime:
                         skipped += 1
                         continue
 
@@ -583,7 +638,6 @@ class ArtworkScanner:
                     log(f"UMSA artwork scan: could not mark unit '{urel}' as "
                         f"running: {status_exc}", level='warning')
 
-                unit_path = os.path.join(rpath, urel)
                 files = listing(unit_path, urel)
                 if files is None:
                     if self._cancelled(cancel_event):
@@ -628,7 +682,8 @@ class ArtworkScanner:
                 # transaction, so a crash cannot leave fresh artwork with a
                 # stale status (or a done status with old artwork).
                 try:
-                    repo.replace_scan_unit(src, rkey, urel, matched_rows)
+                    repo.replace_scan_unit(src, rkey, urel, matched_rows,
+                                           dir_mtime=dir_mtime)
                 except Exception as exc:
                     errors += 1
                     log(f"UMSA artwork scan: unit '{urel}' failed: {exc}",
@@ -645,6 +700,8 @@ class ArtworkScanner:
                 log(f"UMSA artwork scan: [{i + 1}/{total}] {urel} "
                     f"swl={swl_name} files={len(files)} matched={len(matched_rows)}")
 
+            if not cancelled:
+                self._remove_vanished_units(repo, units, complete_roots, only_types)
             return finish()
         except _ArtworkScanResourceError as exc:
             # The filesystem ran out of file handles and a single recovery
