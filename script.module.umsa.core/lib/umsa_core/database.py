@@ -38,6 +38,7 @@ from urllib.request import pathname2url
 from .artwork import resolve_artwork_path
 from .artwork_repository import ArtworkRepository, create_artwork_tables
 from .artwork_scanner import ArtworkScanner
+from .dat_parser import DRIVER_WIP, driver_lookup_keys
 from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .data_paths import CoreDataPaths
@@ -1745,6 +1746,9 @@ class DBMod:
 
         diff_machines = {}
         set_ids = []
+        # set id -> driver source whose WIP is shown as "WIP Driver"
+        set_drivers = {}
+        system_sources = {}
         count = 1
         for diff_software in all_sets:
             for machine in diff_software:
@@ -1769,6 +1773,7 @@ class DBMod:
                     else:
                         # TODO handhelds are not arcade, but a game not a machine
                         machine_label = 'Arcade'
+                    set_drivers[machine['id']] = machine['source']
                 else: # swl
                     # diff machine is swl machine
                     # TODO: to test used machine name from swl
@@ -1782,6 +1787,15 @@ class DBMod:
                     else:
                         machine_name, machine_label = repo.get_machine_name(
                             machine['system_id'])
+                    # driver of the machine the set runs on, else of the
+                    # default system of the software list
+                    driver = best_machine.get('source') if best_machine else None
+                    if not driver and machine['system_id']:
+                        if machine['system_id'] not in system_sources:
+                            system_sources[machine['system_id']] = (
+                                repo.get_set_source(machine['system_id']))
+                        driver = system_sources[machine['system_id']]
+                    set_drivers[machine['id']] = driver
 
                 # create key in diff_machines
                 if resulting_machine not in diff_machines:
@@ -1836,11 +1850,37 @@ class DBMod:
                         pos_set = count2
                         break
         all_dat = self.get_dat_for_sets(set_ids)
+        self._add_driver_wip(all_dat, set_drivers)
         all_art = self.get_artwork_for_sets(set_ids)
         time2 = time.time()
         log(f"UMSA database: get_all_for_software: time = {(time2-time1)*1000.0:.0f}ms", level='debug')
 
         return return_list, pos_machine, pos_set, all_dat, all_art
+
+    def _add_driver_wip(self, all_dat, set_drivers):
+        """Add the ``WIP Driver`` text of each set's driver to ``all_dat``.
+
+        ``set_drivers`` maps a set id to its driver source (``sets.source``,
+        e.g. ``snk/lasso.cpp``); the DATs name a driver by its file name and
+        only use the path for ambiguous names, so both are tried.
+        """
+
+        keys = {set_id: driver_lookup_keys(src)
+                for set_id, src in set_drivers.items()}
+        wanted = {key for set_keys in keys.values() for key in set_keys}
+        if not wanted:
+            return
+        try:
+            wip = self._get_dat_repository().get_driver_wip(wanted)
+        except sqlite3.OperationalError as exc:
+            # dat.db from before the driver column: no driver WIP until rescan
+            log(f"UMSA database: driver WIP unavailable: {exc}", level='debug')
+            return
+        for set_id, set_keys in keys.items():
+            for key in set_keys:
+                if key in wip:
+                    all_dat.setdefault(set_id, {})[DRIVER_WIP] = wip[key]
+                    break
 
     def get_info_by_set_and_swl(self, setname, swlname):
         """get info by set and swl"""

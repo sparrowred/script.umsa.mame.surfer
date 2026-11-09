@@ -158,6 +158,19 @@ class GameRepository:
         finally:
             cursor.close()
 
+    def get_set_source(self, set_id) -> str | None:
+        """Return the driver source file (``sets.source``) of a set id.
+
+        ``None`` when the set is unknown or has no source.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute("SELECT source FROM sets WHERE id = ?", (set_id,))
+            row = cursor.fetchone()
+            return (row[0] or None) if row else None
+        finally:
+            cursor.close()
+
     def get_machine_name(self, machine_id) -> tuple:
         """Return the ``(name, gamename)`` tuple of a set id.
 
@@ -474,7 +487,7 @@ class GameRepository:
         The rows are normalised to plain dicts (the public ``DBMod`` shape
         since the original implementation: ``id``, ``name``, ``label2``,
         ``setname``, ``detail``, ``fullname``, ``status``, ``filter``,
-        ``year`` and the historical ``"status,filtr"`` ``maker`` string).
+        ``year``, ``source`` (driver file) and the historical ``"status,filtr"`` ``maker`` string).
         ``pos`` is the index whose set name equals ``machine`` (0 when it is
         never found or ``machine`` is ``None``).
 
@@ -484,7 +497,7 @@ class GameRepository:
         try:
             cursor.execute(
                 "SELECT DISTINCT "
-                "   s.id, s.name, s.gamename, s.detail, "
+                "   s.id, s.name, s.gamename, s.detail, s.source, "
                 "   y.name as year, m.name as maker, ss.status, ss.filtr "
                 "FROM "
                 "   sets s, swl sw, "
@@ -515,6 +528,7 @@ class GameRepository:
                         'status'   : db_result['status'],
                         'filter'   : db_result['filtr'],
                         'year'     : db_result['year'],
+                        'source'   : db_result['source'],
                         'maker'    : "{},{}".format(db_result['status'], db_result['filtr'])
                     }
                 )

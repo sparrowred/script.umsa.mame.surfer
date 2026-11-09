@@ -23,8 +23,25 @@ from .constants import (
     SHADOW_DAT,
     SYSTEM_WRAPLIST,
     TEXTLIST,
+    TEXTLIST_HIDDEN,
+    TEXTLIST_ORDER,
+    TEXTLIST_OTHER_CATEGORIES,
 )
 from .paths import SKIN_MEDIA_FOLDER
+
+_TEXTLIST_RANK = {name: rank for rank, name in enumerate(TEXTLIST_ORDER)}
+
+
+def textlist_sort_key(category):
+    """Sort key of a DAT category in TEXTLIST: fixed rank, then name.
+
+    Categories missing from ``TEXTLIST_ORDER`` take the rank of the
+    ``TEXTLIST_OTHER_CATEGORIES`` placeholder and sort alphabetically there.
+    """
+
+    rank = _TEXTLIST_RANK.get(
+        category, _TEXTLIST_RANK[TEXTLIST_OTHER_CATEGORIES])
+    return rank, category
 
 
 def create_gui_element_from_snap(set_info, image, art_type='unset'):
@@ -230,20 +247,17 @@ def show_artwork(gui, howmuch='all'):
     list_items = []
     count = 0
     if gui.actset['id'] in gui.all_dat:
-        # TODO put history first, so have a sorted list of headings
-        for k in sorted(gui.all_dat[gui.actset['id']]):
+        set_dat = gui.all_dat[gui.actset['id']]
+        for k in sorted(set_dat, key=textlist_sort_key):
             moretext = ''
-            if k in ('Contribute', 'Rec'):
+            if k in TEXTLIST_HIDDEN:
                 continue
             if k == 'History':
                 moretext = stattext
 
             list_item = xbmcgui.ListItem()
             list_item.setLabel(k)
-            list_item.setProperty(
-                'text',
-                moretext + gui.all_dat[gui.actset['id']][k]
-            )
+            list_item.setProperty('text', moretext + set_dat[k])
             list_items.append(list_item)
             count += 1
 

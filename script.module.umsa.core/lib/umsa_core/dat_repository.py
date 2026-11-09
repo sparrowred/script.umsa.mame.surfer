@@ -25,6 +25,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable
 
+from .dat_parser import DRIVER_WIP
 from .scan_coordinator import scan_coordinator
 from .sqlite import require_row_connection
 
@@ -63,7 +64,8 @@ def create_dat_tables(db_cursor: sqlite3.Cursor) -> None:
             id      INTEGER PRIMARY KEY AUTOINCREMENT,
             file    VARCHAR(50),
             entry   TEXT,
-            origin  TEXT
+            origin  TEXT,
+            driver  TEXT
         )
         """
     )
@@ -84,16 +86,26 @@ def create_dat_tables(db_cursor: sqlite3.Cursor) -> None:
         "CREATE INDEX IF NOT EXISTS dat_set_dat_id_idx ON dat_set(dat_id)")
     db_cursor.execute(
         "CREATE INDEX IF NOT EXISTS dat_origin_idx ON dat(origin)")
+    # driver WIP lookup by driver name (rows with a NULL driver are the rest)
+    db_cursor.execute(
+        "CREATE INDEX IF NOT EXISTS dat_driver_idx ON dat(driver)")
     _backfill_origin(db_cursor)
 
 
 def _ensure_origin_column(db_cursor: sqlite3.Cursor) -> None:
-    """Add the ``origin`` column to an old ``dat`` table when absent."""
+    """Add the ``origin`` and ``driver`` columns to an old ``dat`` table."""
 
-    db_cursor.execute("PRAGMA table_info(dat)")
+    _ensure_columns(db_cursor, "dat", ("origin", "driver"))
+
+
+def _ensure_columns(db_cursor: sqlite3.Cursor, table: str, names) -> None:
+    """Add every missing nullable ``TEXT`` column of ``names`` to ``table``."""
+
+    db_cursor.execute(f"PRAGMA table_info({table})")
     columns = {row[1] for row in db_cursor.fetchall()}
-    if "origin" not in columns:
-        db_cursor.execute("ALTER TABLE dat ADD COLUMN origin TEXT")
+    for name in names:
+        if name not in columns:
+            db_cursor.execute(f"ALTER TABLE {table} ADD COLUMN {name} TEXT")
 
 
 def _backfill_origin(db_cursor: sqlite3.Cursor) -> None:
@@ -224,6 +236,29 @@ class DatRepository:
         finally:
             cursor.close()
 
+    def get_driver_wip(self, drivers: Iterable[str]) -> dict:
+        """Return ``{driver name: WIP Driver text}`` for the given drivers.
+
+        Drivers without an entry are missing from the result; an empty input
+        returns an empty mapping.
+        """
+
+        names = list(dict.fromkeys(d for d in drivers if d))
+        if not names:
+            return {}
+        placeholders = ",".join("?" for _ in names)
+        dat = self._qt('dat')
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                f"SELECT driver, entry FROM {dat} "
+                f"WHERE file = ? AND driver IN ({placeholders})",
+                [DRIVER_WIP, *names],
+            )
+            return {row[0]: row[1] for row in cursor.fetchall()}
+        finally:
+            cursor.close()
+
     # -- staging ---------------------------------------------------------
 
     def create_staging_tables(
@@ -242,10 +277,12 @@ class DatRepository:
                 CREATE TABLE IF NOT EXISTS dat_staging(
                     stage_id  INTEGER PRIMARY KEY AUTOINCREMENT,
                     file      VARCHAR(50),
-                    entry     TEXT
+                    entry     TEXT,
+                    driver    TEXT
                 )
                 """
             )
+            _ensure_columns(db_cursor, "dat_staging", ("driver",))
             db_cursor.execute(
                 """
                 CREATE TABLE IF NOT EXISTS dat_staging_set(
@@ -283,10 +320,12 @@ class DatRepository:
         entry: str | None,
         set_ids: Iterable[int],
         db_cursor: sqlite3.Cursor | None = None,
+        driver: str | None = None,
     ) -> int:
         """Stage one parsed entry and its set relationships.
 
-        Returns the staging id. The caller owns the transaction; staging is
+        ``driver`` is the MAME driver name of a ``WIP Driver`` entry (see
+        :attr:`umsa_core.dat_parser.DatEntry.driver`). Returns the staging id. The caller owns the transaction; staging is
         written to separate tables so it can never collide with the ids of
         already published ``dat`` rows.
         """
@@ -297,8 +336,8 @@ class DatRepository:
             close = True
         try:
             db_cursor.execute(
-                "INSERT INTO dat_staging(file, entry) VALUES (?, ?)",
-                (file, entry),
+                "INSERT INTO dat_staging(file, entry, driver) VALUES (?, ?, ?)",
+                (file, entry, driver),
             )
             stage_id = db_cursor.lastrowid
             if stage_id is None:
@@ -428,8 +467,10 @@ class DatRepository:
                 for entry in entries:
                     set_ids = getattr(entry, "set_ids", ())
                     cursor.execute(
-                        "INSERT INTO dat(file, entry, origin) VALUES (?, ?, ?)",
-                        (entry.file, entry.entry, origin),
+                        "INSERT INTO dat(file, entry, origin, driver) "
+                        "VALUES (?, ?, ?, ?)",
+                        (entry.file, entry.entry, origin,
+                         getattr(entry, "driver", None)),
                     )
                     new_id = cursor.lastrowid
                     if new_id is None:
@@ -481,18 +522,18 @@ class DatRepository:
                 cursor.execute("DELETE FROM dat WHERE origin = ?", (origin,))
 
                 reader.execute(
-                    "SELECT stage_id, file, entry FROM dat_staging "
+                    "SELECT stage_id, file, entry, driver FROM dat_staging "
                     "ORDER BY stage_id"
                 )
                 while True:
                     batch = reader.fetchmany(500)
                     if not batch:
                         break
-                    for stage_id, file, entry in batch:
+                    for stage_id, file, entry, driver in batch:
                         cursor.execute(
-                            "INSERT INTO dat(file, entry, origin) "
-                            "VALUES (?, ?, ?)",
-                            (file, entry, origin),
+                            "INSERT INTO dat(file, entry, origin, driver) "
+                            "VALUES (?, ?, ?, ?)",
+                            (file, entry, origin, driver),
                         )
                         new_id = cursor.lastrowid
                         cursor.execute(

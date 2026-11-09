@@ -140,6 +140,9 @@ from umsa_gui.constants import (
     SYSTEM_BORDER,
     SYSTEM_WRAPLIST,
     TEXTLIST,
+    TEXTLIST_HIDDEN,
+    TEXTLIST_ORDER,
+    TEXTLIST_OTHER_CATEGORIES,
     VIDEO_LABEL,
     WAIT_GUI,
     WAIT_PLAYER,
@@ -250,6 +253,9 @@ __all__ = [
     "SYSTEM_BORDER",
     "SYSTEM_WRAPLIST",
     "TEXTLIST",
+    "TEXTLIST_HIDDEN",
+    "TEXTLIST_ORDER",
+    "TEXTLIST_OTHER_CATEGORIES",
     "UMSA",
     "VIDEO_LABEL",
     "WAIT_GUI",
@@ -539,13 +545,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         item = self.getControl(control_id).getSelectedItem().getLabel()
         if control_id == TEXTLIST:
-            # show series
-            if item == 'Series':
-                series = self.ggdb.get_series(self.last[self.lastptr])
-                if series:
-                    self.popup_gamelist(series, 'Series')
             # placeholder without DAT text: nothing to show
-            elif item == NO_INFO_LABEL:
+            if item == NO_INFO_LABEL:
                 return
             # text viewer: show the text of the entry itself, entries like
             # 'Emulator output' exist only in the list, not in all_dat

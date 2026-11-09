@@ -235,6 +235,7 @@ class DatScanner:
                                 entry.entry,
                                 entry.set_ids,
                                 db_cursor=staged_cur,
+                                driver=getattr(entry, "driver", None),
                             )
                             summary['entries'] += 1
                     db_conn.commit()

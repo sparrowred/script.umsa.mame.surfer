@@ -33,11 +33,53 @@ class DatEntry:
             entry may be linked to several sets and the same id may appear more
             than once when the input names it through more than one
             software-list/set combination.
+        driver: The MAME driver source name of a driver entry (``$drv``
+            section of ``mameinfo.dat``/``messinfo.dat``), exactly as the DAT
+            names it (``1942.cpp`` or, for ambiguous names,
+            ``jaleco/dday.cpp``). ``None`` for every other entry.
     """
 
     file: str
     entry: str | None
     set_ids: tuple
+    driver: str | None = None
+
+
+#: Display category of the WIP history of a MAME driver.
+DRIVER_WIP = 'WIP Driver'
+
+# internal tag collecting the lines that follow ``$drv`` before the first
+# section heading (the first one is "<version> [<authors>]")
+_DRIVER_HEAD = '_driver_head'
+
+
+def driver_lookup_keys(source) -> tuple:
+    """Return the DAT driver names to try for a ``sets.source`` value.
+
+    The DATs name a driver by its file name (``lasso.cpp``) and only use the
+    path for ambiguous names (``jaleco/dday.cpp``), so the full source is
+    tried first, then its base name. An empty source returns ``()``.
+    """
+
+    if not source:
+        return ()
+    source = source.replace('\\', '/')
+    base = source.rsplit('/', 1)[-1]
+    if base == source:
+        return (source,)
+    return (source, base)
+
+
+def _driver_entry(driver: str, dat: dict):
+    """Build the single ``WIP Driver`` entry of a ``$drv`` section, or ``None``."""
+
+    head = dat.get(_DRIVER_HEAD, '').split('[CR]', 1)[0].strip()
+    wip = dat.get('WIP', '')
+    if not wip:
+        return DatEntry(DRIVER_WIP, head + '[CR]', (), driver) if head else None
+    if head:
+        return DatEntry(DRIVER_WIP, f"{head}[CR][CR]{wip}", (), driver)
+    return DatEntry(DRIVER_WIP, wip, (), driver)
 
 
 def _matched_set_ids(swl, sets, all_sets: Mapping[str, int]) -> tuple:
@@ -70,6 +112,7 @@ def parse_dat(fobj: Iterable[str], all_sets: Mapping[str, int], datfile: str):
     dat = {}
     tag = ""
     flag = None
+    driver = None
 
     for line in fobj:
         line = line.rstrip()
@@ -80,6 +123,11 @@ def parse_dat(fobj: Iterable[str], all_sets: Mapping[str, int], datfile: str):
         if flag:
             # save entry
             if line == '$end':
+                if driver is not None:
+                    entry = _driver_entry(driver, dat)
+                    if entry is not None:
+                        yield entry
+                    dat = {}
                 set_ids = _matched_set_ids(swl, sets, all_sets)
                 for entry_tag, text in dat.items():
 
@@ -101,7 +149,14 @@ def parse_dat(fobj: Iterable[str], all_sets: Mapping[str, int], datfile: str):
                 swl = None
                 sets = None
                 flag = None
+                driver = None
                 dat = {}
+
+            # driver section: "$info=<driver>.cpp" followed by "$drv"
+            elif line == '$drv':
+                driver = sets[0] if sets else None
+                tag = _DRIVER_HEAD
+                dat.setdefault(tag, "")
 
             # add line to entry
             elif line == '$bio':

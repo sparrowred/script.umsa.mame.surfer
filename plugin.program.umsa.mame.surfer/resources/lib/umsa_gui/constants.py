@@ -5,6 +5,9 @@ screensaver add-on. They must not change: ``gui.py`` re-exports them so the
 historic public names keep working.
 """
 
+# DAT display category of the driver WIP, defined once in Core
+from umsa_core.dat_parser import DRIVER_WIP as _DRIVER_WIP
+
 # shared with the screensaver and the Kodi adapter; defined once in Core
 from umsa_core.window_properties import EMULATOR_RUNNING_PROPERTY  # noqa: F401
 
@@ -46,6 +49,32 @@ GROUP_FILTER = 408
 TEXTLIST = 4033
 # TEXTLIST entry when there is no DAT text; it opens no text viewer
 NO_INFO_LABEL = 'no info'
+# placeholder in TEXTLIST_ORDER for DAT categories not listed by name (free
+# "- XYZ -" headings of a DAT, e.g. 'Tips/Tricks'); they sort alphabetically
+TEXTLIST_OTHER_CATEGORIES = None
+# fixed order of the DAT categories in TEXTLIST ('Emulator output' is appended
+# after an emulator run by emulator_setup.add_or_update_emu_output)
+TEXTLIST_ORDER = (
+    'History',
+    'Info',
+    'MInfo',
+    'Sysinfo',
+    'eXoDOS',
+    'GameBase64',
+    'Story',
+    'Gameplay',
+    'Start',
+    'Setup',
+    'Play Inst.',
+    'Score',
+    'Command',
+    TEXTLIST_OTHER_CATEGORIES,
+    'WIP',
+    'others',
+    _DRIVER_WIP,
+)
+# DAT categories never shown in TEXTLIST ('Rec' has its own menu entry)
+TEXTLIST_HIDDEN = ('Contribute', 'Rec')
 IMAGE_RIGHT = 2232
 IMAGE_BIG_LIST = 2233
 IMAGE_LIST = 2223
