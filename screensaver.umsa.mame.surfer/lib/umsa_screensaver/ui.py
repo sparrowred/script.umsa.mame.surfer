@@ -572,10 +572,19 @@ class Saver(xbmcgui.WindowXMLDialog):
                 xbmc.LOGWARNING)
 
     def mute_videos(self):
-        """Mute Kodi before the videos start, when ``ssaver_video_mute`` is on."""
+        """Prepare the sound before the videos start.
+
+        With ``ssaver_video_mute`` Kodi is muted. Videos with sound would
+        play on top of a running UMSA VGM (single track or random playback
+        of the frontend), so the VGM is stopped instead.
+        """
 
         if self.settings.get('video_mute'):
             self._video_mute.mute()
+        elif vgm_active():
+            xbmc.log("UMSA SSaver: videos with sound, stopping the VGM playback",
+                     xbmc.LOGINFO)
+            send_vgm_action('stop')
 
     def restore_video_sound(self):
         """Give Kodi its sound back when the screensaver muted it.

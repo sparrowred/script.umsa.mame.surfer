@@ -529,7 +529,7 @@ class RenderSession:
             self.kodi.log("UMSA SSaver: no screensaver videos available", self.kodi.LOGWARNING)
             return False
         saver._playback_owned = True
-        # mute before the playback starts, so no sound gets through
+        # mute (or stop a running VGM) before the playback starts
         saver.mute_videos()
         saver.parent.player.play(saver.playlist)
         saver.mark_video_start()

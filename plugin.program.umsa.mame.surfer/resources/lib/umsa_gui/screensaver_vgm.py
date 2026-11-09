@@ -101,7 +101,9 @@ def hide_vgm_info(gui):
 def handle_vgm_action(gui, action):
     """Run a VGM control action requested by another add-on."""
 
-    if not gui.emulation.playvgm:
+    # random playback stays active between two tracks (playvgm is off then);
+    # a stop must still end it
+    if not (gui.emulation.playvgm or gui.emulation.playrandomvgm):
         return
     xbmc.log(f"UMSA gui: VGM action from screensaver: {action}", xbmc.LOGDEBUG)
     if action == 'stop':
