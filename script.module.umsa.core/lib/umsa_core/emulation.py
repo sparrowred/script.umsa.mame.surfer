@@ -126,10 +126,7 @@ class Emulation:
         self.terminal = terminal
         self.vgmplay_exe = vgmplay_exe
 
-        self.mame_ini = {}
-        if mame_ini_file:
-            self.mame_ini = resolve_mame_paths(
-                parse_mame_ini(mame_ini_file), mame_dir)
+        self.mame_ini = self._load_mame_ini(mame_ini_file, mame_dir)
 
         self.launch_preparer = LaunchPreparer(
             mame_exe=mame_exe,
@@ -163,6 +160,47 @@ class Emulation:
             # eff_db of LEVEL_ADJ frames feeds the music info
             frame_listener=self.vgm_player.on_lua_log,
         )
+
+    @staticmethod
+    def _load_mame_ini(mame_ini_file, mame_dir):
+        """Parsed mame.ini with its paths resolved, {} without a file."""
+        if not mame_ini_file:
+            return {}
+        return resolve_mame_paths(parse_mame_ini(mame_ini_file), mame_dir)
+
+    def apply_settings(self, temp_dir, mame_ini_file, mame_dir, mame_exe, chdman_exe,
+                       nonmame, terminal, vgmplay_exe, vgm_max_duration):
+        """Take over changed settings without recreating the instance.
+
+        Keeps the running process, the VGM socket and the playback state;
+        an emulator or VGM track that already runs keeps its arguments, the
+        next start uses the new values. LaunchPreparer and VgmPlayer hold
+        copies, so they are updated too.
+        """
+        self.temp_dir = temp_dir
+        self.mame_dir = mame_dir
+        self.mame_exe = mame_exe
+        self.chdman_exe = chdman_exe
+        self.nonmame = nonmame if nonmame is not None else {}
+        self.terminal = terminal
+        self.vgmplay_exe = vgmplay_exe
+        self.mame_ini = self._load_mame_ini(mame_ini_file, mame_dir)
+
+        preparer = self.launch_preparer
+        preparer.mame_exe = mame_exe
+        preparer.mame_dir = mame_dir
+        preparer.nonmame = self.nonmame
+        preparer.mame_ini = self.mame_ini
+        preparer.temp_dir = temp_dir
+        preparer.terminal = terminal
+        preparer.chdman_exe = chdman_exe
+
+        player = self.vgm_player
+        player.mame_exe = mame_exe
+        player.mame_dir = mame_dir
+        player.vgmplay_exe = vgmplay_exe
+        player.rom_paths = self.mame_ini.get('rompath', [])
+        player.max_vgm_duration = vgm_max_duration
 
     # VGM state properties for backward compatibility
     @property

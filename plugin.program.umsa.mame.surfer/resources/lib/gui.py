@@ -995,9 +995,6 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.vgm_show_machine_list = core_settings.vgm_show_machine_list
         self.vgm_max_duration = core_settings.vgm_max_duration
         self.vgm_intro_duration = core_settings.vgm_intro_duration
-        # the VGM player exists from onInit on; keep its cap in sync after the settings dialog
-        if getattr(self, 'emulation', None) is not None:
-            self.emulation.vgm_player.max_vgm_duration = self.vgm_max_duration
 
         self.pref_country = core_settings.pref_country
         self.temp_dir = core_settings.rom_temp_dir
@@ -1009,6 +1006,28 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.nonmame = emu_settings.nonmame
         self.cab_path = emu_settings.cab_path
         self.batomame = emu_settings.batomame
+
+        self._apply_settings_to_services()
+
+    def _apply_settings_to_services(self):
+        """Hand re-read settings to the objects that copied them in onInit.
+
+        On the first call (from onInit) neither object exists yet; after the
+        settings dialog the changes take effect without a restart. The
+        aspect ratio is the exception: onInit scales the left image controls
+        once, so it still needs a restart.
+        """
+
+        emulation = getattr(self, 'emulation', None)
+        if emulation is not None:
+            emulation.apply_settings(
+                self.temp_dir, self.mameini, self.mame_dir, self.mame_exe,
+                self.chdman_exe, self.nonmame, self.terminal, self.vgmplay_exe,
+                self.vgm_max_duration)
+        ggdb = getattr(self, 'ggdb', None)
+        if ggdb is not None:
+            ggdb.nonmame = self.nonmame
+            ggdb.pref_country = self.pref_country
 
     def artwork_source_roots(self):
         """Map artwork sources to their configured root directories."""
