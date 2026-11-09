@@ -21,8 +21,13 @@ def choose_media(gui):
 
     xbmc.log(f"UMSA gui: choose media - {gui.vgms}", xbmc.LOGDEBUG)
     if gui.vgms:
-        for vgmitem in gui.vgms:
-            vgm.append({'name': vgmitem, 'id': "vgm::" + vgmitem, 'year': '', 'maker': ''})
+        # show the title, keep the short set name as id for playback
+        vgm_titles = getattr(gui, 'vgm_titles', None) or {}
+        titled = sorted(
+            ((vgm_titles.get(vgmitem) or vgmitem, vgmitem) for vgmitem in gui.vgms),
+            key=lambda entry: entry[0].lower())
+        for title, vgmitem in titled:
+            vgm.append({'name': title, 'id': "vgm::" + vgmitem, 'year': '', 'maker': ''})
     xbmc.log(f"UMSA gui: choose media - vgmlist {vgm}", xbmc.LOGDEBUG)
     # get media
     for j in gui.info:

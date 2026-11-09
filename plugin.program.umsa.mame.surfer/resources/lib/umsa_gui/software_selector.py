@@ -79,6 +79,15 @@ def fill_set_list(gui, pos):
     gui.getControl(SET_LIST).addItems(set_list_items)
 
 
+def _vgm_title(gui, vgm_name):
+    """Title of a vgmplay set; the set name when umsa.db does not know it."""
+
+    try:
+        return gui.ggdb.get_info_by_set_and_swl(vgm_name, 'vgmplay')['name']
+    except TypeError:  # no such set in umsa.db
+        return vgm_name
+
+
 def select_software(gui, software_id):
     """Get all machines and sets for a software and fill skin.
 
@@ -100,19 +109,42 @@ def select_software(gui, software_id):
     gui.getControl(LABEL_STATUS).setLabel('loading software...')
 
     # get infos
-    (gui.info,
+    (all_info,
      pos_machine,
      pos_set,
      gui.all_dat,
      gui.all_art) = gui.ggdb.get_all_for_software(software_id)
 
     # error if no info
-    if len(gui.info) == 0:
+    if len(all_info) == 0:
         xbmc.log(f"UMSA gui: select_software: ERROR: software id={software_id}", xbmc.LOGERROR)
         gui.dialog.notification('Select Software', f'id-{software_id} feels funny?!?',
             xbmcgui.NOTIFICATION_ERROR, 4000)
         gui.getControl(LABEL_STATUS).setLabel('loading software...')
         return False
+
+    gui.info = all_info
+    if not getattr(gui, 'vgm_show_machine_list', False):
+        selected_set = gui.info[pos_machine][pos_set]
+        visible_info = []
+        visible_selection = None
+        for machine in gui.info:
+            visible_sets = [
+                set_info for set_info in machine
+                if set_info['swl_name'] != 'vgmplay'
+            ]
+            if visible_sets:
+                if selected_set in visible_sets:
+                    visible_selection = (len(visible_info), visible_sets.index(selected_set))
+                visible_info.append(visible_sets)
+        # Fallback: a software with only vgmplay sets keeps showing them
+        # (gui.info and the selected position stay untouched).
+        if visible_info:
+            gui.info = visible_info
+            if visible_selection is None:
+                pos_machine, pos_set = 0, 0
+            else:
+                pos_machine, pos_set = visible_selection
 
     no_machines = len(gui.info)
     gui.actset = gui.info[pos_machine][pos_set]
@@ -183,24 +215,33 @@ def select_software(gui, software_id):
     # search local snaps
     gui.create_artworklist()
 
-    # TODO create vgm list from new table
-    # OUTDATED create vgm list from history.xml
-    gui.vgms = None
+    # Keep database-linked VGM sets available even when hidden from the machine list.
+    # gui.vgm_titles maps the short set name to the title shown in the media list.
+    vgm_titles = {
+        set_info['name']: set_info['gamename']
+        for machine in all_info
+        for set_info in machine
+        if set_info['swl_name'] == 'vgmplay'
+    }
     for dat_set in gui.all_dat.values():
         if 'others' in dat_set and 'vgmplay' in dat_set['others']:
             xbmc.log("UMSA gui: VGMs found!", xbmc.LOGINFO)
-            if not gui.vgms:
-                gui.vgms = set()
             for splitentry in dat_set['others'].split(','):
                 if 'vgmplay' in splitentry:
-                    gui.vgms.add(splitentry.split('=')[1])
-            xbmc.log(f"UMSA gui: {gui.vgms}", xbmc.LOGDEBUG)
+                    vgm_name = splitentry.split('=')[1]
+                    if vgm_name not in vgm_titles:
+                        vgm_titles[vgm_name] = _vgm_title(gui, vgm_name)
+    gui.vgms = set(vgm_titles) or None
+    gui.vgm_titles = vgm_titles
+    xbmc.log(f"UMSA gui: {gui.vgms}", xbmc.LOGDEBUG)
 
-    # play video
-    if (gui.playvideo
-        and not gui.player.isPlayingAudio()
+    # Auto-play a video first; the intro VGM is only the fallback.
+    can_start_media = (
+        not gui.player.isPlayingAudio()
         and not gui.emulation.playvgm
-        ):
+    )
+    video_selected = False
+    if gui.playvideo and can_start_media:
         video = []
         for j in gui.info:
             for i in j:
@@ -213,25 +254,26 @@ def select_software(gui, software_id):
         if video:
             video_rand = choice(video)
             video_file = video_rand['id']
-            if (not gui.player.isPlayingVideo() or
-                    (gui.player.isPlayingVideo() and
-                     video_file != gui.player.getPlayingFile())):
-
+            video_selected = True
+            if (not gui.player.isPlayingVideo()
+                    or video_file != gui.player.getPlayingFile()):
                 list_item = xbmcgui.ListItem(video_rand['label'])
                 gui.player.play(
                     video_file,
                     listitem=list_item,
                     windowed=True
                 )
-        else:
-            # play random vgm
-            if gui.vgms:
-                play_vgm = choice(tuple(gui.vgms))
-                xbmc.log(f'UMSA gui: play intro vgm {play_vgm}')
-                gui.dialog.notification('VGM Intro', f'Playing {play_vgm}',
-                    xbmcgui.NOTIFICATION_INFO, 3000, False)
-                gui.emulation.play_vgm(
-                    play_vgm, 10, xbmc.sleep, intro=True)
+
+    intro_duration = getattr(gui, 'vgm_intro_duration', 0)
+    if (can_start_media and not video_selected
+            and not gui.player.isPlayingVideo()
+            and gui.vgms and intro_duration > 0):
+        play_vgm = choice(tuple(gui.vgms))
+        xbmc.log(f'UMSA gui: play intro vgm {play_vgm}')
+        gui.dialog.notification('VGM Intro', f'Playing {play_vgm}',
+            xbmcgui.NOTIFICATION_INFO, 3000, False)
+        gui.emulation.play_vgm(
+            play_vgm, intro_duration, xbmc.sleep, intro=True)
 
     # show artwork and dat info
     gui.show_artwork()

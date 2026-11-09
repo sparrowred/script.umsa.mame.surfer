@@ -329,6 +329,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.diff_emu = False
         # set for vgms for software
         self.vgms = None
+        self.vgm_titles = {}
         # batocera mapping
         self.batomame: dict[str, str] = {}
 
@@ -413,7 +414,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.emulation = Emulation(
             self.temp_dir, self.mameini, self.mame_dir, self.mame_exe, self.chdman_exe,
             get_core_vgmplay_script(), self._show_vgm_info, self.nonmame, terminal=self.terminal,
-            vgmplay_exe=self.vgmplay_exe, vgm_stopped_callback=self._hide_vgm_info)
+            vgmplay_exe=self.vgmplay_exe, vgm_stopped_callback=self._hide_vgm_info,
+            vgm_max_duration=self.vgm_max_duration)
 
         # receive VGM control commands from the screensaver add-on
         if not hasattr(self, 'vgm_monitor'):
@@ -990,6 +992,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.datdir = core_settings.support_files_dir
         self.vgmplay_exe = core_settings.vgmplay_exe
         self.musicinfo = core_settings.show_music_info
+        self.vgm_show_machine_list = core_settings.vgm_show_machine_list
+        self.vgm_max_duration = core_settings.vgm_max_duration
+        self.vgm_intro_duration = core_settings.vgm_intro_duration
+        # the VGM player exists from onInit on; keep its cap in sync after the settings dialog
+        if getattr(self, 'emulation', None) is not None:
+            self.emulation.vgm_player.max_vgm_duration = self.vgm_max_duration
 
         self.pref_country = core_settings.pref_country
         self.temp_dir = core_settings.rom_temp_dir

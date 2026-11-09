@@ -31,7 +31,10 @@ from umsa_core.rom_finder import (
     find_roms,
 )
 from umsa_core.vgm_header import (
+    MAX_PLAYBACK_SECONDS,
     calculate_playback_plan,  # noqa: F401
+    format_vgm_status,  # noqa: F401  (re-exported for the GUI)
+    format_vgm_title,  # noqa: F401  (re-exported for the GUI)
     parse_vgm_header,  # noqa: F401
 )
 from umsa_core.vgm_player import VgmPlayer
@@ -52,16 +55,6 @@ PLATFORM = platform()
 CHD_PROCESS_STOP_TIMEOUT = 2
 VGM_RANDOM_BATCH_SIZE = 100
 VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
-
-
-def format_vgm_info(track_filename, gamename, header, plan):
-    """Build the human readable VGM info string shared by all play modes."""
-
-    minutes, seconds = divmod(int(header.total_seconds), 60)
-    return (
-        f'Song "{track_filename[:-4].title()}" from "{gamename}" '
-        f'{minutes}:{seconds:02d} ({plan.reason})'
-    )
 
 
 def parse_mame_ini(ini_file):
@@ -115,7 +108,8 @@ class Emulation:
 
     def __init__(self, temp_dir='.', mame_ini_file=None, mame_dir='.', mame_exe=None,
                     chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame=None,
-                    terminal='', vgmplay_exe='', vgm_stopped_callback=None):
+                    terminal='', vgmplay_exe='', vgm_stopped_callback=None,
+                    vgm_max_duration=MAX_PLAYBACK_SECONDS):
         self.percent = 0 # chd convert
         self.mame_exe = mame_exe
         self.mame_dir = mame_dir
@@ -159,12 +153,15 @@ class Emulation:
             rom_paths=self.mame_ini.get('rompath', []),
             vgm_info_callback=vgm_info_callback,
             vgm_stopped_callback=vgm_stopped_callback,
+            max_vgm_duration=vgm_max_duration,
         )
 
         # VGM socket transport
         self.vgm_socket = VgmSocketServer(
             logger=log,
             process_exited=lambda: self.process is not None and self.process.poll() is not None,
+            # eff_db of LEVEL_ADJ frames feeds the music info
+            frame_listener=self.vgm_player.on_lua_log,
         )
 
     # VGM state properties for backward compatibility
@@ -489,14 +486,21 @@ class Emulation:
         return self.vgm_socket._drain_buffer(conn, buf)
 
     def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True,
-                    plan=None, info=None):
-        """Play vgm."""
+                    plan=None, info=None, title=None):
+        """Play vgm.
+
+        ``info`` (single track) and ``title`` (random playback, no stop
+        notification per track) are the music info title; once vgmplay.lua
+        connected the info counts the remaining time down.
+        """
         port = self.vgm_socket.bound_port
         port_str = str(port) if port is not None else None
-        self.vgm_player.prepare_vgm_run(self.emurun, vgm, sec2run, intro, plan, info, port_str)
+        self.vgm_player.prepare_vgm_run(self.emurun, vgm, sec2run, intro, plan, info, port_str,
+                                        title=title)
         try:
             self.run()
-            self._accept_vgm_conn()
+            if self._accept_vgm_conn():
+                self.vgm_player.start_info_ticker()
             # wait until emu is finished
             if self.process:
                 my_rc = self.process.wait()
@@ -504,6 +508,7 @@ class Emulation:
             else:
                 log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
         finally:
+            self.vgm_player.stop_info_ticker()
             self.playvgm = False
             if close_server:
                 self._close_vgm_sockets()
@@ -519,9 +524,10 @@ class Emulation:
             self.playrandomvgm = False
             self.vgm_player._notify_vgm_stopped()
             return
-        def run_func(vgm, sleep=None, close_server=True, plan=None, info=None, vgm_port_env=None):
+        def run_func(vgm, sleep=None, close_server=True, plan=None, info=None, vgm_port_env=None,
+                     title=None):
             self.play_vgm_thread(vgm, sec2run=90, sleep=sleep, intro=False,
-                                 close_server=close_server, plan=plan, info=info)
+                                 close_server=close_server, plan=plan, info=info, title=title)
 
         try:
             self.vgm_player.play_random_vgm_thread(

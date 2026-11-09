@@ -4,6 +4,7 @@ This module encapsulates the TCP transport lifecycle and Lua log protocol
 between Python and the MAME Lua script (vgmplay.lua).
 """
 
+import math
 import select
 import socket
 import threading
@@ -25,6 +26,8 @@ LUA_LOG_MSG_PREFIX = 'UMSA Emu lua'
 LUA_READ_POLL_TIMEOUT = 0.2
 LUA_READER_JOIN_TIMEOUT = 1.0
 LUA_LOG_MAX_LINE_BYTES = 8192
+
+LUA_LEVEL_ADJ_TAG = 'LEVEL_ADJ:'
 
 VGMPLAY_DEFAULT_PORT = 1234
 
@@ -63,6 +66,25 @@ def parse_lua_log_line(line):
     return LUA_LOG_LEVELS.get(level, LUA_LOG_FALLBACK_LEVEL), text
 
 
+def parse_lua_level_db(text):
+    """Return ``eff_db`` of a ``LEVEL_ADJ`` frame text, else None (pure).
+
+    vgmplay.lua reports ``LEVEL_ADJ: t=.. rms_db=.. eff_db=.. gain a->b``
+    whenever its loudness leveling changes the gain.
+    """
+    if not isinstance(text, str) or not text.startswith(LUA_LEVEL_ADJ_TAG):
+        return None
+    for token in text.split():
+        if token.startswith('eff_db='):
+            try:
+                value = float(token[len('eff_db='):])
+            except ValueError:
+                return None
+            # inf/nan never reach the label
+            return value if math.isfinite(value) else None
+    return None
+
+
 class VgmSocketServer:
     """Manages the VGM TCP transport lifecycle and Lua log protocol.
 
@@ -83,14 +105,17 @@ class VgmSocketServer:
         self,
         logger: Callable | None = None,
         process_exited: Callable[[], bool] | None = None,
+        frame_listener: Callable[[str], None] | None = None,
     ):
         """
         Args:
             logger: Logger callback, defaults to umsa_core.log
             process_exited: Callable returning True if the child process has exited
+            frame_listener: Optional callable receiving the text of every Lua log frame
         """
         self._logger = logger or log
         self._process_exited = process_exited or (lambda: False)
+        self._frame_listener = frame_listener
 
         self._listener: socket.socket | None = None
         self._client: socket.socket | None = None
@@ -321,6 +346,11 @@ class VgmSocketServer:
             return False
         level, text = parsed
         self._log(f'{LUA_LOG_MSG_PREFIX}: {text}', level=level)
+        if self._frame_listener:
+            try:
+                self._frame_listener(text)
+            except Exception as error:  # noqa: BLE001  (foreign callback must not stop the reader)
+                self._log(f'UMSA VGM: frame listener failed: {error}', level='debug')
         return True
 
     def send_command(self, data: bytes) -> bool:

@@ -60,6 +60,9 @@ class SharedSettings:
     vgmplay_exe: str = ""
     vgm_port: int = DEFAULT_VGM_PORT
     show_music_info: bool = True
+    vgm_show_machine_list: bool = False
+    vgm_max_duration: int = 180
+    vgm_intro_duration: int = 0
     # Frontend
     pref_country: str = "USA"
     auto_play_videos: bool = False
@@ -103,6 +106,10 @@ class SharedSettings:
             values["emulation_start"] = defaults.emulation_start
         if not 1024 <= values["vgm_port"] <= 65535:
             values["vgm_port"] = defaults.vgm_port
+        if not 20 <= values["vgm_max_duration"] <= 300:
+            values["vgm_max_duration"] = defaults.vgm_max_duration
+        if not 0 <= values["vgm_intro_duration"] <= 30:
+            values["vgm_intro_duration"] = defaults.vgm_intro_duration
         if values["pref_country"] not in COUNTRIES:
             values["pref_country"] = defaults.pref_country
         if values["aspect_ratio"] not in ASPECT_RATIOS:

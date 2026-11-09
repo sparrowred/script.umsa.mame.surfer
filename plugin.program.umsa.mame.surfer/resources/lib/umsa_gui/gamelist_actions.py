@@ -11,8 +11,9 @@ import xbmc
 import xbmcgui
 from umsa_core import calculate_playback_plan, log, parse_vgm_header
 from umsa_core.database import split_gamename
-from umsa_core.emulation import format_vgm_info
+from umsa_core.emulation import format_vgm_title
 from umsa_core.support import marp_search
+from umsa_core.vgm_header import MAX_PLAYBACK_SECONDS
 
 from .constants import (
     GAME_LIST,
@@ -157,12 +158,14 @@ def gamelist_click(gui):
                 if which_track > -1:
                     track = vgm_tracklist[which_track]
                     header = parse_vgm_header(vgm_zipfile, track, logger=log)
-                    plan = calculate_playback_plan(header)
-                    nice = format_vgm_info(
-                        track, gui.actset['gamename'], header, plan)
+                    plan = calculate_playback_plan(
+                        header,
+                        max_seconds=getattr(gui, 'vgm_max_duration', MAX_PLAYBACK_SECONDS))
+                    # Core turns the title into "<title> -MM:ss (<dB> dB)"
+                    title = format_vgm_title(track, gui.actset['gamename'])
                     gui.emulation.play_vgm(
                         f'{list_id}:{which_track+1:03d}', sleep=xbmc.sleep,
-                        info=nice, plan=plan)
+                        info=title, plan=plan)
         # youtube
         elif what == "yt":
             gui.player.play(

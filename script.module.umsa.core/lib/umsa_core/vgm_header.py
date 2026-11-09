@@ -48,7 +48,7 @@ class PlaybackPlan:
 
 
 # Constants
-MAX_PLAYBACK_SECONDS = 180           # Hard ceiling
+MAX_PLAYBACK_SECONDS = 180           # Default ceiling (setting vgm_max_duration, 20-300 s)
 HEADER_REJECTION_FALLBACK = 120      # Seconds for invalid headers
 LOOP_ONLY_INTRO_THRESHOLD = 0.5     # Seconds - fixed, not configurable
 SANITY_MAX_DURATION = 600          # 10 minutes max total duration
@@ -223,10 +223,11 @@ def calculate_playback_plan(header: VGMHeader, max_seconds: int = MAX_PLAYBACK_S
     """Compute planned playback duration from validated header."""
     
     if not header.header_valid or not header.header_sane:
+        duration = min(HEADER_REJECTION_FALLBACK, max_seconds)
         return PlaybackPlan(
-            seconds_to_run=HEADER_REJECTION_FALLBACK,
+            seconds_to_run=duration,
             loop_repetitions=0,
-            reason=f"Invalid/insane header -> {HEADER_REJECTION_FALLBACK}s fallback: {header.rejection_reason}",
+            reason=f"Invalid/insane header -> {duration}s fallback: {header.rejection_reason}",
             header_based=False,
             fallback_used=True,
             header=header
@@ -275,11 +276,23 @@ def calculate_playback_plan(header: VGMHeader, max_seconds: int = MAX_PLAYBACK_S
     )
 
 
-def format_vgm_info(track_filename, gamename, header, plan):
-    """Build the human readable VGM info string shared by all play modes."""
+def format_vgm_title(track_filename, gamename):
+    """Title part of the VGM music info, shared by all play modes."""
 
-    minutes, seconds = divmod(int(header.total_seconds), 60)
-    return (
-        f'Song "{track_filename[:-4].title()}" from "{gamename}" '
-        f'{minutes}:{seconds:02d} ({plan.reason})'
-    )
+    return f'Song "{track_filename[:-4].title()}" from "{gamename}"'
+
+
+def format_vgm_status(title, remaining_seconds, level_db=None):
+    """Music info line: ``<title> -MM:ss`` plus ``(<dB> dB)`` once measured.
+
+    ``remaining_seconds`` counts down during playback and is clamped at 0;
+    ``level_db`` is the last effective loudness reported by vgmplay.lua.
+    """
+
+    # round up: a fresh 180 s plan reads -03:00, not -02:59
+    remaining = max(0, math.ceil(remaining_seconds))
+    minutes, seconds = divmod(remaining, 60)
+    status = f'{title} -{minutes:02d}:{seconds:02d}'
+    if level_db is not None:
+        status += f' ({level_db:.1f} dB)'
+    return status
