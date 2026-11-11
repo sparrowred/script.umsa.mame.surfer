@@ -47,16 +47,18 @@ def get_screensaver_mode(gui):
 def start_screensaver(gui, mode, art_types=None):
     """Launch the standalone screensaver with a validated request token.
 
-    Also activates the manual-screensaver inhibition reason so that Kodi's
-    idle screensaver does not compete with the explicitly started instance.
+    The screensaver itself owns the manual-screensaver inhibition (Kodi's
+    idle screensaver must not compete with the explicitly started instance):
+    it sets the reason once it really runs and clears it when it ends. The
+    start is asynchronous, so a flag set here would stay behind whenever the
+    screensaver refuses to start.
     Returns False (after a notification) when the optional screensaver add-on
-    is missing or disabled; then nothing is started and no inhibit is set.
+    is missing or disabled; then nothing is started.
     """
     token = encode_request(mode, art_types)
     if not ensure_screensaver_available(gui):
         return False
     xbmc.executebuiltin(f"RunScript({SCREENSAVER_ADDON_ID},{token})")
-    set_screensaver_manual(True)
     return True
 
 

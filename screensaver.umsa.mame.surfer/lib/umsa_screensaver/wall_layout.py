@@ -27,37 +27,69 @@ ASPECT_BASE = 1.3333
 STRETCH = 'stretch'
 KEEP = 'keep'
 
-# Wall titles modes
+# Wall content modes (setting ``ssaver_titles``)
 TITLES = "Titles"
+SNAPS = "Snaps"
+BOTH = "Both"
 RANDOM = "Random"
 
+# Artwork types of the wall
+ART_SNAP = 'snap'
+ART_TITLES = 'titles'
+WALL_ART_TYPES = (ART_SNAP, ART_TITLES)
 
-def resolve_rows(wall, row_picker=randint):
-    """Return the row count to use for the current wall.
 
-    ``wall`` is the wall settings dictionary. The returned flag is
-    ``False`` when the configured titles mode is unknown - the caller logs
-    that, the layout continues with the snap rows.
+def resolve_wall(wall, available_types=WALL_ART_TYPES, row_picker=randint):
+    """Return ``(rows, art_types, known)`` of the current wall.
+
+    ``wall`` is the wall settings dictionary. Its ``titles`` mode decides
+    what the wall shows: ``Titles`` title screens with the title rows,
+    ``Snaps`` snapshots with the snap rows, ``Both`` a mix of both with
+    the snap rows and ``Random`` picks titles or snaps once per wall.
+
+    ``available_types`` are the wall artwork types the database holds. A
+    type without artwork is never chosen: the wall shows the other type
+    instead and the rows follow the type that is shown. With no available
+    type the wanted types are returned unchanged.
+
+    ``known`` is ``False`` when the configured mode is unknown - the
+    caller logs that, the wall continues like ``Snaps``.
     """
 
-    rows = wall['srows']
-    rows_b = wall['srows_b']
-    known = True
-    if wall['titles'] == TITLES:
+    mode = wall['titles']
+    known = mode in (TITLES, SNAPS, BOTH, RANDOM)
+    available = [art_type for art_type in WALL_ART_TYPES
+                 if art_type in available_types]
+
+    if mode == RANDOM:
+        if len(available) == 1:
+            art_types = list(available)
+        else:
+            art_types = [ART_TITLES] if row_picker(0, 1) else [ART_SNAP]
+    elif mode == TITLES:
+        art_types = [ART_TITLES]
+    elif mode == BOTH:
+        art_types = list(WALL_ART_TYPES)
+    else:
+        art_types = [ART_SNAP]
+
+    if available:
+        usable = [art_type for art_type in art_types if art_type in available]
+        # nothing of the wanted type: show the other one
+        art_types = usable or list(available)
+
+    if art_types == [ART_TITLES]:
         rows = wall['trows']
         rows_b = wall['trows_b']
-    elif wall['titles'] == RANDOM:
-        if row_picker(0, 1):
-            rows = wall['trows']
-            rows_b = wall['trows_b']
     else:
-        known = False
+        rows = wall['srows']
+        rows_b = wall['srows_b']
 
     if rows < rows_b:
         rows = row_picker(rows, rows_b)
     else:
         rows = row_picker(rows_b, rows)
-    return rows, known
+    return rows, art_types, known
 
 
 def compute_grid(rows, ar_norm, ar_x):

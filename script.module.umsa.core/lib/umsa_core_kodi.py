@@ -12,6 +12,7 @@ from umsa_core.window_properties import (
     EMULATOR_RUNNING_PROPERTY,
     FRONTEND_RUNNING_PROPERTY,
     SCREENSAVER_MANUAL_PROPERTY,
+    SCREENSAVER_MODE_PROPERTY,
     SCREENSAVER_RUNNING_PROPERTY,
     SHARED_WINDOW_ID,
 )
@@ -77,6 +78,33 @@ def set_screensaver_manual(manual: bool) -> None:
         window.setProperty(SCREENSAVER_MANUAL_PROPERTY, "true")
     else:
         window.clearProperty(SCREENSAVER_MANUAL_PROPERTY)
+    _recompute_screensaver_inhibition()
+
+
+def clear_stale_screensaver_state() -> None:
+    """Drop screensaver window properties a killed screensaver left behind.
+
+    The screensaver clears ``Running``, ``Mode`` and ``Manual`` when it ends.
+    After a hard kill they stay set until Kodi restarts: every later start
+    reports another active instance and Kodi's idle screensaver stays
+    inhibited. The frontend calls this once when it starts - no UMSA
+    screensaver is alive then (its dialogs are modal and take every input).
+    """
+    window = xbmcgui.Window(SHARED_WINDOW_ID)
+    names = (
+        SCREENSAVER_RUNNING_PROPERTY,
+        SCREENSAVER_MODE_PROPERTY,
+        SCREENSAVER_MANUAL_PROPERTY,
+    )
+    stale = [name for name in names if window.getProperty(name)]
+    if not stale:
+        return
+    xbmc.log(
+        f"UMSA core: clearing stale screensaver state: {', '.join(stale)}",
+        xbmc.LOGWARNING,
+    )
+    for name in stale:
+        window.clearProperty(name)
     _recompute_screensaver_inhibition()
 
 

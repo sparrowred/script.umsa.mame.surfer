@@ -26,6 +26,7 @@ from umsa_core.emulation import Emulation
 from umsa_core.support import youtube_search
 from umsa_core_kodi import (
     VGM_SENDER,
+    clear_stale_screensaver_state,
     clear_vgm_info,
     get_core_data_paths,
     get_core_settings,
@@ -1331,6 +1332,8 @@ def main():
         {'debug': xbmc.LOGDEBUG, 'info': xbmc.LOGINFO, 'warning': xbmc.LOGWARNING,
          'error': xbmc.LOGERROR}
         .get(level, xbmc.LOGDEBUG)))
+    # flags of a screensaver that was killed would block every later start
+    clear_stale_screensaver_state()
     path = __cwd__
     gui = UMSA("umsa_estuary.xml", path, "default", "1080i")
     if len(sys.argv) > 2 and sys.argv[1] == "select_software":

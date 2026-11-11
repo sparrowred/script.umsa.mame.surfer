@@ -891,6 +891,25 @@ class Saver(xbmcgui.WindowXMLDialog):
             if self.running != 'videos' or self.video_teardown:
                 self.finish_screensaver()
 
+    def _available_wall_art_types(self):
+        """Return the wall artwork types the artwork database holds.
+
+        A failed availability check counts as "everything available": the
+        wall then follows the setting and the render loop handles missing
+        artwork.
+        """
+
+        ggdb = self.parent.umsa.ggdb
+        try:
+            return [
+                art_type for art_type in wall_layout.WALL_ART_TYPES
+                if availability.has_artwork(ggdb, [art_type])]
+        except availability.AvailabilityError as error:
+            xbmc.log(
+                f"UMSA SSaver: wall artwork check failed: {error}",
+                xbmc.LOGWARNING)
+            return list(wall_layout.WALL_ART_TYPES)
+
     def create_wall(self):
         """Create UI elements for wall mode depending on settings.
 
@@ -906,9 +925,14 @@ class Saver(xbmcgui.WindowXMLDialog):
         if self._wall_created:
             xbmc.log("UMSA SSaver: wall already created", xbmc.LOGDEBUG)
             return
-        rows, known = wall_layout.resolve_rows(self.settings['wall'])
+        rows, art_types, known = wall_layout.resolve_wall(
+            self.settings['wall'], self._available_wall_art_types())
         if not known:
-            xbmc.log("UMSA SSaver: create_wall error rows.", xbmc.LOGWARNING)
+            xbmc.log(
+                "UMSA SSaver: unknown wall titles mode "
+                f"{self.settings['wall']['titles']!r}, showing snaps",
+                xbmc.LOGWARNING)
+        self.wall['art_types'] = art_types
         grid = wall_layout.compute_grid(
             rows, self.settings['ar_norm'], self.settings['ar_x'])
         # width, height and the vertical image geometry

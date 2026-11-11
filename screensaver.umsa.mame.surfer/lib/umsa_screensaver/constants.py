@@ -62,7 +62,8 @@ ART_TYPES_BY_MODE = {
     MODE_VIDEOS: ['videosnaps'],
     MODE_CROSS: ['covers', 'flyers'],
     MODE_SLIDE: ["covers", "flyers", "cabinets", "cpanel", "marquees"],
-    MODE_WALL: ['snap'],
+    # the wall setting picks among them (wall_layout.resolve_wall)
+    MODE_WALL: ['snap', 'titles'],
 }
 
 # 16:9 reference aspect ratio

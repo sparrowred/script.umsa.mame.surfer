@@ -374,6 +374,8 @@ class RenderSession:
         self._clock = clock
         self._mode_started = None
         self.next_mode = None
+        # the mode the render loop runs, set when the loop starts
+        self._mode = None
 
     def _wait_time(self):
         """Return how long the artwork stays on screen.
@@ -385,19 +387,23 @@ class RenderSession:
         return self.saver.settings['time']
 
     def _cleanup(self, ctx):
-        """Clear the images of the finished screensaver."""
+        """Clear the images of the finished screensaver.
+
+        Works on the mode captured at the start of the render loop. A
+        session that never reached the loop has nothing to clear.
+        """
 
         saver = self.saver
-        if saver.running == 'slide':
+        if self._mode == 'slide':
             saver.getControl(IMAGE[0]).setImage('')
             saver.getControl(IMAGE[1]).setImage('')
             saver.getControl(BACKG[0]).setImage('')
             saver.getControl(BACKG[1]).setImage('')
-        elif saver.running == 'cross':
+        elif self._mode == 'cross':
             ctx.piclist.reverse()
             for _variant, control in ctx.piclist:
                 saver.removeControl(control)
-        elif saver.running == 'wall':
+        elif self._mode == 'wall':
             for slot in saver.wall.get('slots', []):
                 for control in slot.values():
                     saver.removeControl(control)
@@ -563,14 +569,22 @@ class RenderSession:
                     return True
                 kodi.log(f"UMSA SSaver: continuing with the {new_mode} mode", kodi.LOGINFO)
 
-            if not saver.art_types:
-                saver.art_types = art_types_for_mode(saver.running)
-
             # the skin shows the black base, the background and the slide
             # images by the mode property (UMSA.Screensaver.Mode)
             if saver.running == 'wall':
                 saver.create_wall()
                 ctx.lastpos = None
+                # the wall setting decides between titles and snaps; the
+                # artwork types of an explicit request win
+                if not saver.art_types:
+                    saver.art_types = saver.wall.get('art_types')
+
+            if not saver.art_types:
+                saver.art_types = art_types_for_mode(saver.running)
+
+            # the cleanup needs the mode of this session: a normal stop has
+            # already set saver.running to 'no' when the loop ends
+            self._mode = saver.running
 
             # the mode time starts when the mode really runs
             self._mode_started = self._clock()
