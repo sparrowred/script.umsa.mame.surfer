@@ -26,10 +26,6 @@ SETTING_SROWS_B = 'ssaver_srows_b'
 SETTING_FREE = 'ssaver_free'
 SETTING_TITLES = 'ssaver_titles'
 
-WALL_TITLES = "Titles"
-WALL_RANDOM = "Random"
-
-
 @dataclass(frozen=True)
 class WallSettings:
     """Wall mode layout options."""

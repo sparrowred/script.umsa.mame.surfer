@@ -2,7 +2,6 @@
 
 import os
 import shlex
-import socket  # noqa: F401
 import subprocess
 from platform import platform
 from threading import Thread
@@ -32,24 +31,10 @@ from umsa_core.rom_finder import (
 )
 from umsa_core.vgm_header import (
     MAX_PLAYBACK_SECONDS,
-    calculate_playback_plan,  # noqa: F401
-    format_vgm_status,  # noqa: F401  (re-exported for the GUI)
     format_vgm_title,  # noqa: F401  (re-exported for the GUI)
-    parse_vgm_header,  # noqa: F401
 )
 from umsa_core.vgm_player import VgmPlayer
-from umsa_core.vgm_socket import (
-    LUA_LOG_FALLBACK_LEVEL,  # noqa: F401
-    LUA_LOG_LEVELS,  # noqa: F401
-    LUA_LOG_MAX_LINE_BYTES,  # noqa: F401
-    LUA_LOG_MSG_PREFIX,  # noqa: F401
-    LUA_LOG_TAG,  # noqa: F401
-    LUA_READ_POLL_TIMEOUT,  # noqa: F401
-    LUA_READER_JOIN_TIMEOUT,  # noqa: F401
-    VGMPLAY_DEFAULT_PORT,  # noqa: F401
-    VgmSocketServer,
-    parse_lua_log_line,  # noqa: F401
-)
+from umsa_core.vgm_socket import VgmSocketServer
 
 PLATFORM = platform()
 CHD_PROCESS_STOP_TIMEOUT = 2
@@ -119,8 +104,6 @@ class Emulation:
         self.temp_dir = temp_dir
         self.emurun = {}
         self.lua_script = vgmlua_script
-        self.vgm_info_callback = vgm_info_callback
-        self.vgm_stopped_callback = vgm_stopped_callback
         # A fresh dict per instance, so instances never share one default
         self.nonmame = nonmame if nonmame is not None else {}
         self.terminal = terminal
@@ -226,52 +209,6 @@ class Emulation:
     @playrandomvgm.setter
     def playrandomvgm(self, value):
         self.vgm_player.playrandomvgm = value
-
-    @property
-    def vgm_info_callback(self):
-        return self.vgm_player.vgm_info_callback if hasattr(self, 'vgm_player') else None
-
-    @vgm_info_callback.setter
-    def vgm_info_callback(self, value):
-        if hasattr(self, 'vgm_player'):
-            self.vgm_player.vgm_info_callback = value
-
-    @property
-    def vgm_stopped_callback(self):
-        return self.vgm_player.vgm_stopped_callback if hasattr(self, 'vgm_player') else None
-
-    @vgm_stopped_callback.setter
-    def vgm_stopped_callback(self, value):
-        if hasattr(self, 'vgm_player'):
-            self.vgm_player.vgm_stopped_callback = value
-
-    # Socket state and VGM port - owned by Emulation
-    vgm_port_env = None
-
-    # Compatibility properties for socket access
-    @property
-    def lua_server(self):
-        return self.vgm_socket._listener
-
-    @lua_server.setter
-    def lua_server(self, value):
-        self.vgm_socket._listener = value
-
-    @property
-    def lua_socket(self):
-        return self.vgm_socket._client
-
-    @lua_socket.setter
-    def lua_socket(self, value):
-        self.vgm_socket._client = value
-
-    @property
-    def lua_log_thread(self):
-        return self.vgm_socket._reader_thread
-
-    @property
-    def lua_log_stop(self):
-        return self.vgm_socket._reader_stop
 
     @property
     def snapshot_directory(self):
@@ -506,22 +443,6 @@ class Emulation:
     def send_vgmaction(self, data):
         """Send command to MAME Lua script over accepted socket connection."""
         return self.vgm_socket.send_command(data)
-
-    def _start_lua_log_reader(self, conn):
-        """Compatibility wrapper: start the daemon reader thread for Lua -> Python log frames."""
-        return self.vgm_socket._start_reader(conn)
-
-    def _stop_lua_log_reader(self):
-        """Compatibility wrapper: signal the reader thread to drain and exit."""
-        self.vgm_socket._stop_reader()
-
-    def _close_accepted_conn(self):
-        """Compatibility wrapper: close the accepted client connection."""
-        self.vgm_socket.close_client()
-
-    def _drain_lua_log(self, conn, buf=b''):
-        """Compatibility wrapper: read frames already buffered by the kernel."""
-        return self.vgm_socket._drain_buffer(conn, buf)
 
     def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True,
                     plan=None, info=None, title=None):

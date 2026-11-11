@@ -62,12 +62,10 @@ from .gamelist_filter import source_query as _source_query
 from .gamelist_filter import swl_query as _swl_query
 from .gamelist_filter import year_query as _year_query
 from .gb64_scanner import GB64Scanner
-from .history_import import discover_legacy_paths as _discover_legacy_paths
-from .history_import import retry_import as _retry_import
 from .history_import import run_legacy_import as _run_legacy_import
 from .history_repository import HistoryRepository
 from .logging import log
-from .scan_progress import _scan_state_ownership, run_scan_with_progress  # noqa: F401
+from .scan_progress import _scan_state_ownership
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
 from .status_repository import StatusRepository
@@ -1080,16 +1078,6 @@ class DBMod:
         """Run the one-time legacy import via the configured Core paths."""
 
         return _run_legacy_import(self.sdb, self.db_paths)
-
-    def retry_legacy_import(self):
-        """Clear a recorded failure and re-run the legacy import once."""
-
-        return _retry_import(self.sdb, self.db_paths)
-
-    def discover_legacy_paths(self):
-        """Return the recognized legacy import paths ``(lastgames, filters)``."""
-
-        return _discover_legacy_paths(self.db_paths)
 
     def write_status_after_play(self, set_id, played_seconds):
         """Update play status for set id

@@ -9,11 +9,8 @@ import os
 import xbmc
 import xbmcgui
 from umsa_core import ShutdownRequested
-from umsa_core.database import (
-    DBMod,
-    download_and_update_umsa_db,
-    run_scan_with_progress,
-)
+from umsa_core.database import DBMod, download_and_update_umsa_db
+from umsa_core.scan_progress import run_scan_with_progress
 from umsa_core.umsa_db_download import UmsaDbDownloadError
 
 

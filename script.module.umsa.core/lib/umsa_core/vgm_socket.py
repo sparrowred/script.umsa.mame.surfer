@@ -422,8 +422,3 @@ class VgmSocketServer:
     def bound_port(self) -> int | None:
         """The port the server is bound to."""
         return self._bound_port
-
-    @property
-    def is_connected(self) -> bool:
-        """Whether a client is currently connected."""
-        return self._client is not None

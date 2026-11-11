@@ -395,11 +395,3 @@ class VgmPlayer:
             self.playvgm = False
             if info:
                 self._notify_vgm_stopped()
-
-    def get_state(self):
-        """Return current VGM playback state for compatibility."""
-        return {
-            'playvgm': self.playvgm,
-            'playintrovgm': self.playintrovgm,
-            'playrandomvgm': self.playrandomvgm,
-        }

@@ -1123,8 +1123,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
     def update_gamelist(self, item):
         """Update gamelist"""
-        return gamelist_workflows.update_gamelist(
-            self, item, CORE_DATA_PATHS.lastsaver_file)
+        return gamelist_workflows.update_gamelist(self, item)
 
     def popup_gamelist(self, gamelist, label, pos=0, sort=None, options=None):
         """Pop up gamelist."""

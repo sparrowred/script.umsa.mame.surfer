@@ -5,7 +5,7 @@
      the game info, the left artwork and the music info live in umsa_overlay.xml.
      Visibility follows the mode on the home window (UMSA.Screensaver.Mode).
      The name is defined in umsa_core/window_properties.py
-     (SCREENSAVER_MODE_PROPERTY); tests/test_window_properties.py keeps both in sync. -->
+     (SCREENSAVER_MODE_PROPERTY); tests/arch/test_window_properties.py keeps both in sync. -->
 <window>
     <!-- below umsa_overlay.xml (zorder 2) -->
     <zorder>1</zorder>

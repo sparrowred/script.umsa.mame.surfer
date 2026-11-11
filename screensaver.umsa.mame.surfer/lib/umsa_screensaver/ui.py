@@ -68,7 +68,6 @@ from .constants import (
 )
 from .image_validator import PIL
 from .video_playlist import (
-    SET_ID_UNIQUE_TYPE,
     attach_set_id,
     read_set_id,
     read_software_id,
@@ -86,14 +85,12 @@ __all__ = [
     'MEDIA_FOLDER',
     'PIC_MACHINE',
     'PIL',
-    'SET_ID_UNIQUE_TYPE',
     'Monitor',
     'Overlay',
     'Player',
     'Saver',
     'attach_set_id',
     'read_set_id',
-    'read_software_id',
 ]
 
 __addon__ = xbmcaddon.Addon(id='screensaver.umsa.mame.surfer')
@@ -1215,15 +1212,7 @@ class Monitor(xbmc.Monitor):
         """Clear running argument, but let video run."""
 
         xbmc.log("UMSA SSaver Monitor: screensaver deactivated", xbmc.LOGINFO)
-        # TOD was started after run_emulator, will this ever happen?
-        if self.saver.running == 'emu':
-            xbmc.log("UMSA SSaver Monitor: Emulator running, trying to close emu_dialog, why? TODO", xbmc.LOGWARNING)
-            if hasattr(self.umsa, 'emu_dialog') and self.umsa.emu_dialog:
-                xbmc.log("UMSA SSaver Monitor: trying to close dialog", xbmc.LOGERROR)
-                self.umsa.emu_dialog.close()
-            else:
-                xbmc.log("UMSA SSaver Monitor: self.umsa has no emu_dialog ERROR", xbmc.LOGERROR)
-        elif self.saver.running == 'videos':
+        if self.saver.running == 'videos':
             xbmc.log("UMSA SSaver Monitor: video screensaver stays active", xbmc.LOGINFO)
             self.keep_script_running()
         elif self.vgmaction:

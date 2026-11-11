@@ -41,9 +41,6 @@ def _apply_version_1(connection: sqlite3.Connection) -> None:
         cursor.close()
 
 
-MIGRATIONS = {1: _apply_version_1}
-
-
 def apply_migrations(connection: sqlite3.Connection) -> int:
     """Migrate ``status.db`` up to :data:`CURRENT_VERSION`.
 

@@ -52,12 +52,10 @@ RUNNING_PROPERTY = SCREENSAVER_RUNNING_PROPERTY
 KODI_SCREENSAVER_STOP_ALARM = "sssssscreensaver"
 
 # Screensaver modes
-MODE_NONE = 'no'
 MODE_VIDEOS = 'videos'
 MODE_CROSS = 'cross'
 MODE_SLIDE = 'slide'
 MODE_WALL = 'wall'
-MODE_EMU = 'emu'
 
 # Artwork types shown per mode
 ART_TYPES_BY_MODE = {

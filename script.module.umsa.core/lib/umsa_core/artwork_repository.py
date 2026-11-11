@@ -229,24 +229,6 @@ class ArtworkRepository:
         finally:
             cursor.close()
 
-    def get_scan_unit_status(
-        self, source: str, root_key: str, scan_unit: str
-    ) -> str | None:
-        """Get the current status for a scan unit, or None if not found."""
-        cursor = self._conn.cursor()
-        try:
-            cursor.execute(
-                f"SELECT status FROM {self._qt('art_scan_unit')} "
-                f"WHERE source=? AND root_key=? AND scan_unit=?",
-                (source, root_key, scan_unit),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                return None
-            return row["status"]
-        finally:
-            cursor.close()
-
     def get_scan_unit_state(
         self, source: str, root_key: str, scan_unit: str
     ) -> tuple[str | None, float | None]:
@@ -338,17 +320,6 @@ class ArtworkRepository:
             last_error=last_error,
             db_cursor=db_cursor,
         )
-
-    def set_scan_unit_done(
-        self,
-        source: str,
-        root_key: str,
-        scan_unit: str,
-        db_cursor: sqlite3.Cursor | None = None,
-    ) -> None:
-        """Mark a scan unit as done when no artwork replacement is required."""
-
-        self._write_status(source, root_key, scan_unit, "done", db_cursor=db_cursor)
 
     def delete_scan_unit(self, source: str, root_key: str, scan_unit: str) -> int:
         """Delete every record of one scan unit and forget its status.

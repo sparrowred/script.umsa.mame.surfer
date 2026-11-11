@@ -52,10 +52,6 @@ class CoreDataPaths:
     def lastgames_file(self) -> Path:
         return self.data_dir / "lastgames.txt"
 
-    @property
-    def lastsaver_file(self) -> Path:
-        return self.data_dir / "lastsaver.txt"
-
     def filter_file(self, name: str = "default") -> Path:
         """Return a profile-level filter file named ``filter_<name>.txt``."""
 

@@ -31,7 +31,6 @@ from .logging import log
 
 _DECIMAL_RE = re.compile(r"^[0-9]+$")
 
-_LASTGAMES_FILENAME = "lastgames.txt"
 _FILTER_PREFIX = "filter_"
 _FILTER_SUFFIX = ".txt"
 

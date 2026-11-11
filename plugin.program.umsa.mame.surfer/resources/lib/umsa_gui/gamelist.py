@@ -44,7 +44,6 @@ class GamelistCtx:
     searchold: object = None
     popup_gamelist: object = None
     show_rec: object = None
-    lastsaver_path: object = None
 
 
 class GamelistSettle:
@@ -87,7 +86,7 @@ class GamelistSettle:
         xbmc.executebuiltin('Action(noop)')
 
 
-def update_gamelist(gui, item, lastsaver_path):
+def update_gamelist(gui, item):
     """Update gamelist"""
 
     results, pos = [], 0
@@ -116,7 +115,6 @@ def update_gamelist(gui, item, lastsaver_path):
             searchold=gui.searchold,
             popup_gamelist=gui.popup_gamelist,
             show_rec=gui.show_rec,
-            lastsaver_path=lastsaver_path,
         )
         outcome = strategy(gl_ctx)
         gui.searchold = gl_ctx.searchold

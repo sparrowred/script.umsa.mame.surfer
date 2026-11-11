@@ -72,12 +72,6 @@ class SharedSettings:
     aspect_ratio: str = DEFAULT_ASPECT_RATIO
 
     @classmethod
-    def setting_ids(cls):
-        """Return the setting ids that carry a value (no action buttons)."""
-
-        return tuple(field.name for field in fields(cls))
-
-    @classmethod
     def from_raw(cls, get):
         """Build the settings from ``get(setting_id) -> str`` (Kodi getSetting).
 

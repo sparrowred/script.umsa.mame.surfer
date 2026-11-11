@@ -80,11 +80,6 @@ def set_screensaver_manual(manual: bool) -> None:
     _recompute_screensaver_inhibition()
 
 
-def is_screensaver_manual() -> bool:
-    """Return True if a manually started UMSA screensaver is currently active."""
-    return xbmcgui.Window(SHARED_WINDOW_ID).getProperty(SCREENSAVER_MANUAL_PROPERTY) == "true"
-
-
 def get_core_data_paths(create: bool = True) -> CoreDataPaths:
     """Resolve the shared Core profile directory in Kodi."""
 
