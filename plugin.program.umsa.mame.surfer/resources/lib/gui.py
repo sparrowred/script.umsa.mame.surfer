@@ -414,6 +414,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
     # ROM cache settings, set by _read_settings()
     rom_cache = False
     cache_layout = None
+    # setting vgm_port (None: Core default)
+    vgm_port = None
 
     def __init__(self, strXMLname, strFallbackPath, strDefaultName, forceFallback):
 
@@ -592,7 +594,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             get_core_vgmplay_script(), self._show_vgm_info, self.nonmame, terminal=self.terminal,
             vgmplay_exe=self.vgmplay_exe, vgm_stopped_callback=self._hide_vgm_info,
             vgm_max_duration=self.vgm_max_duration, rom_cache=self.rom_cache,
-            cache_layout=self.cache_layout)
+            cache_layout=self.cache_layout, vgm_port=self.vgm_port)
 
         # receive VGM control commands from the screensaver add-on
         self.vgm_monitor = VgmCommandMonitor(self)
@@ -1151,6 +1153,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.musicinfo = core_settings.show_music_info
         self.vgm_show_machine_list = core_settings.vgm_show_machine_list
         self.vgm_max_duration = core_settings.vgm_max_duration
+        self.vgm_port = core_settings.vgm_port
         self.vgm_intro_duration = core_settings.vgm_intro_duration
 
         self.pref_country = core_settings.pref_country
@@ -1185,7 +1188,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.temp_dir, self.mameini, self.mame_dir, self.mame_exe,
                 self.chdman_exe, self.nonmame, self.terminal, self.vgmplay_exe,
                 self.vgm_max_duration, rom_cache=self.rom_cache,
-                cache_layout=self.cache_layout)
+                cache_layout=self.cache_layout, vgm_port=self.vgm_port)
         ggdb = getattr(self, 'ggdb', None)
         if ggdb is not None:
             ggdb.nonmame = self.nonmame

@@ -415,7 +415,9 @@ if VGMPLAY_SOCKET then
 else
     local socket_obj = emu.file("", 3)
     local configured_port = os.getenv("VGMPLAY_PORT")
-    local socket_port = "1234"
+    -- fallback for a start by hand: Python always passes the port its
+    -- listener is bound to (setting vgm_port) as VGMPLAY_PORT
+    local socket_port = "22713"
     local err
 
     if configured_port ~= nil then

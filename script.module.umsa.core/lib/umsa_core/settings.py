@@ -24,7 +24,7 @@ EMULATION_START_FALLBACK = 2
 EMULATION_START_MODES = (
     EMULATION_START_NORMAL, EMULATION_START_WATCH, EMULATION_START_FALLBACK)
 
-DEFAULT_VGM_PORT = 1234
+DEFAULT_VGM_PORT = 22713
 COUNTRIES = ("USA", "Europe", "Japan")
 
 # Filter category names shown in the UI - must match the status.db filter mappings

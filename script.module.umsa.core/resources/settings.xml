@@ -168,7 +168,7 @@
 				</setting>
 				<setting id="vgm_port" type="integer" label="30115" help="30215">
 					<level>0</level>
-					<default>1234</default>
+					<default>22713</default>
 					<constraints>
 						<minimum>1024</minimum>
 						<step>1</step>

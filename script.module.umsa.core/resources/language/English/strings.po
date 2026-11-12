@@ -228,7 +228,7 @@ msgid "A separate MAME build for Video Game Music playback. Leave empty to use t
 msgstr ""
 
 msgctxt "#30215"
-msgid "Local TCP port used to control the VGM playback. Change it only if port 1234 is used by another program."
+msgid "Local TCP port used to control the VGM playback. Change it only if port 22713 is used by another program."
 msgstr ""
 
 msgctxt "#30216"

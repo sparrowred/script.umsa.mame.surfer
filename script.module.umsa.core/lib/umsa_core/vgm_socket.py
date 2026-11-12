@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 
 from umsa_core import log
+from umsa_core.settings import DEFAULT_VGM_PORT
 
 # Lua log protocol constants
 LUA_LOG_TAG = 'LOG'
@@ -29,7 +30,8 @@ LUA_LOG_MAX_LINE_BYTES = 8192
 
 LUA_LEVEL_ADJ_TAG = 'LEVEL_ADJ:'
 
-VGMPLAY_DEFAULT_PORT = 1234
+# one default for the setting, the listener and (as a literal) vgmplay.lua
+VGMPLAY_DEFAULT_PORT = DEFAULT_VGM_PORT
 
 
 def _parse_vgmplay_port(value: str | None) -> int | None:

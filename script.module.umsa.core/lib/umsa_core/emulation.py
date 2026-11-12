@@ -101,8 +101,10 @@ class Emulation:
                     chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame=None,
                     terminal='', vgmplay_exe='', vgm_stopped_callback=None,
                     vgm_max_duration=MAX_PLAYBACK_SECONDS, rom_cache=False,
-                    cache_layout=None):
+                    cache_layout=None, vgm_port=None):
         self.percent = 0 # chd convert
+        # setting vgm_port; None: VGMPLAY_PORT of the environment, else default
+        self.vgm_port = vgm_port
         self.mame_exe = mame_exe
         self.mame_dir = mame_dir
         self.chdman_exe = chdman_exe
@@ -168,7 +170,7 @@ class Emulation:
 
     def apply_settings(self, temp_dir, mame_ini_file, mame_dir, mame_exe, chdman_exe,
                        nonmame, terminal, vgmplay_exe, vgm_max_duration,
-                       rom_cache=False, cache_layout=None):
+                       rom_cache=False, cache_layout=None, vgm_port=None):
         """Take over changed settings without recreating the instance.
 
         Keeps the running process, the VGM socket and the playback state;
@@ -183,6 +185,8 @@ class Emulation:
         self.nonmame = nonmame if nonmame is not None else {}
         self.terminal = terminal
         self.vgmplay_exe = vgmplay_exe
+        # used by the next playback: a running one keeps its listener
+        self.vgm_port = vgm_port
         self.mame_ini = self._load_mame_ini(mame_ini_file, mame_dir)
 
         preparer = self.launch_preparer
@@ -433,18 +437,25 @@ class Emulation:
         if self.process:
             self.process.kill()
 
+    def _configured_vgm_port(self):
+        """Port of the VGM control socket as a string, None for the default.
+
+        The setting ``vgm_port`` wins; without one (use outside Kodi) the
+        environment variable ``VGMPLAY_PORT`` is used.
+        """
+        if self.vgm_port:
+            return str(self.vgm_port)
+        return os.environ.get('VGMPLAY_PORT')
+
     def _vgm_process_env(self):
         """Pass the port captured for this listener only to the MAME process."""
-        # Use the raw environment variable value for the child process,
-        # not the parsed port. This preserves the original behavior where
-        # an unset VGMPLAY_PORT results in no VGMPLAY_PORT in the child env.
-        port_env = os.environ.get('VGMPLAY_PORT')
-        return self.vgm_player._vgm_process_env(port_env)
+        # vgmplay.lua reads VGMPLAY_PORT; without a configured port the
+        # variable stays out of the child environment (Lua default).
+        return self.vgm_player._vgm_process_env(self._configured_vgm_port())
 
     def _start_vgm_server(self):
         """Create and start listening socket for vgmplay.lua (client)."""
-        port_env = os.environ.get('VGMPLAY_PORT')
-        if not self.vgm_socket.start_server(port_env):
+        if not self.vgm_socket.start_server(self._configured_vgm_port()):
             log("UMSA VGM: failed to start socket server, VGM playback disabled", level='warning')
             self.vgm_socket.close_server()
             return False
