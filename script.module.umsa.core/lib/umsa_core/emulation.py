@@ -33,7 +33,11 @@ from umsa_core.vgm_header import (
     MAX_PLAYBACK_SECONDS,
     format_vgm_title,  # noqa: F401  (re-exported for the GUI)
 )
-from umsa_core.vgm_player import VgmPlayer
+from umsa_core.vgm_player import (
+    VGM_RANDOM_BATCH_SIZE,  # noqa: F401  (re-exported)
+    VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE,  # noqa: F401  (re-exported)
+    VgmPlayer,
+)
 from umsa_core.vgm_socket import VgmSocketServer
 
 PLATFORM = platform()
@@ -42,8 +46,6 @@ CHD_PROCESS_STOP_TIMEOUT = 2
 # after the kill that follows when they did not
 VGM_STOP_TIMEOUT = 3.0
 VGM_KILL_JOIN_TIMEOUT = 1.0
-VGM_RANDOM_BATCH_SIZE = 100
-VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
 
 
 def parse_mame_ini(ini_file):
