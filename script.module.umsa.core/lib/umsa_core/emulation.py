@@ -4,7 +4,7 @@ import os
 import shlex
 import subprocess
 from platform import platform
-from threading import Thread
+from threading import Event, Thread, current_thread
 from time import monotonic
 
 from umsa_core import (
@@ -38,6 +38,10 @@ from umsa_core.vgm_socket import VgmSocketServer
 
 PLATFORM = platform()
 CHD_PROCESS_STOP_TIMEOUT = 2
+# stop_vgm(): time the VGM workers get to end after the stop request, and
+# after the kill that follows when they did not
+VGM_STOP_TIMEOUT = 3.0
+VGM_KILL_JOIN_TIMEOUT = 1.0
 VGM_RANDOM_BATCH_SIZE = 100
 VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
 
@@ -100,6 +104,12 @@ class Emulation:
         self.mame_dir = mame_dir
         self.chdman_exe = chdman_exe
         self.process = None
+        # VGM playback: the MAME process of the running track, the stop
+        # request of stop_vgm() and the worker threads
+        self._vgm_process = None
+        self._vgm_stop = Event()
+        self.rvgm_thread = None
+        self.pvgm_thread = None
         self.process_runner = ProcessRunner()
         self.temp_dir = temp_dir
         self.emurun = {}
@@ -443,6 +453,61 @@ class Emulation:
         """Send command to MAME Lua script over accepted socket connection."""
         return self.vgm_socket.send_command(data)
 
+    def _vgm_workers(self):
+        """Running VGM worker threads, without the calling thread."""
+        return [
+            thread for thread in (self.rvgm_thread, self.pvgm_thread)
+            if thread is not None and thread is not current_thread()
+            and thread.is_alive()]
+
+    def _end_vgm_process(self, how):
+        """Terminate or kill the MAME process of the running track."""
+        process = self._vgm_process
+        if process is None or process.poll() is not None:
+            return
+        log(f'UMSA Emu: stop vgm - {how} MAME vgmplay', level='debug')
+        try:
+            getattr(process, how)()
+        except Exception as error:
+            log(f'UMSA Emu: stop vgm - could not {how} MAME vgmplay: {error}',
+                level='warning')
+
+    def stop_vgm(self, timeout=VGM_STOP_TIMEOUT):
+        """Stop the VGM playback (random and single track) in every state.
+
+        ``exit`` over the Lua socket ends a connected track. Without a
+        connection (MAME still starting) the process is terminated, and a
+        random playback that sits between two tracks starts no further one.
+        The workers get ``timeout`` seconds to end; the process is killed
+        when they do not. ``timeout=0`` does not wait (Kodi window handlers).
+
+        Returns True when no VGM worker runs any more. Never raises.
+        """
+        self._vgm_stop.set()
+        self.playrandomvgm = False
+        try:
+            sent = self.send_vgmaction(b'exit')
+        except Exception as error:
+            log(f'UMSA Emu: stop vgm - exit command failed: {error}', level='warning')
+            sent = False
+        if not sent:
+            self._end_vgm_process('terminate')
+        if timeout <= 0:
+            return not self._vgm_workers()
+
+        deadline = monotonic() + timeout
+        for thread in self._vgm_workers():
+            thread.join(max(0.0, deadline - monotonic()))
+        if self._vgm_workers():
+            self._end_vgm_process('kill')
+            deadline = monotonic() + VGM_KILL_JOIN_TIMEOUT
+            for thread in self._vgm_workers():
+                thread.join(max(0.0, deadline - monotonic()))
+        if self._vgm_workers():
+            log('UMSA Emu: stop vgm - playback thread still running', level='warning')
+            return False
+        return True
+
     def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True,
                     plan=None, info=None, title=None):
         """Play vgm.
@@ -450,22 +515,42 @@ class Emulation:
         ``info`` (single track) and ``title`` (random playback, no stop
         notification per track) are the music info title; once vgmplay.lua
         connected the info counts the remaining time down.
+
+        Returns False when MAME ended with an error before vgmplay.lua
+        connected (broken MAME setup or script), True otherwise.
         """
         port = self.vgm_socket.bound_port
         port_str = str(port) if port is not None else None
         self.vgm_player.prepare_vgm_run(self.emurun, vgm, sec2run, intro, plan, info, port_str,
                                         title=title)
         try:
+            if self._vgm_stop.is_set():
+                # stopped while the track was prepared: do not start MAME
+                return True
             self.run()
-            if self._accept_vgm_conn():
+            # keep the process of this track: self.process also serves
+            # emulator launches
+            process = self._vgm_process = self.process
+            if self._vgm_stop.is_set():
+                # stop_vgm() ran before the process existed
+                self._end_vgm_process('terminate')
+            connected = self._accept_vgm_conn()
+            if connected:
                 self.vgm_player.start_info_ticker()
             # wait until emu is finished
-            if self.process:
-                my_rc = self.process.wait()
+            if process:
+                my_rc = process.wait()
                 log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
+                if not connected and my_rc != 0 and not self._vgm_stop.is_set():
+                    log(
+                        f'UMSA Emu: MAME vgmplay failed before the Lua script '
+                        f'connected (returncode {my_rc})', level='warning')
+                    return False
             else:
                 log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
+            return True
         finally:
+            self._vgm_process = None
             self.vgm_player.stop_info_ticker()
             self.playvgm = False
             if close_server:
@@ -484,8 +569,9 @@ class Emulation:
             return
         def run_func(vgm, sleep=None, close_server=True, plan=None, info=None, vgm_port_env=None,
                      title=None):
-            self.play_vgm_thread(vgm, sec2run=90, sleep=sleep, intro=False,
-                                 close_server=close_server, plan=plan, info=info, title=title)
+            return self.play_vgm_thread(
+                vgm, sec2run=90, sleep=sleep, intro=False,
+                close_server=close_server, plan=plan, info=info, title=title)
 
         try:
             self.vgm_player.play_random_vgm_thread(
@@ -503,6 +589,7 @@ class Emulation:
         """
         if self.playvgm:
             return
+        self._vgm_stop.clear()
         self.vgm_player.begin_vgm_playback()
         self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
             args=(ggdb, textinfo, db_path, sleep))
@@ -511,6 +598,7 @@ class Emulation:
     def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):
         if self.playvgm:
             return
+        self._vgm_stop.clear()
         self.vgm_player.begin_vgm_playback()
         if not self._start_vgm_server():
             self.playvgm = False

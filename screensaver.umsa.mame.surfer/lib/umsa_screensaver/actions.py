@@ -3,7 +3,8 @@
 The window forwards every action to this module: the context menu hands
 the shown software to the frontend, the video mode advances the playlist
 and the image modes forward the volume/next/stop commands to the running
-VGM music.
+VGM music. Without a running VGM the next-item action (``.``) asks the
+frontend to start the random VGM playback.
 """
 
 from .constants import (
@@ -55,11 +56,14 @@ def _send_vgm_action(saver, action_id, kodi, send_vgm_action):
     return True
 
 
-def handle_action(saver, action, kodi, vgm_active, send_vgm_action):
+def handle_action(saver, action, kodi, vgm_active, send_vgm_action,
+                  can_start_vgm=lambda: False):
     """Dispatch an action of the screensaver window.
 
     ``vgm_active`` tells whether a VGM track is running, ``send_vgm_action``
-    forwards a command to it.
+    forwards a command to it. ``can_start_vgm`` tells whether the frontend
+    can start the random VGM playback (it owns the playback: it must run,
+    and Kodi must not play music).
     """
 
     kodi.log(f"UMSA SSaver: onAction {saver.running}", kodi.LOGDEBUG)
@@ -114,5 +118,10 @@ def handle_action(saver, action, kodi, vgm_active, send_vgm_action):
         elif vgm_active():
             if not _send_vgm_action(saver, action.getId(), kodi, send_vgm_action):
                 _stop_saver(saver)
+        # no vgm yet: next item (not the right key) starts the random playback
+        elif action.getId() in ACTION_PLAY_NEXTITEM and can_start_vgm():
+            saver.parent.vgmaction = True
+            send_vgm_action('start_random')
+            kodi.log("UMSA SSaver: start random vgm - dont end saver", kodi.LOGDEBUG)
         else:
             _stop_saver(saver)

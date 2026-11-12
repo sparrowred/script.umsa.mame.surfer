@@ -8,7 +8,12 @@ import xbmc
 import xbmcgui
 from umsa_core.screensaver_request import encode_request
 from umsa_core.window_properties import SCREENSAVER_MODE_PROPERTY, SHARED_WINDOW_ID
-from umsa_core_kodi import clear_vgm_info, publish_vgm_info, set_screensaver_manual
+from umsa_core_kodi import (
+    clear_vgm_info,
+    is_emulator_running,
+    publish_vgm_info,
+    set_screensaver_manual,
+)
 
 from . import strings as S
 from .constants import MUSIC_INFO
@@ -102,18 +107,35 @@ def hide_vgm_info(gui):
         xbmc.log(f"UMSA gui: could not reset VGM label: {error}", xbmc.LOGDEBUG)
 
 
+def start_random_vgm(gui):
+    """Start the random VGM playback; False when something plays already."""
+
+    if gui.emulation.playvgm or gui.emulation.playrandomvgm:
+        return False
+    show_vgm_info(gui, tr(S.VGM_RANDOM_STARTING))
+    gui.emulation.play_random_vgm(gui.ggdb, None, gui.settings_folder, xbmc.sleep)
+    return True
+
+
 def handle_vgm_action(gui, action):
     """Run a VGM control action requested by another add-on."""
 
+    if action == 'start_random':
+        # the screensaver asks for music ("." without a running VGM)
+        if is_emulator_running():
+            return
+        xbmc.log("UMSA gui: VGM action from screensaver: start_random", xbmc.LOGDEBUG)
+        start_random_vgm(gui)
+        return
     # random playback stays active between two tracks (playvgm is off then);
     # a stop must still end it
     if not (gui.emulation.playvgm or gui.emulation.playrandomvgm):
         return
     xbmc.log(f"UMSA gui: VGM action from screensaver: {action}", xbmc.LOGDEBUG)
     if action == 'stop':
-        gui.emulation.playrandomvgm = False
         clear_vgm_info()
-        gui.emulation.send_vgmaction(b'exit')
+        # no waiting inside a monitor callback
+        gui.emulation.stop_vgm(timeout=0)
     elif action == 'next':
         gui.emulation.send_vgmaction(b'exit')
     elif action in ('volume_up', 'volume_down'):

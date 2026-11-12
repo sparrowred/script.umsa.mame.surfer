@@ -164,6 +164,9 @@ local function apply_gain(new_gain_db)
         local ok, err = pcall(function()
             level_baseline_vol = manager.machine.sound.volume or 0
         end)
+        if level_baseline_vol == nil then
+            level_baseline_vol = 0  -- the read raised: no sound.volume
+        end
     end
     -- sound.volume is float dB (luaengine.cpp: set_master_gain(db_to_linear(db)));
     -- no rounding - the loop works with fractional gain and would otherwise
@@ -388,21 +391,6 @@ local function read_seconds_to_run()
 end
 
 --
--- Mixer setup
---
--- The autoboot script is re-executed on every machine reset, so the mixer
--- device doubles as the per-machine state store (mixer.hook is reset to
--- false by the device_sound_interface constructor).
---
-
-local mixer = manager.machine.sounds[":mixer"]
-
-if not mixer then
-    log("ERROR", ":mixer sound device not found")
-    return
-end
-
---
 -- Control socket
 --
 -- Flags must be 3 = OPEN_FLAG_READ|OPEN_FLAG_WRITE. Adding OPEN_FLAG_CREATE
@@ -461,10 +449,16 @@ else
     end
 end
 
+-- diagnostics only: a missing field must not end the script
+local machine_phase = "?"
+pcall(function()
+    machine_phase = manager.machine.phase
+end)
+
 log("INFO", string.format(
     "SCRIPT START: time=%.6f phase=%s gamename=%s",
     emu.time(),
-    manager.machine.phase,
+    tostring(machine_phase),
     emu.gamename()
 ))
 
@@ -473,12 +467,47 @@ if log_socket_ok then
         .. tostring(socket:filename()))
 end
 
-if mixer.hook then
-    log("INFO", "SKIP: already initialised for this machine")
-    return
-end
+--
+-- Mixer setup
+--
+-- An uncaught error in an autoboot script is fatal for MAME ("Fatal error:
+-- Error running autoboot script", exit code 3), so every API that only newer
+-- MAME versions have is probed, never assumed.
+--
+-- The sound hook API (manager.machine.sounds, <device>.hook,
+-- emu.register_sound_update) came with the sound system of MAME 0.278. Without
+-- it the script runs in legacy mode: the VGM plays and the control socket
+-- works (exit, final frames), only the level measurement and the leveling
+-- are off. sound.volume does not exist there either; every access to it is
+-- wrapped in pcall.
+--
+-- The autoboot script is re-executed on every machine reset, so the mixer
+-- device doubles as the per-machine state store (mixer.hook is reset to
+-- false by the device_sound_interface constructor). Legacy mode has no such
+-- device and keeps the marker in a global.
+--
+local mixer = nil
+pcall(function()
+    mixer = manager.machine.sounds[":mixer"]
+end)
 
-mixer.hook = true
+local has_sound_hook = mixer ~= nil and emu.register_sound_update ~= nil
+
+if has_sound_hook then
+    if mixer.hook then
+        log("INFO", "SKIP: already initialised for this machine")
+        return
+    end
+    mixer.hook = true
+else
+    if VGMPLAY_LEGACY_INIT then
+        log("INFO", "SKIP: already initialised for this machine")
+        return
+    end
+    VGMPLAY_LEGACY_INIT = true
+    log("WARN", "LEGACY: no sound hook API (MAME < 0.278), playing without "
+        .. "level measurement and leveling")
+end
 
 --
 -- Dynamic leveling baseline: the start volume this session levels around.
@@ -491,6 +520,10 @@ mixer.hook = true
 local ok, err = pcall(function()
     level_baseline_vol = manager.machine.sound.volume or 0
 end)
+if level_baseline_vol == nil then
+    -- no sound.volume (old MAME): the read raised, level around 0 dB
+    level_baseline_vol = 0
+end
 log("INFO", string.format(
     "LEVEL_BASELINE: start_volume_db=%.2f target_db=%.1f max_gain_db=%.1f ramp_db=%.1f",
     level_baseline_vol, LEVEL_TARGET_DB, LEVEL_MAX_GAIN_DB, LEVEL_RAMP_DB_PER_ADJ
@@ -502,11 +535,13 @@ log("INFO", string.format(
 -- Purely additive on the baseline volume; the sound hook samples before
 -- master gain, so the RMS data is unaffected.
 --
-apply_gain(LEVEL_INITIAL_GAIN_DB)
-log("INFO", string.format(
-    "LEVEL_INITIAL: t=%.3f gain_db=%.2f baseline_db=%.2f start_delay=%.1f",
-    emu.time(), level_current_gain_db, level_baseline_vol, LEVEL_START_DELAY
-))
+if has_sound_hook then
+    apply_gain(LEVEL_INITIAL_GAIN_DB)
+    log("INFO", string.format(
+        "LEVEL_INITIAL: t=%.3f gain_db=%.2f baseline_db=%.2f start_delay=%.1f",
+        emu.time(), level_current_gain_db, level_baseline_vol, LEVEL_START_DELAY
+    ))
+end
 
 --
 -- seconds_to_run pre-exit plan (initialised once per machine)
@@ -630,7 +665,9 @@ local function exit_now(reason)
     end
     exiting = true
 
-    mixer.hook = false
+    if has_sound_hook then
+        mixer.hook = false
+    end
 
     -- Final stats/logs first - a no-op when the seconds_to_run pre-exit
     -- trigger already emitted them - then close, then quit MAME.
@@ -840,6 +877,11 @@ local function update_level_window(energy, now)
         table.remove(level_win_time_list, 1)
         table.remove(level_win_energy_list, 1)
     end
+end
+
+if not has_sound_hook then
+    log("INFO", "VGMPlay started without volume measurement")
+    return
 end
 
 emu.register_sound_update(function(samples)

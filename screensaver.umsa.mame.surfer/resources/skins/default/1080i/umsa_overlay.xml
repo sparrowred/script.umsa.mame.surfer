@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Kodi 1080i layout: 1920x1080 coordinates, same resolution as umsa_saver.xml.
      Foreground above umsa_saver.xml: game info, left artwork and one music line.
-     No background control, the overlay stays transparent. -->
+     No full-screen background, the overlay stays transparent. The texts are
+     buttons with an automatic width: only a button stretches its texture to
+     the length of its text, which gives every line a translucent dark plate
+     (Python cannot measure a text). Focus and no-focus look the same and
+     there is no onclick, the buttons only display. -->
 <window>
     <!-- above umsa_saver.xml (zorder 1) -->
     <zorder>2</zorder>
@@ -33,64 +37,107 @@
                 <texture></texture>
                 <aspectratio scalediffuse="true" alignx="right" aligny="center">keep</aspectratio>
             </control>
-            <control type="label" id="102">
-                <description>name and year</description>
-                <posx>1770</posx>
+            <control type="grouplist">
+                <description>right-aligned row: the plate of 102 ends at x 1770</description>
+                <posx>570</posx>
                 <posy>975</posy>
-                <width min="150" max="1200">auto</width>
-                <font>font14</font>
-                <textcolor>white</textcolor>
-                <shadowcolor>black</shadowcolor>
+                <width>1200</width>
+                <height>39</height>
+                <orientation>horizontal</orientation>
                 <align>right</align>
+                <itemgap>0</itemgap>
+                <control type="button" id="102">
+                    <description>name and year</description>
+                    <width min="1" max="1200">auto</width>
+                    <height>39</height>
+                    <visible>!String.IsEmpty(Control.GetLabel(102))</visible>
+                    <textoffsetx>12</textoffsetx>
+                    <aligny>center</aligny>
+                    <font>font14</font>
+                    <textcolor>white</textcolor>
+                    <focusedcolor>white</focusedcolor>
+                    <shadowcolor>black</shadowcolor>
+                    <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
+                    <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
+                </control>
             </control>
-            <control type="label" id="108">
-                <description>maker (category)</description>
-                <posx>1770</posx>
+            <control type="grouplist">
+                <description>right-aligned row: the plate of 108 ends at x 1770</description>
+                <posx>570</posx>
                 <posy>1014</posy>
-                <width min="150" max="1200">auto</width>
-                <font>font13</font>
-                <textcolor>white</textcolor>
-                <shadowcolor>black</shadowcolor>
+                <width>1200</width>
+                <height>39</height>
+                <orientation>horizontal</orientation>
                 <align>right</align>
+                <itemgap>0</itemgap>
+                <control type="button" id="108">
+                    <description>maker (category)</description>
+                    <width min="1" max="1200">auto</width>
+                    <height>39</height>
+                    <visible>!String.IsEmpty(Control.GetLabel(108))</visible>
+                    <textoffsetx>12</textoffsetx>
+                    <aligny>center</aligny>
+                    <font>font13</font>
+                    <textcolor>white</textcolor>
+                    <focusedcolor>white</focusedcolor>
+                    <shadowcolor>black</shadowcolor>
+                    <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
+                    <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
+                </control>
             </control>
         </control>
         <control type="group">
             <description>music info: one line, VGM info first, otherwise Kodi music (Core setting show_music_info)</description>
-            <control type="label" id="4100">
+            <control type="button" id="4100">
                 <description>VGM info, text and format from UMSA.VGM.Info unchanged</description>
                 <posx>60</posx>
                 <posy>15</posy>
-                <width>1500</width>
                 <visible>!String.IsEqual(Window(10000).Property(UMSA.VGM.Info),)</visible>
-                <textcolor>FFB2D4F5</textcolor>
-                <shadowcolor>ff000000</shadowcolor>
-                <scroll>true</scroll>
                 <label>$INFO[Window(10000).Property(UMSA.VGM.Info)]</label>
+                <width min="1" max="1500">auto</width>
+                <height>33</height>
+                <textoffsetx>12</textoffsetx>
+                <aligny>center</aligny>
                 <font>font10</font>
+                <textcolor>FFB2D4F5</textcolor>
+                <focusedcolor>FFB2D4F5</focusedcolor>
+                <shadowcolor>ff000000</shadowcolor>
+                <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
+                <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
             </control>
-            <control type="label" id="4101">
+            <control type="button" id="4101">
                 <description>Kodi music: Song – Artist (-mm:ss remaining); empty parts drop their separator</description>
                 <posx>60</posx>
                 <posy>15</posy>
-                <width>1500</width>
                 <visible>String.IsEqual(Window(10000).Property(UMSA.VGM.Info),) + Player.HasAudio + !String.IsEqual(Window.Property(MusicInfo.Hidden),true) + !String.IsEmpty(MusicPlayer.Title)</visible>
-                <textcolor>FFB2D4F5</textcolor>
-                <shadowcolor>ff000000</shadowcolor>
-                <scroll>true</scroll>
                 <label>$INFO[MusicPlayer.Title]$INFO[MusicPlayer.Artist, – ]$INFO[Player.TimeRemaining(mm:ss), (-,)]</label>
+                <width min="1" max="1500">auto</width>
+                <height>33</height>
+                <textoffsetx>12</textoffsetx>
+                <aligny>center</aligny>
                 <font>font10</font>
+                <textcolor>FFB2D4F5</textcolor>
+                <focusedcolor>FFB2D4F5</focusedcolor>
+                <shadowcolor>ff000000</shadowcolor>
+                <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
+                <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
             </control>
-            <control type="label" id="4102">
+            <control type="button" id="4102">
                 <description>Kodi music without title: Artist (-mm:ss remaining)</description>
                 <posx>60</posx>
                 <posy>15</posy>
-                <width>1500</width>
                 <visible>String.IsEqual(Window(10000).Property(UMSA.VGM.Info),) + Player.HasAudio + !String.IsEqual(Window.Property(MusicInfo.Hidden),true) + String.IsEmpty(MusicPlayer.Title)</visible>
-                <textcolor>FFB2D4F5</textcolor>
-                <shadowcolor>ff000000</shadowcolor>
-                <scroll>true</scroll>
                 <label>$INFO[MusicPlayer.Artist,, ]$INFO[Player.TimeRemaining(mm:ss),(-,)]</label>
+                <width min="1" max="1500">auto</width>
+                <height>33</height>
+                <textoffsetx>12</textoffsetx>
+                <aligny>center</aligny>
                 <font>font10</font>
+                <textcolor>FFB2D4F5</textcolor>
+                <focusedcolor>FFB2D4F5</focusedcolor>
+                <shadowcolor>ff000000</shadowcolor>
+                <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
+                <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
             </control>
         </control>
     </controls>

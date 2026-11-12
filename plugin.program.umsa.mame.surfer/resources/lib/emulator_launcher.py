@@ -65,15 +65,15 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
     launch_id = uuid4().hex[:8]
 
     # stop playing mame vgm
-    if getattr(ctx.emulation, 'playvgm', False):
+    # (random playback sits between two tracks with playvgm off)
+    if (getattr(ctx.emulation, 'playvgm', False)
+            or getattr(ctx.emulation, 'playrandomvgm', False)):
         try:
-            ctx.emulation.send_vgmaction(b'exit')
+            ctx.emulation.stop_vgm()
         except Exception as error:
             log(
                 f'UMSA gui: could not stop VGM before emulator launch: {error}',
                 level='warning')
-        if getattr(ctx.emulation, 'playrandomvgm', None) is not None:
-            ctx.emulation.playrandomvgm = None
         ctx.sleep(500)
 
     # UI prep

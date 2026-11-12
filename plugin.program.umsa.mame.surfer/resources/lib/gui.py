@@ -360,7 +360,7 @@ class VgmCommandMonitor(xbmc.Monitor):
             self.owner.requests.post(REQUEST_OPEN_SOFTWARE, software_id)
             return
         action = parse_vgm_action_method(method)
-        if action in ('volume_up', 'volume_down', 'next', 'stop'):
+        if action in ('volume_up', 'volume_down', 'next', 'stop', 'start_random'):
             self.owner._handle_vgm_action(action)
 
 
@@ -809,12 +809,16 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.player.play(windowed=False)
 
         # vgm action stuff
+        # random playback sits between two tracks with playvgm off: a stop
+        # must still end it
+        if (action.getId() == 13 and self.emulation.playrandomvgm
+                and not self.emulation.playvgm):
+            self.emulation.stop_vgm(timeout=0)
         if self.emulation.playvgm:
             # x = stop
             if action.getId() == 13:
-                if self.emulation.playrandomvgm:
-                    self.emulation.playrandomvgm = False
-                self.emulation.send_vgmaction(b'exit')
+                # no waiting inside a window handler
+                self.emulation.stop_vgm(timeout=0)
                 self.getControl(MUSIC_INFO).setVisibleCondition('Player.HasAudio')
                 self.getControl(MUSIC_INFO).setLabel(
                     "$INFO[MusicPlayer.Artist] - $INFO[MusicPlayer.Title] (-$INFO[MusicPlayer.TimeRemaining])"
@@ -946,9 +950,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     elif ret == 4:
                         self.marp_replayer()
                     elif ret == 5:
-                        self._show_vgm_info(tr(S.VGM_RANDOM_STARTING))
-                        self.emulation.play_random_vgm(
-                            self.ggdb, None, SETTINGS_FOLDER, xbmc.sleep)
+                        screensaver_vgm.start_random_vgm(self)
                 elif menu_item == M_ASETTINGS:
                     self.setFocus(self.getControl(self.main_focus))
                     open_core_settings()
@@ -1494,10 +1496,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if settle is not None:
             settle.cancel()
 
-        if self.emulation.playvgm:
-            self.emulation.playrandomvgm = None
+        # random playback sits between two tracks with playvgm off; a window
+        # that closed before its first init has no emulation yet
+        emulation = getattr(self, 'emulation', None)
+        if emulation is not None and (emulation.playvgm or emulation.playrandomvgm):
             try:
-                self.emulation.send_vgmaction(b'exit')
+                emulation.stop_vgm()
             except Exception as exc:
                 xbmc.log(f"UMSA gui: exit: could not stop VGM playback: {exc}", xbmc.LOGERROR)
             try:
@@ -1555,12 +1559,16 @@ def main():
             xbmc.log("UMSA gui: invalid software selection argument", xbmc.LOGERROR)
     try:
         gui.doModal()
-        # Kodi closes the window at shutdown without exit(): stop VGM and
-        # scans anyway, a non-daemon VGM thread would block the script end
-        monitor = getattr(gui, 'vgm_monitor', None)
-        if monitor is not None and monitor.abortRequested():
-            gui.release_resources()
     finally:
+        # Kodi closes the window at shutdown without exit() - and before the
+        # monitor reports the abort request: always stop VGM and scans here
+        # (a no-op after exit()), a non-daemon VGM thread blocks the script
+        # end and with it the Kodi shutdown
+        try:
+            gui.release_resources()
+        except Exception as exc:
+            xbmc.log(f"UMSA gui: cleanup after the window closed failed: {exc}",
+                     xbmc.LOGERROR)
         # also covers windows closed without exit() (e.g. failed first start);
         # a scan that still runs clears the flag when it closed the databases
         if not getattr(gui, '_close_db_after_scan', False):

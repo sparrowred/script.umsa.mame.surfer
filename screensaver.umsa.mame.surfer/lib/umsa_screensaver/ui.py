@@ -29,6 +29,7 @@ import xbmcgui
 import xbmcvfs
 from umsa_core_kodi import (
     get_core_settings,
+    is_frontend_running,
     send_vgm_action,
     set_screensaver_manual,
     vgm_active,
@@ -215,7 +216,17 @@ class Saver(xbmcgui.WindowXMLDialog):
         actions.handle_action(
             self, action, kodi=xbmc,
             vgm_active=vgm_active,
-            send_vgm_action=send_vgm_action)
+            send_vgm_action=send_vgm_action,
+            can_start_vgm=self.can_start_vgm)
+
+    def can_start_vgm(self):
+        """True when the frontend can start the random VGM playback.
+
+        The playback belongs to the frontend, so it must be running; a VGM
+        on top of Kodi's music is not wanted.
+        """
+
+        return is_frontend_running() and not self.parent.player.isPlayingAudio()
 
     def show_overlay(self):
         """Show the foreground overlay once per window session."""

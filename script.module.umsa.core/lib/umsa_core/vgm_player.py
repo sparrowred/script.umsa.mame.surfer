@@ -216,7 +216,8 @@ class VgmPlayer:
         in-memory queue; a new batch is requested only when the queue runs
         out. Filesystem and archive checks stay in this player. After
         ``VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE`` candidates in a row cannot
-        start playback, random playback stops.
+        start playback (missing or broken archive, ``run_func`` returning
+        False), random playback stops.
 
         Args:
             emurun: Emulation run state dict
@@ -316,10 +317,21 @@ class VgmPlayer:
                         textinfo.setLabel(vgm_nice)
                     except Exception as error:
                         log(f'UMSA Emu: VGM label update failed: {error}', level='debug')
-                consecutive_unplayable = 0
+                if not self.playrandomvgm:
+                    # stopped while this track was prepared
+                    break
+                started = True
                 if run_func:
-                    run_func(play_vgm, sleep=sleep, close_server=False, plan=plan,
-                             title=vgm_title)
+                    started = run_func(play_vgm, sleep=sleep, close_server=False,
+                                       plan=plan, title=vgm_title)
+                if started is False:
+                    # MAME ended with an error before the Lua script connected:
+                    # a broken setup must not skip through tracks forever
+                    if note_unplayable(
+                            f'UMSA Emu: play random vgm - MAME could not play {play_vgm}'):
+                        break
+                    continue
+                consecutive_unplayable = 0
         finally:
             self.playrandomvgm = False
             self._notify_vgm_stopped()
