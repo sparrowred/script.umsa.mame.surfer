@@ -1,7 +1,7 @@
 """Rendering of the screensaver artwork.
 
-The module owns the render loop of the cross, slide and wall modes and
-the label fading of the video mode. It drives the Kodi window through the
+The module owns the render loop of the cross, slide and wall modes (the
+video mode lives in ``video_session``). It drives the Kodi window through the
 ``Saver`` methods (so the window stays the single owner of the Kodi
 controls) and the artwork helpers of ``artwork_selector``.
 """
@@ -52,12 +52,6 @@ WAIT_POLL_INTERVAL = 250
 # Pause between two pictures of the cross prefill (ms): short, but the
 # sleep lets Kodi deliver the pending actions (stop, volume) to the saver
 CROSS_PREFILL_PAUSE = 100
-
-# Maximum time the label fading waits for the duration of a video (s)
-VIDEO_STARTUP_TIMEOUT = 15.0
-
-# Number of polls in a row without an active playback before the wait gives up
-VIDEO_STARTUP_INACTIVE_POLLS = 4
 
 
 class RenderContext:
@@ -209,157 +203,6 @@ def render_left_picture(ctx, art, roots):
             saver.show_left_art('')
 
 
-def playback_active(player):
-    """Return whether the player still plays something.
-
-    ``isPlaying()`` is used when the runtime provides it, otherwise the
-    older ``isPlayingVideo()`` is asked. A player that does not answer at
-    all is treated as active: the caller has its own timeout.
-    """
-
-    for name in ('isPlaying', 'isPlayingVideo'):
-        probe = getattr(player, name, None)
-        if probe is None:
-            continue
-        try:
-            return bool(probe())
-        except RuntimeError:
-            return False
-    return True
-
-
-def player_abort_requested(player):
-    """Return whether Kodi asked the screensaver script of ``player`` to end."""
-
-    saver = getattr(getattr(player, 'parent', None), 'saver', None)
-    probe = getattr(saver, 'abort_requested', None)
-    return bool(probe()) if callable(probe) else False
-
-
-def wait_for_duration(player, kodi, timeout=VIDEO_STARTUP_TIMEOUT):
-    """Wait until the player reports the duration of the video.
-
-    The wait is bounded and interruptible: it gives up when the playback
-    stops before a duration is known and when the video does not start
-    within the timeout or Kodi asks the script to end. Returns the
-    duration in seconds, ``0`` when no valid duration was reported.
-    """
-
-    waited = 0.0
-    inactive_polls = 0
-    while True:
-        try:
-            total_time = int(player.getTotalTime())
-        except (TypeError, ValueError, RuntimeError):
-            # RuntimeError: Kodi is not playing (anymore)
-            total_time = 0
-        if total_time > 0:
-            return total_time
-        if waited >= timeout:
-            kodi.log(
-                "UMSA SSaver Player: no video duration after "
-                f"{int(timeout)} seconds, giving up",
-                kodi.LOGWARNING)
-            return 0
-        if playback_active(player):
-            inactive_polls = 0
-        else:
-            inactive_polls += 1
-            if inactive_polls >= VIDEO_STARTUP_INACTIVE_POLLS:
-                kodi.log(
-                    "UMSA SSaver Player: playback stopped before the "
-                    "video duration was known",
-                    kodi.LOGWARNING)
-                return 0
-        if player_abort_requested(player):
-            return 0
-        kodi.sleep(WAIT_POLL_INTERVAL)
-        waited += WAIT_POLL_INTERVAL / 1000
-
-
-def run_playback_labels(player, kodi):
-    """Fade the screensaver labels in and out while a video plays.
-
-    The video length decides when the label appears and disappears: the
-    label is shown after a few seconds and hidden shortly before the end
-    of the video. A video that never reports its duration leaves the
-    screensaver untouched: the labels stay hidden and the label loop is
-    not started.
-
-    Kodi delivers the callback of a newer video while an older label loop
-    sleeps (quick "next video"); a loop whose video is no longer the
-    current playback instance ends at once and leaves the labels to the
-    newer one.
-
-    The loop watches the whole video - in the video mode it is the only
-    Python code that runs - and ends the screensaver within a second when
-    Kodi asks the script to end.
-    """
-
-    saver = player.parent.saver
-    instance = getattr(player, '_playback_instance', None)
-
-    def superseded():
-        return getattr(player, '_playback_instance', None) != instance
-
-    # hide the info of the previous video at once, before the new content
-    saver.hide_label_now()
-    # wait until the video starts, bounded and interruptible
-    total_time = wait_for_duration(player, kodi)
-    if superseded():
-        return
-    if player_abort_requested(player):
-        saver.abort_screensaver('video')
-        return
-    if total_time <= 0:
-        # no valid duration: leave the label state consistent and stop
-        player.runp = False
-        return
-    # calc show times
-    if total_time > 28:
-        timecount1 = 10
-        timecount2 = total_time-10
-    elif total_time > 16:
-        timecount1 = 8
-        timecount2 = total_time-2
-    else:
-        timecount1 = 4
-        timecount2 = total_time-1
-    player.runp = True
-    count_seconds = 0
-    kodi.log(f"UMSA SSaver Player: time: {total_time}, start {timecount1}, end {timecount2}", kodi.LOGINFO)
-    # set labels
-    try:
-        tag = player.getVideoInfoTag()
-        saver.overlay_control(INFO_LABEL).setLabel(tag.getTitle())
-        saver.overlay_control(INFO_DETAIL).setLabel(tag.getGenre())
-        saver.overlay_control(PIC_MACHINE).setImage(tag.getTrailer())
-        kodi.log(f"UMSA SSaver Player: director {tag.getDirector()}", kodi.LOGINFO)
-        saver.show_left_art(tag.getDirector(), left_art.ARTWORK)
-    except RuntimeError:
-        # the playback ended meanwhile: nothing to label
-        player.runp = False
-        return
-
-    while player.runp:
-        if superseded():
-            return
-        if player_abort_requested(player):
-            saver.abort_screensaver('video')
-            return
-        if player.isPlayingVideo():
-            if count_seconds == timecount1:
-                saver.set_label_fade('0')
-            elif count_seconds == timecount2:
-                saver.set_label_fade('1')
-            # keep watching until the video ends
-        else:
-            player.runp = False
-            continue
-        kodi.sleep(1000)
-        count_seconds += 1
-
-
 class RenderSession:
     """Drives the render loop of one screensaver session."""
 
@@ -378,11 +221,7 @@ class RenderSession:
         self._mode = None
 
     def _wait_time(self):
-        """Return how long the artwork stays on screen.
-
-        The video mode never reaches the artwork wait loop: ``run()`` hands
-        it over to the player callbacks before the loop starts.
-        """
+        """Return how long the artwork stays on screen."""
 
         return self.saver.settings['time']
 
@@ -513,40 +352,12 @@ class RenderSession:
         self._wait_before_retry()
         return True
 
-    def _start_video_mode(self):
-        """Queue the screensaver videos and start the playback.
-
-        Returns ``True`` when the video mode took over and ``False`` when
-        no video was available at all - the mode was then switched to an
-        artwork mode by the caller.
-        """
-
-        saver = self.saver
-        # leftovers of a previous session must not pile up
-        saver.cleanup_temp_videos()
-        # a video mode entered by the timed mode switch starts with the
-        # screensaver's own empty playlist, not with the old videos
-        saver.playlist.clear()
-        saver._video_playlist_urls = []
-        queued = 0
-        while queued < 2 and saver.add_video_to_playlist():
-            queued += 1
-        if queued == 0:
-            self.kodi.log("UMSA SSaver: no screensaver videos available", self.kodi.LOGWARNING)
-            return False
-        saver._playback_owned = True
-        # mute (or stop a running VGM) before the playback starts
-        saver.mute_videos()
-        saver.parent.player.play(saver.playlist)
-        saver.mark_video_start()
-        return True
-
     def run(self):
-        """Run the screensaver until it is stopped.
+        """Run the render loop of an image mode until it is left.
 
-        Returns ``False`` when the video mode took over (the window stays
-        open until the playback ends) and ``True`` when the render loop
-        was left.
+        The loop ends when the saver stops (``saver.running == 'no'``) or
+        the timed mode switch continues with ``next_mode``. The video mode
+        has its own loop (``video_session.VideoSession``).
         """
 
         saver = self.saver
@@ -555,20 +366,6 @@ class RenderSession:
         self._failures = 0
 
         try:
-            if saver.running == 'videos':
-                kodi.log("UMSA SSaver: screensaver: video", kodi.LOGDEBUG)
-                if self._start_video_mode():
-                    # the video mode took over: the window stays open and the
-                    # playback is driven by the player callbacks
-                    return False
-                # no video at all: continue with an artwork mode
-                saver.notify_user("no screensaver videos available")
-                new_mode = saver.prepare_artwork_mode()
-                if new_mode is None:
-                    saver.notify_user("no screensaver artwork available")
-                    return True
-                kodi.log(f"UMSA SSaver: continuing with the {new_mode} mode", kodi.LOGINFO)
-
             # the skin shows the black base, the background and the slide
             # images by the mode property (UMSA.Screensaver.Mode)
             if saver.running == 'wall':
@@ -687,4 +484,3 @@ class RenderSession:
         finally:
             # Ensure cleanup happens even on unexpected exceptions
             self._cleanup(ctx)
-        return True

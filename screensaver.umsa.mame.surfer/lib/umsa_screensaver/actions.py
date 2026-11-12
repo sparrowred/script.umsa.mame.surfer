@@ -75,8 +75,9 @@ def handle_action(saver, action, kodi, vgm_active, send_vgm_action):
         # next video
         if action.getId() in ACTION_PLAY_NEXTITEM+ACTION_MOVEMENT_RIGHT:
             if not saver.add_video_to_playlist():
-                # the database holds no video anymore: leave the video mode
-                saver.handle_missing_video()
+                # the database holds no video anymore: the video loop
+                # leaves the video mode
+                saver.request_video_fallback()
                 return
             saver.parent.player.playnext()
         # show actual game in gui

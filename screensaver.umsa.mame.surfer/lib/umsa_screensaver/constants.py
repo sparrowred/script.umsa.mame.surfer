@@ -4,8 +4,7 @@ Pure data only, no Kodi imports: the module can be imported by unit tests
 without a Kodi runtime and stays free of side effects.
 """
 
-from umsa_core.window_properties import (  # noqa: F401 - re-exported names
-    EMULATOR_RUNNING_PROPERTY,
+from umsa_core.window_properties import (
     SCREENSAVER_MODE_PROPERTY,
     SCREENSAVER_RUNNING_PROPERTY,
     SHARED_WINDOW_ID,

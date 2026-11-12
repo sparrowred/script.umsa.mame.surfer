@@ -9,13 +9,13 @@ from umsa_core.screensaver_request import decode_request
 from umsa_core_kodi import (
     get_core_data_paths,
     get_core_settings,
+    is_emulator_running,
     send_software_open,
     set_screensaver_manual,
 )
 
 from .availability import REASON_NO_VIDEOS, AvailabilityError, plan_request
 from .constants import (
-    EMULATOR_RUNNING_PROPERTY,
     MODE_PROPERTY,
     RUNNING_PROPERTY,
     WINDOW_ID,
@@ -84,7 +84,7 @@ class ScreensaverRuntime:
             xbmc.log("UMSA Screensaver: another screensaver instance is active", xbmc.LOGWARNING)
             return
         # Prevent screensaver from starting while an external emulator is running
-        if window.getProperty(EMULATOR_RUNNING_PROPERTY) == "true":
+        if is_emulator_running():
             xbmc.log("UMSA saver: emulator running, not starting", xbmc.LOGINFO)
             return
 

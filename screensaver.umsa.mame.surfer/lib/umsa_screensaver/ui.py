@@ -19,6 +19,7 @@ modules next to them:
 - ``wall_layout`` - wall geometry
 """
 
+from collections import deque
 from os import path
 from time import monotonic
 
@@ -44,6 +45,7 @@ from . import (
     temp_video,
     video_mute,
     video_playlist,
+    video_session,
     wall_layout,
 )
 from . import settings as screensaver_settings
@@ -178,6 +180,8 @@ class Saver(xbmcgui.WindowXMLDialog):
         self._video_started = None
         # the mode that follows the videos once the last queued one ended
         self._pending_mode = None
+        # "next video" found no video: the video loop leaves the video mode
+        self._video_fallback_requested = False
         # Kodi asked the script to end and the shutdown has started
         self._aborting = False
         # the Kodi mute of the silent videos (ssaver_video_mute)
@@ -650,30 +654,25 @@ class Saver(xbmcgui.WindowXMLDialog):
         xbmc.log(f"UMSA SSaver: switched to the {mode} mode", xbmc.LOGINFO)
         return mode
 
-    def handle_missing_video(self):
-        """Handle a video lookup that found nothing while running.
+    def request_video_fallback(self):
+        """Ask the video loop to leave the video mode: no video was found.
 
-        The user is told, the obsolete video playback is stopped and the
-        screensaver continues with an artwork mode whose artwork is
-        available. Without any artwork the screensaver stops cleanly.
+        Called from an action ("next video"). Only a flag is set: the video
+        loop (``video_session.VideoSession``) switches to an artwork mode,
+        so no render loop starts inside a Kodi callback.
         """
 
         xbmc.log(
             "UMSA SSaver: no screensaver video found while running",
             xbmc.LOGWARNING)
-        self.notify_user("no screensaver videos found")
-        new_mode = self.prepare_artwork_mode()
-        if new_mode is None:
-            self.notify_user("no screensaver artwork available")
-            self.running = 'no'
-            self.finish_screensaver()
-            return
-        try:
-            self.run_render_sessions()
-        finally:
-            # Ensure cleanup even if render loop raises unexpectedly
-            if self.running != 'videos' or self.video_teardown:
-                self.finish_screensaver()
+        self._video_fallback_requested = True
+
+    def take_video_fallback_request(self):
+        """Return and clear the request of ``request_video_fallback``."""
+
+        requested = getattr(self, '_video_fallback_requested', False)
+        self._video_fallback_requested = False
+        return requested
 
     def abort_requested(self):
         """Return whether Kodi asked this script to end.
@@ -692,9 +691,9 @@ class Saver(xbmcgui.WindowXMLDialog):
         """End the screensaver because Kodi asked the script to end.
 
         The playback is stopped, the sound restored and the extracted
-        videos removed (``reallyDeactivateScreensaver``). In the video mode
-        no render loop runs, so the windows are closed here; an image mode
-        render loop sees ``running == 'no'`` and closes them in its
+        videos removed (``reallyDeactivateScreensaver``). The loop of the
+        running mode (video loop or render loop) sees ``running == 'no'``
+        and ends; ``get_art_and_call_saver`` closes the windows in its
         ``finally``. Repeated calls are safe.
         """
 
@@ -702,10 +701,7 @@ class Saver(xbmcgui.WindowXMLDialog):
             return
         self._aborting = True
         xbmc.log(f"UMSA SSaver: Kodi asked to stop ({reason}), shutting down", xbmc.LOGWARNING)
-        in_video = self.running == MODE_VIDEOS
         self.parent.reallyDeactivateScreensaver()
-        if in_video:
-            self.finish_screensaver()
 
     def finish_screensaver(self):
         """Release the screensaver resources and close the window."""
@@ -734,6 +730,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.opening = False
         self._video_started = None
         self._pending_mode = None
+        self._video_fallback_requested = False
         self._aborting = False
 
     def next_rotation_mode(self):
@@ -818,13 +815,14 @@ class Saver(xbmcgui.WindowXMLDialog):
 
         return self._pending_mode is not None
 
-    def leave_video_mode(self):
-        """Switch from the run-out video mode to the waiting image mode.
+    def end_video_drain(self):
+        """Finish the run-out video mode and return the waiting mode.
 
-        Called at the end of the last queued video: the playlist has ended,
-        Kodi has reset its playlist player. A video the user started with
-        "next" is still stopped. The sound is restored and the extracted
-        videos removed before the image mode starts.
+        Called by the video loop at the end of the last queued video: the
+        playlist has ended, Kodi has reset its playlist player. A video the
+        user started with "next" is still stopped. The sound is restored
+        and the extracted videos removed; ``run_render_sessions`` then
+        enters the returned mode.
         """
 
         next_mode = self._pending_mode
@@ -834,12 +832,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.restore_video_sound()
         self.cleanup_temp_videos()
         self._video_started = None
-        self.enter_next_mode(next_mode)
-        try:
-            self.run_render_sessions()
-        finally:
-            if self.running != MODE_VIDEOS or self.video_teardown:
-                self.finish_screensaver()
+        return next_mode
 
     def enter_next_mode(self, mode):
         """Switch from the finished mode to ``mode`` (timed mode switch).
@@ -861,35 +854,41 @@ class Saver(xbmcgui.WindowXMLDialog):
         self.set_mode_property(mode)
 
     def run_render_sessions(self):
-        """Run render sessions until the screensaver stops.
+        """Run one session per mode until the screensaver stops.
 
-        One render session runs at a time. When the timed mode switch ends a
-        session, the next image mode starts in a new session - no recursion.
-        Returns ``False`` when the video mode took over.
+        One session runs at a time: the video loop for the video mode, a
+        render session for an image mode. When the timed mode switch ends a
+        session (``next_mode``) or the video mode fell back to an artwork
+        mode, the next mode starts in a new session - no recursion and no
+        loop inside a Kodi player callback.
         """
 
-        while True:
-            session = rendering.RenderSession(self, gui=xbmcgui, kodi=xbmc)
-            if not session.run():
-                return False
-            if session.next_mode is None or self.running == 'no':
-                return True
-            self.enter_next_mode(session.next_mode)
+        while self.running != 'no':
+            mode = self.running
+            if mode == MODE_VIDEOS:
+                session = video_session.VideoSession(self, kodi=xbmc)
+            else:
+                session = rendering.RenderSession(self, gui=xbmcgui, kodi=xbmc)
+            session.run()
+            if self.running == 'no':
+                return
+            if session.next_mode is not None:
+                self.enter_next_mode(session.next_mode)
+            elif self.running == mode:
+                # the session ended without a stop and without another mode
+                return
 
     def get_art_and_call_saver(self):
         """ Get artwork and call Screensaver """
 
         try:
-            if not self.run_render_sessions():
-                # the video mode took over, the window stays open
-                return
+            self.run_render_sessions()
         finally:
-            # Ensure finish_screensaver is called even if render loop
-            # raises an unexpected exception. The render session's own
-            # finally block cleans up dynamic controls; this ensures
-            # the outer lifecycle (video teardown, window close) runs too.
-            if self.running != 'videos' or self.video_teardown:
-                self.finish_screensaver()
+            # Ensure finish_screensaver is called even if a session raises
+            # an unexpected exception. The render session's own finally
+            # block cleans up dynamic controls; this ensures the outer
+            # lifecycle (video teardown, window close) runs too.
+            self.finish_screensaver()
 
     def _available_wall_art_types(self):
         """Return the wall artwork types the artwork database holds.
@@ -978,10 +977,16 @@ class Player(xbmc.Player):
     Reacts to:
      onPlayBackStarted
      onAVStarted
-     onPlayBackEnded
+     onPlayBackEnded / onPlayBackStopped / onPlayBackError
 
     Used by video screensaver as Kodi Monitor ends when a video is started.
-    Controls after how many seconds the video label blends in.
+
+    The callbacks stay short: start and end of a playback only put an event
+    into ``events``. The video loop (``video_session.VideoSession``) takes
+    the events and does the work - queueing the next video, the labels,
+    the mode switch. Kodi delivers the callbacks inside the ``sleep`` of
+    that loop, so a callback that waited itself would nest the following
+    callbacks.
 
     History recording happens only in ``onAVStarted``: that callback is the
     Kodi-recommended point at which an actual audio/video stream exists,
@@ -989,9 +994,11 @@ class Player(xbmc.Player):
     not yet delivering a stream. Nothing is ever recorded at enqueue time.
     """
 
+    # events nobody takes (playback outside the video mode) must not pile up
+    MAX_EVENTS = 64
+
     def __init__(self, **kwargs):
         self.parent = kwargs['itself']
-        self.runp = False
         # per-playback-instance bookkeeping: the instance counter is bumped
         # by onPlayBackStarted, the guard identifies the playlist item whose
         # history has already been recorded (or deliberately skipped).
@@ -1002,6 +1009,15 @@ class Player(xbmc.Player):
         # playback instance. Key is the playback instance number, value is True
         # once finalization has run.
         self._playback_finalized = set()
+        # (kind, playback instance, playing file) for the video loop
+        self.events = deque(maxlen=self.MAX_EVENTS)
+
+    def take_events(self):
+        """Return the queued player events, oldest first, and clear them."""
+
+        events = list(self.events)
+        self.events.clear()
+        return events
 
     def get_playing_file(self):
         """Return the file that is playing, or ``None``."""
@@ -1035,7 +1051,7 @@ class Player(xbmc.Player):
                 xbmc.LOGWARNING)
 
     def onPlayBackStarted(self):
-        """Reacts to Kodi event 'onPlayBackStarted'"""
+        """Reacts to Kodi event 'onPlayBackStarted': queue a start event."""
 
         # a new playback instance begins; history is never written here
         # (the stream may not exist yet) - onAVStarted does that
@@ -1044,14 +1060,9 @@ class Player(xbmc.Player):
         self._playback_finalized.discard(self._playback_instance)
         try:
             xbmc.log("UMSA SSaver Player: onPlayBackStarted", xbmc.LOGINFO)
-            saver = self.parent.saver
-            # remember the extracted file of the video that plays now
-            saver.note_playing_video(self.get_playing_file())
-            # when video ssaver runs
-            if saver.running == 'videos':
-                xbmc.log("UMSA SSaver Player: monitor mode is video", xbmc.LOGINFO)
-                rendering.run_playback_labels(self, kodi=xbmc)
-            xbmc.log("UMSA SSaver Player: onPlayBackStarted: routine ended", xbmc.LOGINFO)
+            self.events.append((
+                video_session.EVENT_STARTED, self._playback_instance,
+                self.get_playing_file()))
         except SystemExit as err:
             xbmc.log(f"UMSA SSaver SystemExit onPlayBackStarted: {err}", xbmc.LOGWARNING)
             self.parent.saver.abort_screensaver('SystemExit')
@@ -1065,7 +1076,6 @@ class Player(xbmc.Player):
         """Reacts to Kodi event 'onPlayBackStopped'.
 
         Called when playback is explicitly stopped (e.g. user action).
-        Handles cleanup without restarting playback during shutdown.
         """
 
         self._handle_playback_stopped()
@@ -1073,8 +1083,7 @@ class Player(xbmc.Player):
     def onPlayBackError(self):
         """Reacts to Kodi event 'onPlayBackError'.
 
-        Called when playback fails. Handles cleanup without restarting
-        playback during shutdown.
+        Called when playback fails.
         """
 
         self._handle_playback_stopped()
@@ -1082,8 +1091,8 @@ class Player(xbmc.Player):
     def _handle_playback_stopped(self):
         """Shared handler for playback end, stop, and error.
 
-        Releases the active temp video and, if the screensaver is still
-        running in video mode and not shutting down, queues the next video.
+        Queues one end event per playback instance; the video loop releases
+        the temp video and queues the next video.
 
         Idempotent: only processes the first callback for each playback
         instance. Subsequent callbacks (e.g. error followed by stopped)
@@ -1102,23 +1111,7 @@ class Player(xbmc.Player):
 
         try:
             xbmc.log("UMSA SSaver Player: playback stopped/ended/error", xbmc.LOGINFO)
-            self.runp = False
-            saver = self.parent.saver
-            # the extracted file of the video that ended is not needed anymore
-            saver.release_playing_video()
-            if saver.running == 'videos' and not saver.video_teardown:
-                # end of a video: the safe point of the timed mode switch
-                if saver.video_drain_done():
-                    # the last queued video ended with the playlist
-                    saver.leave_video_mode()
-                    return
-                if saver.video_mode_expired() and saver.start_video_drain():
-                    # queue nothing: the video Kodi just started is the last
-                    return
-                xbmc.log("UMSA SSaver Player: add video to playlist", xbmc.LOGINFO)
-                if not saver.add_video_to_playlist():
-                    # the database holds no video anymore: leave the video mode
-                    saver.handle_missing_video()
+            self.events.append((video_session.EVENT_ENDED, instance, None))
         except SystemExit as err:
             xbmc.log(f"UMSA SystemExit onPlayBackStopped: {err}", xbmc.LOGWARNING)
             self.parent.saver.abort_screensaver('SystemExit')
