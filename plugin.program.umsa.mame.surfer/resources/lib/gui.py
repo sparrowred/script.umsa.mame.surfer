@@ -24,6 +24,7 @@ from umsa_core import set_log
 from umsa_core.database import DBMod, split_gamename
 from umsa_core.default_filter import DEFAULT_FILTER_NAME
 from umsa_core.emulation import Emulation
+from umsa_core.rom_cache import CacheLayout
 from umsa_core.support import youtube_search
 from umsa_core_kodi import (
     VGM_SENDER,
@@ -410,6 +411,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
     _close_db_after_scan = False
     # the scan thread left update() (set under _SCAN_LOCK)
     _scan_ended = False
+    # ROM cache settings, set by _read_settings()
+    rom_cache = False
+    cache_layout = None
 
     def __init__(self, strXMLname, strFallbackPath, strDefaultName, forceFallback):
 
@@ -587,7 +591,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.temp_dir, self.mameini, self.mame_dir, self.mame_exe, self.chdman_exe,
             get_core_vgmplay_script(), self._show_vgm_info, self.nonmame, terminal=self.terminal,
             vgmplay_exe=self.vgmplay_exe, vgm_stopped_callback=self._hide_vgm_info,
-            vgm_max_duration=self.vgm_max_duration)
+            vgm_max_duration=self.vgm_max_duration, rom_cache=self.rom_cache,
+            cache_layout=self.cache_layout)
 
         # receive VGM control commands from the screensaver add-on
         self.vgm_monitor = VgmCommandMonitor(self)
@@ -1158,6 +1163,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.nonmame = emu_settings.nonmame
         self.cab_path = emu_settings.cab_path
         self.batomame = emu_settings.batomame
+        # ROM cache: one layout for extracted sets and copies of all starts
+        self.rom_cache = core_settings.rom_cache
+        self.cache_layout = CacheLayout(
+            self.temp_dir, core_settings.batocera_layout, self.batomame)
 
         self._apply_settings_to_services()
 
@@ -1175,7 +1184,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
             emulation.apply_settings(
                 self.temp_dir, self.mameini, self.mame_dir, self.mame_exe,
                 self.chdman_exe, self.nonmame, self.terminal, self.vgmplay_exe,
-                self.vgm_max_duration)
+                self.vgm_max_duration, rom_cache=self.rom_cache,
+                cache_layout=self.cache_layout)
         ggdb = getattr(self, 'ggdb', None)
         if ggdb is not None:
             ggdb.nonmame = self.nonmame
@@ -1375,12 +1385,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if emu_infos.get('exe') == 'kodi':
             rp_ctx = RetroplayerCtx(
                 actset=self.actset,
-                batomame=self.batomame,
-                temp_dir=self.temp_dir,
                 emulation=self.emulation,
+                ggdb=self.ggdb,
                 emu_dialog=self.emu_dialog,
                 dialog=self.dialog,
                 player=self.player,
+                rom_cache=self.rom_cache,
+                cache_layout=self.cache_layout,
+                wait=self.abort_wait,
             )
             rp_ctx.stop_screensaver = self.stop_screensaver
             rp_ctx.exit = self.exit
@@ -1579,12 +1591,16 @@ def main():
 @dataclass
 class RetroplayerCtx:
     actset: object = None
-    batomame: object = None
-    temp_dir: object = None
     emulation: object = None
+    ggdb: object = None
     emu_dialog: object = None
     dialog: object = None
     player: object = None
+    # setting rom_cache and the cache folders (umsa_core.rom_cache)
+    rom_cache: bool = False
+    cache_layout: object = None
+    # abort-aware wait (umsa_core.abort.Wait)
+    wait: object = None
 
     def stop_screensaver(self):
         pass

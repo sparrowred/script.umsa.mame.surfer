@@ -67,6 +67,7 @@ class SharedSettings:
     pref_country: str = "USA"
     auto_play_videos: bool = False
     rom_temp_dir: str = ""
+    rom_cache: bool = False
     batocera_layout: bool = True
     pdf_viewer: str = ""
     aspect_ratio: str = DEFAULT_ASPECT_RATIO

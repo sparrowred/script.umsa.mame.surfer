@@ -151,6 +151,10 @@ msgctxt "#30125"
 msgid "Screen aspect ratio"
 msgstr ""
 
+msgctxt "#30126"
+msgid "ROM cache"
+msgstr ""
+
 msgctxt "#30130"
 msgid "Clean up status database"
 msgstr ""
@@ -252,11 +256,11 @@ msgid "Play the video of the selected software automatically."
 msgstr ""
 
 msgctxt "#30222"
-msgid "Folder for extracted ROMs and CHDs. Leave empty to use the Kodi temp folder."
+msgid "Folder for extracted ROMs and CHDs and for the ROM cache. Leave empty to use the Kodi temp folder."
 msgstr ""
 
 msgctxt "#30223"
-msgid "Store the ROM cache for Kodi RetroPlayer in Batocera-style system folders."
+msgid "Sort extracted and cached ROMs into Batocera-style system folders inside the ROM temp folder. Off: one folder per set."
 msgstr ""
 
 msgctxt "#30224"
@@ -265,6 +269,10 @@ msgstr ""
 
 msgctxt "#30225"
 msgid "Aspect ratio of your screen, used to place the artwork correctly."
+msgstr ""
+
+msgctxt "#30226"
+msgid "Copy the ROMs and CHDs of every started game into the ROM temp folder and start from there (other emulators and Kodi RetroPlayer, not MAME). Off: only archives an emulator cannot read are extracted there."
 msgstr ""
 
 msgctxt "#30230"

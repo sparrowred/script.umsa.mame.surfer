@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from umsa_core import log
+from umsa_core.rom_cache import CacheLayout, cache_archives
 from umsa_core.rom_finder import NONMAME
 from umsa_core.support import marp_download
 
@@ -84,6 +85,8 @@ class LaunchPreparer:
         find_nonmame_roms: Callable | None = None,
         extract_rom: Callable | None = None,
         extract_chd: Callable | None = None,
+        rom_cache: bool = False,
+        cache_layout: CacheLayout | None = None,
     ):
         self.mame_exe = mame_exe
         self.mame_dir = mame_dir
@@ -96,6 +99,21 @@ class LaunchPreparer:
         self._find_nonmame_roms = find_nonmame_roms
         self._extract_rom = extract_rom
         self._extract_chd = extract_chd
+        # setting rom_cache: copy archives that are started directly
+        self.rom_cache = rom_cache
+        self._cache_layout = cache_layout
+
+    @property
+    def cache_layout(self):
+        """Layout of the ROM cache; without one a flat layout in ``temp_dir``."""
+
+        if self._cache_layout is not None:
+            return self._cache_layout
+        return CacheLayout(self.temp_dir)
+
+    @cache_layout.setter
+    def cache_layout(self, layout):
+        self._cache_layout = layout
 
     def prepare_exodos_run(self, emurun, emu_infos):
         """Prepare emurun for eXoDOS."""
@@ -293,8 +311,8 @@ class LaunchPreparer:
         update_dialog(dialog, 10, 'searching roms/chds...')
 
         # set temporary folder
-        emurun['folder'] = os.path.join(self.temp_dir, "{}_{}".format(
-            emurun['swl_name'], emurun['set_name']))
+        emurun['folder'] = self.cache_layout.extract_dir(
+            emurun['swl_name'], emurun['set_name'], emurun.get('source'))
         # set emulator, working dir and mode
         emurun['emu_exe'] = emu_infos['exe']
         emurun['working_dir'] = emu_infos['dir']
@@ -358,7 +376,15 @@ class LaunchPreparer:
                 if extract_rom_func is None:
                     from umsa_core.rom_extractor import extract_rom
                     extract_rom_func = extract_rom
-                extract_rom_func(emurun)
+                extract_error = extract_rom_func(emurun)
+                if extract_error:
+                    # never start the emulator without its file
+                    log(
+                        f'UMSA Emu err: {extract_error} launch={launch_id} '
+                        f'zip={zips[0]!r}',
+                        level='warning',
+                    )
+                    ret_val = False
             # extract 1st chd
             if chds and chds[0]:
                 update_dialog(dialog, 20, 'extracting chd...')
@@ -382,6 +408,12 @@ class LaunchPreparer:
                     emurun['folder'], emurun['extractcd'][0])
         # set 1st rom or chd as argument
         else:
+            if self.rom_cache:
+                # start from a copy in the ROM cache
+                update_dialog(dialog, 20, 'caching roms/chds...')
+                cache_archives(emurun, self.cache_layout, dialog, wait)
+                zips = emurun.get('zips') or []
+                chds = emurun.get('chds') or []
             if zips and zips[0]:
                 emurun['args'] = zips[0]
             elif chds and chds[0]:

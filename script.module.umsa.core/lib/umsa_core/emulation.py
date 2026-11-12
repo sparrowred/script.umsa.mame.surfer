@@ -100,7 +100,8 @@ class Emulation:
     def __init__(self, temp_dir='.', mame_ini_file=None, mame_dir='.', mame_exe=None,
                     chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame=None,
                     terminal='', vgmplay_exe='', vgm_stopped_callback=None,
-                    vgm_max_duration=MAX_PLAYBACK_SECONDS):
+                    vgm_max_duration=MAX_PLAYBACK_SECONDS, rom_cache=False,
+                    cache_layout=None):
         self.percent = 0 # chd convert
         self.mame_exe = mame_exe
         self.mame_dir = mame_dir
@@ -135,6 +136,8 @@ class Emulation:
             find_nonmame_roms=find_nonmame_roms,
             extract_rom=extract_rom,
             extract_chd=extract_chd,
+            rom_cache=rom_cache,
+            cache_layout=cache_layout,
         )
 
         self.vgm_player = VgmPlayer(
@@ -164,7 +167,8 @@ class Emulation:
         return resolve_mame_paths(parse_mame_ini(mame_ini_file), mame_dir)
 
     def apply_settings(self, temp_dir, mame_ini_file, mame_dir, mame_exe, chdman_exe,
-                       nonmame, terminal, vgmplay_exe, vgm_max_duration):
+                       nonmame, terminal, vgmplay_exe, vgm_max_duration,
+                       rom_cache=False, cache_layout=None):
         """Take over changed settings without recreating the instance.
 
         Keeps the running process, the VGM socket and the playback state;
@@ -189,6 +193,8 @@ class Emulation:
         preparer.temp_dir = temp_dir
         preparer.terminal = terminal
         preparer.chdman_exe = chdman_exe
+        preparer.rom_cache = rom_cache
+        preparer.cache_layout = cache_layout
 
         player = self.vgm_player
         player.mame_exe = mame_exe

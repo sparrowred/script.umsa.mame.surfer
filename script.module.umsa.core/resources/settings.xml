@@ -239,12 +239,17 @@
 					<level>0</level>
 					<default/>
 					<constraints>
-						<writable>false</writable>
+						<writable>true</writable>
 						<allowempty>true</allowempty>
 					</constraints>
 					<control type="button" format="path">
 						<heading>30122</heading>
 					</control>
+				</setting>
+				<setting id="rom_cache" type="boolean" label="30126" help="30226">
+					<level>0</level>
+					<default>false</default>
+					<control type="toggle"/>
 				</setting>
 				<setting id="batocera_layout" type="boolean" label="30123" help="30223">
 					<level>0</level>

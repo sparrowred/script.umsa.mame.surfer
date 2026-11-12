@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from umsa_core import ShutdownRequested, log
 from umsa_core.emulation import CHDExtractionCancelled, CHDExtractionError
+from umsa_core.rom_cache import CacheCopyCancelled
 from umsa_gui import strings as S
 from umsa_gui.strings import tr
 
@@ -45,6 +46,24 @@ class LaunchCtx:
     on_shutdown: Callable[[], None] = lambda: None
     # set when Kodi shut down while the emulator ran: it keeps running
     detached: bool = False
+
+
+def new_emurun(actset, ggdb, emulation_start, working_dir, launch_id=None) -> dict:
+    """Run state of a launch (``Emulation.emurun``) for the selected set."""
+
+    return {
+        'launch_id': launch_id or uuid4().hex[:8],
+        'emulation_start': emulation_start,
+        'working_dir': working_dir,
+        'swl_name': actset.get('swl_name'),
+        'set_name': actset.get('name'),
+        # MAME driver source: Batocera system folder of arcade sets
+        'source': actset.get('source'),
+        'description': actset.get('gamename'),
+        'publisher': actset.get('publisher'),
+        'set_clone': ggdb.get_set_name(actset.get('clone')) if ggdb else None,
+        'disks': ggdb.get_disks(actset.get('swl_name'), actset.get('name')) if ggdb else [],
+    }
 
 
 def _close_emu_dialog(ctx: LaunchCtx, reason: str) -> None:
@@ -87,17 +106,8 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
     ctx.stop_screensaver()
 
     # build emurun
-    ctx.emulation.emurun = {
-        'launch_id': launch_id,
-        'emulation_start': ctx.emulation_start,
-        'working_dir': ctx.mame_dir,
-        'swl_name': ctx.actset.get('swl_name'),
-        'set_name': ctx.actset.get('name'),
-        'description': ctx.actset.get('gamename'),
-        'publisher': ctx.actset.get('publisher'),
-        'set_clone': ctx.ggdb.get_set_name(ctx.actset.get('clone')) if ctx.ggdb else None,
-        'disks': ctx.ggdb.get_disks(ctx.actset.get('swl_name'), ctx.actset.get('name')) if ctx.ggdb else [],
-    }
+    ctx.emulation.emurun = new_emurun(
+        ctx.actset, ctx.ggdb, ctx.emulation_start, ctx.mame_dir, launch_id)
     log(
         f'UMSA gui: launch={launch_id} selected emulator='
         f'{emu_infos.get("name", "")!r} exe={emu_infos.get("exe", "")!r} '
@@ -175,9 +185,9 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
             _close_emu_dialog(ctx, 'shutdown')
             ctx.on_shutdown()
             return
-        except CHDExtractionCancelled:
+        except (CHDExtractionCancelled, CacheCopyCancelled):
             log(
-                f'UMSA gui: launch={launch_id} CHD extraction cancelled for '
+                f'UMSA gui: launch={launch_id} CHD extraction or cache copy cancelled for '
                 f'{ctx.actset.get("swl_name")!r}/{ctx.actset.get("name")!r}',
                 level='debug')
             ctx.stop_screensaver()

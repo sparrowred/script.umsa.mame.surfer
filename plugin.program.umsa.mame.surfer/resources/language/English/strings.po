@@ -613,14 +613,6 @@ msgctxt "#32495"
 msgid "error"
 msgstr ""
 
-msgctxt "#32496"
-msgid "{0}: not found in Batocera map"
-msgstr ""
-
-msgctxt "#32497"
-msgid "check rom in cache deadend?"
-msgstr ""
-
 msgctxt "#32498"
 msgid "seems we can not find the rom?"
 msgstr ""

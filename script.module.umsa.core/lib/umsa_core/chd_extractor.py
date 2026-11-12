@@ -1,10 +1,14 @@
 """CHD extraction, cancellation and cleanup."""
 
 import os
+import re
 import shutil
 import subprocess
 
+from umsa_core import log
+
 from .abort import ShutdownRequested, resolve_wait
+from .rom_cache import staged_dir
 
 CHD_PROCESS_STOP_TIMEOUT = 2
 
@@ -36,10 +40,30 @@ def _terminate_and_reap_process(process):
         process.wait()
 
 
-def _remove_partial_chd(folder):
-    """Remove the new extraction directory and any partial CHD output files."""
-    if os.path.isdir(folder):
-        shutil.rmtree(folder)
+# launch files chdman writes for a CD image
+LAUNCH_EXTENSIONS = ('.cue', '.gdi')
+_PROGRESS = re.compile(r'(\d+(?:\.\d+)?)\s*%')
+
+
+def parse_chdman_progress(text):
+    """Last percentage of a chdman progress output, None without one."""
+
+    found = _PROGRESS.findall(text)
+    if not found:
+        return None
+    return min(100, int(float(found[-1])))
+
+
+def _extracted_files(folder, launch_file):
+    """Files of a finished extraction, the launch file first; [] without one."""
+
+    names = sorted(os.listdir(folder))
+    if launch_file in names:
+        return [launch_file]
+    launch = [name for name in names if name.lower().endswith(LAUNCH_EXTENSIONS)]
+    if not launch:
+        return []
+    return launch + [name for name in names if name not in launch]
 
 
 def extract_chd(emurun, chdman_exe, sleep=None, dialog=None, wait=None):
@@ -62,67 +86,64 @@ def extract_chd(emurun, chdman_exe, sleep=None, dialog=None, wait=None):
         ShutdownRequested: If the host asks to stop during the extraction
         CHDExtractionError: If chdman fails
     """
-    import logging
-    log = logging.getLogger(__name__)
     wait = resolve_wait(wait, sleep)
 
-    log.info("UMSA Emu: starting chd extract")
+    log("UMSA Emu: starting chd extract", level='info')
+    folder = emurun['folder']
     chd_name = os.path.basename(emurun['chds'][0])
     # dc needs gdi extension
     if emurun['swl_name'] == 'dc':
         file_ext = '.gdi'
     else:
         file_ext = '.cue'
+    launch_file = chd_name + file_ext
     # check if chd is already converted
-    if os.path.exists(emurun['folder']):
-        emurun['extractcd'] = os.listdir(emurun['folder'])
-        return ""
-    os.mkdir(emurun['folder'])
-    output_file = os.path.join(emurun['folder'], chd_name + file_ext)
-    log.debug("UMSA Emu: create process")
+    if os.path.isdir(folder):
+        extracted = _extracted_files(folder, launch_file)
+        if extracted:
+            emurun['extractcd'] = extracted
+            return ""
+        # leftover without a launch file: extract again
+        log(f"UMSA Emu: removing incomplete chd folder {folder}", level='warning')
+        shutil.rmtree(folder)
+
     proc = None
     try:
-        proc = subprocess.Popen(
-            [chdman_exe, 'extractcd', '-i', emurun['chds'][0], '-o',
-             output_file],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        percent = 0
-        log.debug("UMSA Emu: checking process")
-        while proc.poll() is None:
-            chdman_progress = proc.stderr.read(34)
-            rpos = str(chdman_progress)[::-1].find('%')
-            if rpos > -1:
-                pos = len(chdman_progress) - rpos - 1
-                try:
-                    percent = int(float(chdman_progress[pos-4:pos]))
-                except ValueError:
-                    pass
-            if dialog:
-                dialog.update(percent, f'extracting chd: {percent}')
-            if dialog and dialog.iscanceled():
-                _terminate_and_reap_process(proc)
-                _remove_partial_chd(emurun['folder'])
-                raise CHDExtractionCancelled("CHD extraction canceled")
-            if wait(250):
-                log.warning("UMSA Emu: shutdown requested, stopping chdman")
-                _terminate_and_reap_process(proc)
-                _remove_partial_chd(emurun['folder'])
-                raise ShutdownRequested("shutdown during CHD extraction")
-        return_code = proc.wait()
-        log.debug(f"UMSA Emu extract_rom: chd extract: RC = {return_code}")
-        if return_code == 0:
-            emurun['extractcd'] = [chd_name + file_ext]
-            return ""
-        _remove_partial_chd(emurun['folder'])
-        raise CHDExtractionError(
-            f"chdman extraction failed with exit code {return_code}")
-    except (CHDExtractionCancelled, ShutdownRequested):
+        # the folder gets its name only when chdman finished: a cancel, an
+        # error or a shutdown removes the staging folder
+        with staged_dir(folder) as staging:
+            proc = subprocess.Popen(
+                [chdman_exe, 'extractcd', '-i', emurun['chds'][0], '-o',
+                 os.path.join(staging, launch_file)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            percent = 0
+            while proc.poll() is None:
+                progress = parse_chdman_progress(
+                    proc.stderr.read(34).decode('utf-8', errors='ignore'))
+                if progress is not None:
+                    percent = progress
+                if dialog:
+                    dialog.update(percent, f'extracting chd: {percent}')
+                if dialog and dialog.iscanceled():
+                    _terminate_and_reap_process(proc)
+                    raise CHDExtractionCancelled("CHD extraction canceled")
+                if wait(250):
+                    log("UMSA Emu: shutdown requested, stopping chdman",
+                        level='warning')
+                    _terminate_and_reap_process(proc)
+                    raise ShutdownRequested("shutdown during CHD extraction")
+            return_code = proc.wait()
+            log(f"UMSA Emu: chd extract: RC = {return_code}", level='debug')
+            if return_code != 0:
+                raise CHDExtractionError(
+                    f"chdman extraction failed with exit code {return_code}")
+        emurun['extractcd'] = [launch_file]
+        return ""
+    except (CHDExtractionCancelled, ShutdownRequested, CHDExtractionError):
         raise
     except Exception:
         if proc is not None:
             _terminate_and_reap_process(proc)
-        if os.path.isdir(emurun['folder']):
-            _remove_partial_chd(emurun['folder'])
         raise
     finally:
         if proc is not None:

@@ -1,189 +1,142 @@
-"""Kodi Retroplayer cache preparation and launch.
+"""Kodi RetroPlayer launch: find the ROM, prepare the file to play, start.
 
-Refactored to accept a minimal context with data, services and callbacks.
+The file RetroPlayer gets follows the setting ``rom_cache``:
+
+* software lists UMSA has to rebuild (``rom_finder.EXTENSIONS``: joined and
+  renamed ROM files) and Gamebase64 archives are always extracted into the
+  ROM temp folder;
+* everything else is played from its original path, or - with the ROM cache
+  switched on - from a copy in the cache (``umsa_core.rom_cache``).
 """
 
 import os
 
 import xbmc
 import xbmcgui
-import xbmcvfs
-from umsa_core.emulation import NONMAME
+from emulator_launcher import new_emurun
+from umsa_core import ShutdownRequested
+from umsa_core.rom_cache import CacheCopyCancelled, cache_archives
+from umsa_core.rom_finder import EXTENSIONS, NONMAME
 from umsa_gui import strings as S
 from umsa_gui.strings import tr
 
+EMULATOR_NAME = "Retroplayer"
+# documentation file inside the Gamebase64 archives
+GB64_INFO_FILE = 'VERSION.NFO'
 
-def run_retroplayer(ctx):
-    """Prepare cache folder, resolve/copy the rom and start Retroplayer."""
+
+def needs_extraction(swl_name):
+    """True when RetroPlayer cannot play the archive of the software list."""
+
+    return swl_name in EXTENSIONS or swl_name.startswith('gb64_')
+
+
+def _close(ctx):
+    ctx.stop_screensaver()
+    ctx.emu_dialog.close()
+
+
+def _fail(ctx, message):
+    _close(ctx)
+    ctx.dialog.notification(
+        heading=tr(S.ERROR), message=message,
+        icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
+
+
+def prepare_playfile(ctx):
+    """Return the file RetroPlayer plays, or None when there is none.
+
+    Fills ``ctx.emulation.emurun`` with the found ROMs; raises
+    ``CacheCopyCancelled`` / ``ShutdownRequested`` from a copy into the cache.
+    """
+
+    emurun = ctx.emulation.emurun
+    swl_name = emurun['swl_name']
 
     ctx.emu_dialog.update(10, tr(S.RUN_SEARCHING_ROMS))
-    playfile = None
-
-    # set cache folder
-    if ctx.actset['swl_name'] == 'mame':
-        if ctx.actset['source'] in ctx.batomame:
-            ctx.emulation.emurun['folder'] = os.path.join(
-                ctx.temp_dir, ctx.batomame[ctx.actset['source']] )
-        else:
-            ctx.emulation.emurun['folder'] = os.path.join(
-                ctx.temp_dir, 'mame', 'roms')
-    elif ctx.actset['swl_name'] in NONMAME:
-        if ctx.actset['swl_name']+'.xml' in ctx.batomame:
-            ctx.emulation.emurun['folder'] = os.path.join( 
-                ctx.temp_dir, ctx.batomame[ctx.actset['swl_name']+'.xml'])
-        else:
-            ctx.dialog.notification(heading=tr(S.ERROR),
-                message=tr(S.RUN_NOT_IN_BATOCERA_MAP, ctx.actset['swl_name']),
-                icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
-            ctx.stop_screensaver()
-            ctx.emu_dialog.close()
-            return
-        if 'gb64' in ctx.actset['swl_name']:
-           ctx.emulation.emurun['folder'] = os.path.join(
-               ctx.emulation.emurun['folder'],
-               os.path.basename(ctx.actset['name']) )
-    elif ctx.actset['swl_name']+'.xml' in ctx.batomame:
-        ctx.emulation.emurun['folder'] = os.path.join(
-            ctx.temp_dir, ctx.batomame[ctx.actset['swl_name']+'.xml'],
-            f"{ctx.actset['swl_name']}_{ctx.actset['name']}")
+    if swl_name in NONMAME:
+        ctx.emulation.find_nonmame_roms()
     else:
-        ctx.emulation.emurun['folder'] = os.path.join(
-            ctx.temp_dir, 'mame', 'roms', ctx.actset['swl_name'])
-    xbmc.log(f"UMSA gui: cache folder: {ctx.emulation.emurun['folder']}", xbmc.LOGDEBUG)
+        ctx.emulation.find_roms()
+    zips = emurun.get('zips') or []
+    chds = emurun.get('chds') or []
+    xbmc.log(f"UMSA gui: retroplayer: zips={zips!r} chds={chds!r}", xbmc.LOGDEBUG)
+    if not zips and not chds:
+        return None
 
-    # check if rom already in cache folder and set playfile
-    xbmc.log("UMSA gui: check if rom in cache", xbmc.LOGDEBUG)
-    if ctx.actset['swl_name'] in NONMAME:
-        if os.path.exists(ctx.emulation.emurun['folder']):
-            if 'gb64' in ctx.actset['swl_name']:
-                dfiles = os.listdir(ctx.emulation.emurun['folder'])
-                for dfile in dfiles:
-                    if dfile != 'VERSION.NFO':
-                        playfile = os.path.join(
-                            ctx.emulation.emurun['folder'], dfile)
-                        break
-            else:
-                playfile = os.path.join(
-                    ctx.emulation.emurun['folder'],ctx.actset['name']+'.zip')
-    elif ctx.actset['swl_name'] == 'mame':
-        # TODO we always assume zip, not 7z, rar or what else does mame support?
-        playfile = os.path.join(
-            ctx.emulation.emurun['folder'], ctx.actset['name']+'.zip')
-    elif ctx.actset['swl_name']+'.xml' in ctx.batomame:
-        if os.path.exists(ctx.emulation.emurun['folder']):
-            dfiles = os.listdir(ctx.emulation.emurun['folder'])
-            if dfiles:
-                playfile = os.path.join(
-                    ctx.emulation.emurun['folder'], dfiles[0])
-    else:
-        ctx.dialog.notification(heading=tr(S.ERROR),
-                                 message=tr(S.RUN_CACHE_DEADEND),
-                                 icon=xbmcgui.NOTIFICATION_ERROR, time=10000)
-    xbmc.log(f"UMSA gui: cache build rom file: {playfile}", xbmc.LOGDEBUG)
+    if zips and needs_extraction(swl_name):
+        emurun['folder'] = ctx.cache_layout.extract_dir(
+            swl_name, emurun['set_name'], emurun.get('source'))
+        error = ctx.emulation.extract_rom()
+        if error:
+            xbmc.log(f"UMSA gui: retroplayer: {error}", xbmc.LOGWARNING)
+            return None
+        files = sorted(
+            name for name in emurun.get('extract_files') or []
+            if name != GB64_INFO_FILE)
+        return os.path.join(emurun['folder'], files[0]) if files else None
 
-    # we need to search for the rom in known rom paths if not in cache
-    check_file = None
-    if playfile:
-        check_file = os.path.isfile(playfile)
-    if not check_file:
-        xbmc.log(f"UMSA gui: searching {ctx.actset['swl_name']} roms:", xbmc.LOGDEBUG)
-        if ctx.actset['swl_name'] in NONMAME:
-            ctx.emulation.find_nonmame_roms()
-        else:
-            # TODO: for mame use parent!
-            ctx.emulation.find_roms()
-        xbmc.log(f"UMSA gui: zips: {ctx.emulation.emurun['zips']}", xbmc.LOGDEBUG)
-        xbmc.log(f"UMSA gui: chds: {ctx.emulation.emurun['chds']}", xbmc.LOGDEBUG)
-        xbmc.log(f"UMSA gui: disks: {ctx.emulation.emurun['disks']}", xbmc.LOGDEBUG)
-        # TODO check result of find_roms here
-        if ctx.actset['swl_name'] == 'mame':
-            if ctx.emulation.emurun['zips']:
-                playfile = os.path.join(
-                    ctx.emulation.emurun['folder'],
-                    ctx.actset['name']+'.zip')
-                xbmc.log("UMSA gui: copy rom file", xbmc.LOGDEBUG)
-                if xbmcvfs.copy(
-                    ctx.emulation.emurun['zips'][0], playfile):
-                    xbmc.log("UMSA gui: copy successful", xbmc.LOGINFO)
-                else:
-                    xbmc.log("UMSA gui: copy error!!!", xbmc.LOGWARNING)
-            # TODO also copy chds = ctx.emulation.emurun['disks']
-        elif ctx.actset['swl_name'] in NONMAME:
-            if 'gb64' in ctx.actset['swl_name']:
-                ctx.emulation.extract_rom()
-                if 'extract_files' in ctx.emulation.emurun:
-                    for pfile in ctx.emulation.emurun['extract_files']:
-                        if pfile != 'VERSION.NFO':
-                            playfile = os.path.join(
-                                ctx.emulation.emurun['folder'],
-                                ctx.emulation.emurun['extract_files'][0])
-            else:
-                if ctx.emulation.emurun['zips']:
-                    playfile = os.path.join(
-                        ctx.emulation.emurun['folder'],
-                        #ctx.actset['name']+'.zip'
-                        os.path.basename(ctx.emulation.emurun['zips'][0])
-                    )
-                    xbmcvfs.copy(
-                        ctx.emulation.emurun['zips'][0], playfile)
-        elif ctx.emulation.emurun['zips']:
-            ctx.emulation.extract_rom()
-            if 'extract_files' in ctx.emulation.emurun:
-                playfile = os.path.join(
-                    ctx.emulation.emurun['folder'],
-                    ctx.emulation.emurun['extract_files'][0])
-        elif ctx.emulation.emurun['chds']:
-            # TODO loop and copy all chds
-            playfile = os.path.join(
-                ctx.emulation.emurun['folder'],
-                ctx.emulation.emurun['disks'][0]['disk']+'.chd')
-            xbmcvfs.copy(ctx.emulation.emurun['chds'][0],playfile)
-        else:
-            ctx.stop_screensaver()
-            ctx.emu_dialog.close()
-            ctx.dialog.notification(
-                heading=tr(S.ERROR), message=tr(S.RUN_CANNOT_FIND_ROM),
-                icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
-            return
+    if ctx.rom_cache:
+        cache_archives(emurun, ctx.cache_layout, ctx.emu_dialog, ctx.wait)
+        zips = emurun.get('zips') or []
+        chds = emurun.get('chds') or []
+    return zips[0] if zips else chds[0]
 
-    # stop if nothing found to play
-    if not playfile:
-        ctx.stop_screensaver()
-        ctx.emu_dialog.close()
-        ctx.dialog.notification(heading=tr(S.ERROR), message=tr(S.RUN_ROM_NOT_FOUND),
-            icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
+
+def run_retroplayer(ctx):
+    """Find the ROM, prepare the file to play and start RetroPlayer."""
+
+    try:
+        ctx.emu_dialog.create(tr(S.RUN_TITLE, EMULATOR_NAME), tr(S.RUN_WARM_UP))
+    except Exception as error:  # noqa: BLE001 - the dialog only shows progress
+        xbmc.log(f"UMSA gui: could not create emulator progress dialog: {error}",
+                 xbmc.LOGWARNING)
+
+    # the run state other starts build in the launcher
+    ctx.emulation.emurun = new_emurun(ctx.actset, ctx.ggdb, 0, '')
+    try:
+        playfile = prepare_playfile(ctx)
+    except ShutdownRequested:
+        xbmc.log("UMSA gui: retroplayer: Kodi shuts down, start stopped",
+                 xbmc.LOGWARNING)
+        _close(ctx)
+        ctx.exit()
         return
-    xbmc.log(f"UMSA gui: playfile = {playfile}", xbmc.LOGDEBUG)
+    except CacheCopyCancelled:
+        xbmc.log("UMSA gui: retroplayer: copy into the ROM cache cancelled",
+                 xbmc.LOGDEBUG)
+        _close(ctx)
+        return
+    except OSError as error:
+        xbmc.log(f"UMSA gui: retroplayer: could not prepare the ROM: {error}",
+                 xbmc.LOGERROR)
+        _fail(ctx, str(error))
+        return
+    finally:
+        ctx.emulation.after_run()
 
-    # start retroplayer
-    xbmc.log(f"UMSA gui: actset: {ctx.actset}", xbmc.LOGDEBUG)
+    if not playfile:
+        _fail(ctx, tr(S.RUN_CANNOT_FIND_ROM))
+        return
+    xbmc.log(f"UMSA gui: retroplayer: playfile = {playfile}", xbmc.LOGDEBUG)
+
     game_item = xbmcgui.ListItem(playfile)
-    game_item.setInfo(type='game', infoLabels={ 'title': ctx.actset['gamename']})
+    game_item.setInfo(type='game', infoLabels={'title': ctx.actset['gamename']})
     game_tag = game_item.getGameInfoTag()
-    game_tag.setTitle(     ctx.actset['name'] )
-    game_tag.setPlatform(  ctx.actset['machine_label'] )
-    game_tag.setGenres( [  ctx.actset['category'], ] )
-    game_tag.setPublisher( ctx.actset['publisher'] )
-    game_tag.setDeveloper( ctx.actset['publisher'] ) # get dev from game entry
-    game_tag.setOverview(  'set info from history' ) # TODO
-    if ctx.actset['year'].isdigit():
-        game_tag.setYear(  int(ctx.actset['year']) )
-    else:
-        game_tag.setYear(0)
-    # TODO depends on swl, add-id is name? check log or addon
-    # Sets the add-on ID of the game client executing the game.
-    #game_tag.setGameClient()
+    game_tag.setTitle(ctx.actset['name'])
+    game_tag.setPlatform(ctx.actset['machine_label'])
+    game_tag.setGenres([ctx.actset['category']])
+    game_tag.setPublisher(ctx.actset['publisher'])
+    game_tag.setDeveloper(ctx.actset['publisher'])  # get dev from game entry
+    game_tag.setOverview('set info from history')  # TODO
+    year = ctx.actset['year']
+    game_tag.setYear(int(year) if str(year).isdigit() else 0)
     if ctx.player.isPlaying():
         ctx.player.stop()
         xbmc.sleep(500)
     ctx.player.play(playfile, game_item)
-    ctx.stop_screensaver()
-    ctx.emu_dialog.close()
-    # TODO need to exit or found out how to deinit window and init after play session
-    # but when is play over? !!! check ctx.player.isPlaying()
-    # as longs is its playing the game runs!
+    _close(ctx)
+    # TODO need to exit or find out how to deinit the window and init it
+    # again after the play session (as long as the player plays, the game runs)
     ctx.exit()
-
     # TODO update status, but how to measure playtime?
-    # start thread, wait for kodi signal that retroplayer stops?
-    return
