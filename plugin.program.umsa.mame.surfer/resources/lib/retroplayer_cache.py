@@ -9,12 +9,14 @@ import xbmc
 import xbmcgui
 import xbmcvfs
 from umsa_core.emulation import NONMAME
+from umsa_gui import strings as S
+from umsa_gui.strings import tr
 
 
 def run_retroplayer(ctx):
     """Prepare cache folder, resolve/copy the rom and start Retroplayer."""
 
-    ctx.emu_dialog.update(10, 'searching roms...')
+    ctx.emu_dialog.update(10, tr(S.RUN_SEARCHING_ROMS))
     playfile = None
 
     # set cache folder
@@ -30,8 +32,8 @@ def run_retroplayer(ctx):
             ctx.emulation.emurun['folder'] = os.path.join( 
                 ctx.temp_dir, ctx.batomame[ctx.actset['swl_name']+'.xml'])
         else:
-            ctx.dialog.notification(heading='error',
-                message=f"{ctx.actset['swl_name']}: not found in Batocera map",
+            ctx.dialog.notification(heading=tr(S.ERROR),
+                message=tr(S.RUN_NOT_IN_BATOCERA_MAP, ctx.actset['swl_name']),
                 icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
             ctx.stop_screensaver()
             ctx.emu_dialog.close()
@@ -74,8 +76,8 @@ def run_retroplayer(ctx):
                 playfile = os.path.join(
                     ctx.emulation.emurun['folder'], dfiles[0])
     else:
-        ctx.dialog.notification(heading='error',
-                                 message='check rom in cache deadend?',
+        ctx.dialog.notification(heading=tr(S.ERROR),
+                                 message=tr(S.RUN_CACHE_DEADEND),
                                  icon=xbmcgui.NOTIFICATION_ERROR, time=10000)
     xbmc.log(f"UMSA gui: cache build rom file: {playfile}", xbmc.LOGDEBUG)
 
@@ -140,7 +142,7 @@ def run_retroplayer(ctx):
             ctx.stop_screensaver()
             ctx.emu_dialog.close()
             ctx.dialog.notification(
-                heading='error', message='seems we can not find the rom?',
+                heading=tr(S.ERROR), message=tr(S.RUN_CANNOT_FIND_ROM),
                 icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
             return
 
@@ -148,7 +150,7 @@ def run_retroplayer(ctx):
     if not playfile:
         ctx.stop_screensaver()
         ctx.emu_dialog.close()
-        ctx.dialog.notification(heading='error', message='rom not found',
+        ctx.dialog.notification(heading=tr(S.ERROR), message=tr(S.RUN_ROM_NOT_FOUND),
             icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
         return
     xbmc.log(f"UMSA gui: playfile = {playfile}", xbmc.LOGDEBUG)

@@ -31,8 +31,10 @@ TODO
 """
 
 import os
+import random
 import sqlite3  # connect, Row, OperationalError
 import time
+from array import array
 from urllib.request import pathname2url
 
 from .artwork import resolve_artwork_path
@@ -68,7 +70,11 @@ from .logging import log
 from .scan_progress import _scan_state_ownership
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
-from .status_repository import StatusRepository
+from .status_repository import (
+    PLAY_STATUS_DEFAULT,
+    PLAY_STATUS_ORDERS,
+    StatusRepository,
+)
 from .umsa_db_download import download_and_update_umsa_db  # noqa: F401
 
 
@@ -122,6 +128,9 @@ def build_filter_lists(filter_lists, category, db):
 
 
 
+# kept candidate lists of get_random_art (artwork types x filter)
+_RANDOM_ART_CACHE_SIZE = 8
+
 COUNTRIES = {
     '1NTSC' : ('ntsc',),
     '2PAL'  : ('pal',),
@@ -149,6 +158,9 @@ class DBMod:
         self.where = ''
         self._where_params = []
         self._filter_where_params = []
+        # candidate ids of get_random_art, see _random_art_candidates
+        self._random_art_cache = {}
+        self._random_art_token = None
         if not filter_lists:
             filter_lists = {}
 
@@ -743,39 +755,11 @@ class DBMod:
         is delegated to :class:`ArtworkRepository`.
         """
 
-        art_columns = (
-            "sets.id, art.source, art.root_key, art.scan_unit, "
-            "art.type, art.extension, art.relative_path, "
-            "art.archive_member"
-        )
-        types_in = ",".join("?" * len(art_types))
-
-        rand_art = None
-        end_result = {}
-
-        # get with filter if on (an empty filter would produce an invalid "AND")
-        if self.use_filter and self.filter_where:
-            # TODO doesnt work when filter = everything but filter = on
-            statement = "SELECT {} FROM art.art_set art JOIN sets ON sets.id = art.id {} \
-                         WHERE art.type IN ({}) AND {} \
-                         ORDER BY RANDOM() LIMIT 1".format(
-                             art_columns,
-                             " ".join(self.filter_join),
-                             types_in,
-                             " AND ".join(self.filter_where))
-            self.gdbc.execute(statement,
-                              list(art_types) + list(self._filter_where_params))
-            rand_art = self.gdbc.fetchone()
-        # and without filter if we haven't found anything
+        rand_art = self._pick_random_art(art_types)
         if not rand_art:
-            statement = f"SELECT {art_columns} FROM art.art_set art JOIN sets ON sets.id = art.id \
-                        WHERE art.type IN ({types_in}) \
-                        ORDER BY RANDOM() LIMIT 1"
-            self.gdbc.execute(statement, list(art_types))
-            rand_art = self.gdbc.fetchone()
-            if not rand_art:
-                log(f"UMSA database get_random art: no artwork for {art_types}", level='warning')
-                return None
+            log(f"UMSA database get_random art: no artwork for {art_types}", level='warning')
+            return None
+        end_result = {}
         end_result.update(rand_art)
 
         # get needed infos
@@ -825,6 +809,89 @@ class DBMod:
                     end_result.update({'left_pic': left_path})
 
         return end_result
+
+    def _random_art_candidates(self, art_types, filtered):
+        """Return the ``art_id`` values ``get_random_art`` may pick from.
+
+        The ids of one artwork type selection (with or without the active
+        filter) are read once and kept, so a random pick no longer sorts the
+        whole joined artwork table (``ORDER BY RANDOM()``) for every picture.
+
+        The lists are dropped when ``artwork.db`` changes
+        (``PRAGMA art.data_version`` moves as soon as another connection
+        commits, e.g. an artwork scan of the frontend) and when ``open_db``
+        replaced the ``umsa.db`` connection. The filter clauses are part of
+        the key, so a changed filter gets its own list.
+        """
+
+        self.gdbc.execute("PRAGMA art.data_version")
+        token = (self.gdb, self.gdbc.fetchone()[0])
+        cache = getattr(self, '_random_art_cache', None)
+        if cache is None or getattr(self, '_random_art_token', None) != token:
+            cache = self._random_art_cache = {}
+            self._random_art_token = token
+
+        types = tuple(sorted(set(art_types)))
+        signature = None
+        if filtered:
+            signature = (tuple(self.filter_join), tuple(self.filter_where),
+                         tuple(self._filter_where_params))
+        key = (types, signature)
+        if key in cache:
+            return cache[key]
+
+        types_in = ",".join("?" * len(types))
+        if filtered:
+            statement = "SELECT art.art_id FROM art.art_set art JOIN sets ON sets.id = art.id {} \
+                         WHERE art.type IN ({}) AND {}".format(
+                             " ".join(self.filter_join),
+                             types_in,
+                             " AND ".join(self.filter_where))
+            params = list(types) + list(self._filter_where_params)
+        else:
+            statement = f"SELECT art.art_id FROM art.art_set art JOIN sets ON sets.id = art.id \
+                        WHERE art.type IN ({types_in})"
+            params = list(types)
+        self.gdbc.execute(statement, params)
+        ids = array('q', (row[0] for row in self.gdbc))
+
+        if len(cache) >= _RANDOM_ART_CACHE_SIZE:
+            cache.clear()
+        cache[key] = ids
+        return ids
+
+    def _pick_random_art(self, art_types):
+        """Return one random artwork row of the given types, or ``None``.
+
+        Picks with the active filter first and without it when the filter
+        leaves nothing. A candidate whose row has gone meanwhile drops the
+        candidate lists and is retried once.
+        """
+
+        if not art_types:
+            return None
+
+        # an empty filter would produce an invalid "AND" clause
+        filtered = bool(self.use_filter and self.filter_where)
+        for _attempt in range(2):
+            ids = None
+            if filtered:
+                ids = self._random_art_candidates(art_types, True)
+            if not ids:
+                ids = self._random_art_candidates(art_types, False)
+            if not ids:
+                return None
+            self.gdbc.execute(
+                "SELECT sets.id, art.source, art.root_key, art.scan_unit, \
+                        art.type, art.extension, art.relative_path, \
+                        art.archive_member \
+                 FROM art.art_set art JOIN sets ON sets.id = art.id \
+                 WHERE art.art_id = ?", (random.choice(ids),))
+            rand_art = self.gdbc.fetchone()
+            if rand_art:
+                return rand_art
+            self._random_art_cache = {}
+        return None
 
     def _art_source_roots(self):
         """Return configured roots for the non-MAME artwork sources.
@@ -919,7 +986,12 @@ class DBMod:
     def get_status_for_set(self, set_id):
         """Return play status for a set id"""
 
-        i = self._get_status_repository().get_status_for_set(set_id)
+        return self._status_dict(
+            self._get_status_repository().get_status_for_set(set_id))
+
+    def _status_dict(self, i):
+        """Return the play status dict of a status row (``None`` stays ``None``)"""
+
         if not i:
             return None
 
@@ -1232,25 +1304,29 @@ class DBMod:
         return self._get_game_repository().get_categories()
 
     def get_last_played(self, order):
-        """get_last_played"""
+        """Return the play status list ``(results, pos)``, best first
+
+        ``order`` is one of ``PLAY_STATUS_ORDERS`` (``time_played``,
+        ``last_played``, ``play_count``); any other value falls back to
+        ``time_played``. The played sets (at most 250) are summed up per
+        software.
+        """
 
         results = []
         software_dict = {}
 
+        if order not in PLAY_STATUS_ORDERS:
+            log(f"UMSA database get_last_played: unknown order {order!r}, "
+                f"using {PLAY_STATUS_DEFAULT}", level='warning')
+            order = PLAY_STATUS_DEFAULT
+
         # get status for sets
-        self.sdbc.execute(
-            f"SELECT id, last_played, play_count, time_played FROM sets \
-             WHERE time_played > 0 ORDER BY {order} DESC LIMIT 250")
-        # get software info for sets from status.db
-        for i in self.sdbc.fetchall():
-            self.gdbc.execute(
-                "SELECT software.id, software.name, year.name as year, maker.name as maker \
-                 FROM software \
-                    JOIN year ON software.year_id = year.id \
-                    JOIN maker ON software.developer_id = maker.id \
-                    JOIN sets ON software.id = sets.softwarelink_id \
-                 WHERE sets.id = ?", (i['id'],))
-            software = self.gdbc.fetchone()
+        status_rows = self._get_status_repository().get_played_sets(order)
+        # get software info for all sets in one query
+        software_by_set = self._get_game_repository().get_software_for_sets(
+            i['id'] for i in status_rows)
+        for i in status_rows:
+            software = software_by_set.get(i['id'])
             # put in dict to summarize sets
             if software and software['id'] in software_dict:
                 software_dict[software['id']]["play_count"] += i['play_count']
@@ -1636,8 +1712,13 @@ class DBMod:
 
         return self._get_game_repository().get_set_name(set_id)
 
-    def get_best_machine_for_set(self, swl_name, detail, swl_machine_id):
+    def get_best_machine_for_set(self, swl_name, detail, swl_machine_id,
+                                 machines=None):
         """Determine which machine to take for MAME emulation
+
+        ``machines`` is the machine list of the software list
+        (``get_machines(swl_name)[0]``); callers that ask for many sets of
+        one software list pass it so it is read only once.
 
         TODO
         - rework: no more list, use dict from get_machines !!!
@@ -1645,7 +1726,8 @@ class DBMod:
         """
 
         # get originals, compatible machines
-        machines = self.get_machines(swl_name)[0]
+        if machines is None:
+            machines = self.get_machines(swl_name)[0]
 
         # no machine found
         if len(machines) == 0:
@@ -1732,6 +1814,14 @@ class DBMod:
                 continue
             all_sets.append(repo.get_sets_for_software(other_id))
 
+        # play status of all sets in one query
+        status_rows = self._get_status_repository().get_status_for_sets(
+            machine['id'] for diff_software in all_sets
+            for machine in diff_software)
+        # machine list per software list and name per system, read once each
+        swl_machines = {}
+        machine_names = {}
+
         diff_machines = {}
         set_ids = []
         # set id -> driver source whose WIP is shown as "WIP Driver"
@@ -1743,9 +1833,8 @@ class DBMod:
 
                 set_ids.append(str(machine['id']))
                 resulting_machine = ''
-                # TODO get status in one select like art and dat
                 # get last_played
-                last_played = self.get_status_for_set(machine['id'])
+                last_played = self._status_dict(status_rows.get(machine['id']))
 
                 if machine['system_id'] == 270257: # mame
                     # resulting_machine is the parent
@@ -1767,14 +1856,21 @@ class DBMod:
                     # TODO: to test used machine name from swl
                     resulting_machine = str(machine['system_id'])
                     # get best machine
+                    if machine['swl'] not in swl_machines:
+                        swl_machines[machine['swl']] = (
+                            repo.get_machines(machine['swl'])[0])
                     best_machine = self.get_best_machine_for_set(
-                        machine['swl'], machine['detail'], machine['system_id'])
+                        machine['swl'], machine['detail'], machine['system_id'],
+                        machines=swl_machines[machine['swl']])
                     if best_machine:
                         machine_name = best_machine['setname']
                         machine_label = best_machine['label2']
                     else:
-                        machine_name, machine_label = repo.get_machine_name(
-                            machine['system_id'])
+                        if machine['system_id'] not in machine_names:
+                            machine_names[machine['system_id']] = (
+                                repo.get_machine_name(machine['system_id']))
+                        machine_name, machine_label = (
+                            machine_names[machine['system_id']])
                     # driver of the machine the set runs on, else of the
                     # default system of the software list
                     driver = best_machine.get('source') if best_machine else None

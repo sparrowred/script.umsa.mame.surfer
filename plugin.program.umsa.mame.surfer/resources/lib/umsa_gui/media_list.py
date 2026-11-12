@@ -9,15 +9,23 @@ from json import loads
 import xbmc
 from umsa_core.database import parse_recommended_games
 
+from . import strings as S
+from .constants import ENTRY_SEARCH, KIND_MEDIA, SEARCH_MARP, SEARCH_YOUTUBE
+from .strings import tr
+
+# heading rows that start an online search when clicked
+YOUTUBE_SEARCH_ID = f"{ENTRY_SEARCH}::{SEARCH_YOUTUBE}"
+MARP_SEARCH_ID = f"{ENTRY_SEARCH}::{SEARCH_MARP}"
+
 
 def choose_media(gui):
     """Dialog to choose media for playing."""
 
     # labels in list
     media_list = []
-    video = [{'name': '- Videos -', 'id': '0', 'year': '', 'maker': ''}]
-    manual = [{'name': '- Manuals -', 'id': '0', 'year': '', 'maker': ''}]
-    vgm = [{'name': '- Music -', 'id': '0', 'year': '', 'maker': ''}]
+    video = [{'name': tr(S.MEDIA_VIDEOS), 'id': '0', 'year': '', 'maker': ''}]
+    manual = [{'name': tr(S.MEDIA_MANUALS), 'id': '0', 'year': '', 'maker': ''}]
+    vgm = [{'name': tr(S.MEDIA_MUSIC), 'id': '0', 'year': '', 'maker': ''}]
 
     xbmc.log(f"UMSA gui: choose media - {gui.vgms}", xbmc.LOGDEBUG)
     if gui.vgms:
@@ -51,23 +59,25 @@ def choose_media(gui):
     # get youtube videos
     media = gui.ggdb.get_further_media(gui.actset['id'])
     if media and media['youtube']:
-        yt_list = [{'name': '- Youtube -', 'id': 'nan', 'year': '', 'maker': ''}]
+        yt_list = [{'name': tr(S.MEDIA_YOUTUBE), 'id': YOUTUBE_SEARCH_ID,
+                    'year': '', 'maker': ''}]
         for i in loads(media['youtube']):
             yt_list.append(
                 {'name': i[1], 'id': f"yt::{i[0]}", 'year': '', 'maker': ''})
     else:
-        yt_list = [{'name': '- Youtube (click for online search) -',
-                    'id': 'nan', 'year': '', 'maker': ''}]
+        yt_list = [{'name': tr(S.MEDIA_YOUTUBE_SEARCH),
+                    'id': YOUTUBE_SEARCH_ID, 'year': '', 'maker': ''}]
     if media and media['marp']:
-        marp_list = [{'name': '- Replays -', 'id': 'nan', 'year': '', 'maker': ''}]
+        marp_list = [{'name': tr(S.MEDIA_REPLAYS), 'id': MARP_SEARCH_ID,
+                      'year': '', 'maker': ''}]
         for i in loads(media['marp']):
             marp_list.append({
                 'name': "{} ({} - {})".format(i['player'], i['percentage'], i['points']),
                 'id': "{}::{}".format(i['set_name'], i['download']),
                 'year': i['rank'], 'maker': i['version']})
     else:
-        marp_list = [{'name': '- Replays (click for MARP search) -', 'id': 'nan',
-                      'year': '', 'maker': ''}]
+        marp_list = [{'name': tr(S.MEDIA_REPLAYS_SEARCH),
+                      'id': MARP_SEARCH_ID, 'year': '', 'maker': ''}]
 
     pos = 0
     if len(video) > 1:
@@ -82,7 +92,7 @@ def choose_media(gui):
     media_list.extend(yt_list)
     media_list.extend(marp_list)
 
-    gui.popup_gamelist(media_list, 'Choose Media', pos=pos)
+    gui.popup_gamelist(media_list, tr(S.CHOOSE_MEDIA), pos=pos, kind=KIND_MEDIA)
 
 
 def show_rec(gui):
@@ -98,4 +108,4 @@ def show_rec(gui):
                 text = gui.all_dat[i]['Rec']
                 break
     rec_list, pos = parse_recommended_games(text, gui.ggdb)
-    gui.popup_gamelist(rec_list, 'Recommended', pos=pos)
+    gui.popup_gamelist(rec_list, tr(S.RECOMMENDED), pos=pos)

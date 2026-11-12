@@ -12,7 +12,9 @@ pass - also for a video that never reports its duration.
 from time import monotonic
 
 from . import left_art
+from . import strings as S
 from .constants import INFO_DETAIL, INFO_LABEL, MODE_VIDEOS, PIC_MACHINE
+from .strings import tr
 
 # Poll interval of the video loop (ms)
 WAIT_POLL_INTERVAL = 250
@@ -190,7 +192,7 @@ class VideoSession:
         saver.notify_user(message)
         new_mode = saver.prepare_artwork_mode()
         if new_mode is None:
-            saver.notify_user("no screensaver artwork available")
+            saver.notify_user(tr(S.NO_ARTWORK))
             saver.running = 'no'
             return
         self.kodi.log(f"UMSA SSaver: continuing with the {new_mode} mode", self.kodi.LOGINFO)
@@ -213,7 +215,7 @@ class VideoSession:
             return
         self.kodi.log("UMSA SSaver Player: add video to playlist", self.kodi.LOGINFO)
         if not saver.add_video_to_playlist():
-            self._fall_back("no screensaver videos found")
+            self._fall_back(tr(S.NO_VIDEOS_FOUND))
 
     def _handle(self, event):
         kind, instance, playing_file = event
@@ -239,7 +241,7 @@ class VideoSession:
             player.take_events()
             saver.take_video_fallback_request()
             if not self._start():
-                self._fall_back("no screensaver videos available")
+                self._fall_back(tr(S.NO_VIDEOS))
                 return
             while self._active():
                 if saver.abort_requested():
@@ -253,7 +255,7 @@ class VideoSession:
                     break
                 if saver.take_video_fallback_request():
                     # "next video" found no video anymore
-                    self._fall_back("no screensaver videos found")
+                    self._fall_back(tr(S.NO_VIDEOS_FOUND))
                     break
                 self._labels.tick()
                 # Kodi delivers the player callbacks and the actions here

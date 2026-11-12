@@ -36,6 +36,13 @@ from collections.abc import Iterable
 
 from .sqlite import require_row_connection
 
+# sort columns of the play status list (``sets`` columns of status.db)
+PLAY_STATUS_ORDERS = ('time_played', 'last_played', 'play_count')
+PLAY_STATUS_DEFAULT = 'time_played'
+
+# ids per ``IN (...)`` statement, below SQLite's historical limit of 999
+_IN_BLOCK = 500
+
 
 def create_status_tables(cursor: sqlite3.Cursor) -> None:
     """Create the ``status.db`` ``sets`` table (current schema, unchanged).
@@ -109,6 +116,55 @@ class StatusRepository:
         try:
             cursor.execute("SELECT * FROM sets WHERE ID = ?", (set_id,))
             return cursor.fetchone()
+        finally:
+            cursor.close()
+
+    def get_status_for_sets(self, set_ids: Iterable) -> dict:
+        """Return ``{set id: status row}`` for the ids that have a status row.
+
+        The batch form of :meth:`get_status_for_set` (same ``SELECT *`` row
+        shape). Ids without a status row are missing from the mapping, an
+        empty id collection returns an empty mapping. The ids are queried in
+        blocks so a large software never exceeds SQLite's variable limit.
+        """
+
+        ids = list(set_ids)
+        result = {}
+        cursor = self._conn.cursor()
+        try:
+            for start in range(0, len(ids), _IN_BLOCK):
+                block = ids[start:start + _IN_BLOCK]
+                placeholders = ",".join(["?"] * len(block))
+                cursor.execute(
+                    f"SELECT * FROM sets WHERE id IN ({placeholders})", block
+                )
+                for row in cursor.fetchall():
+                    result[row["id"]] = row
+            return result
+        finally:
+            cursor.close()
+
+    def get_played_sets(self, order, limit=250) -> list:
+        """Return the status rows of the played sets, highest ``order`` first.
+
+        ``order`` must be one of :data:`PLAY_STATUS_ORDERS`; anything else
+        raises ``ValueError`` (the column name is part of the statement, so
+        only whitelisted names are ever interpolated). Rows carry ``id``,
+        ``last_played``, ``play_count`` and ``time_played`` and come in the
+        database order of ``ORDER BY <order> DESC``.
+        """
+
+        if order not in PLAY_STATUS_ORDERS:
+            raise ValueError(f"unknown play status order: {order!r}")
+
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id, last_played, play_count, time_played FROM sets "
+                f"WHERE time_played > 0 ORDER BY {order} DESC LIMIT ?",
+                (limit,),
+            )
+            return cursor.fetchall()
         finally:
             cursor.close()
 

@@ -12,6 +12,8 @@ from uuid import uuid4
 
 from umsa_core import ShutdownRequested, log
 from umsa_core.emulation import CHDExtractionCancelled, CHDExtractionError
+from umsa_gui import strings as S
+from umsa_gui.strings import tr
 
 
 @dataclass
@@ -76,7 +78,8 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
 
     # UI prep
     try:
-        ctx.emu_dialog.create("Emulator: {}".format(emu_infos.get('name', '')), 'warm up...')
+        ctx.emu_dialog.create(
+            tr(S.RUN_TITLE, emu_infos.get('name', '')), tr(S.RUN_WARM_UP))
     except Exception as error:
         log(
             f'UMSA gui: could not create emulator progress dialog: {error}',
@@ -120,7 +123,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                     level='warning')
         if select:
             try:
-                which_disk = ctx.dialog.select('Select CHD:', select)
+                which_disk = ctx.dialog.select(tr(S.RUN_SELECT_CHD), select)
             except Exception as error:
                 log(f'UMSA gui: CHD selection failed: {error}', level='warning')
                 which_disk = -1
@@ -140,7 +143,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
     # exodos
     if 'exodos' in exe:
         try:
-            ctx.emu_dialog.update(10, 'searching shellscript...')
+            ctx.emu_dialog.update(10, tr(S.RUN_SEARCHING_SHELLSCRIPT))
         except Exception as error:
             log(
                 f'UMSA gui: could not update emulator progress: {error}',
@@ -149,7 +152,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
     # marp
     elif exe == "marp":
         try:
-            ctx.emu_dialog.update(20, 'download replay...')
+            ctx.emu_dialog.update(20, tr(S.RUN_DOWNLOAD_REPLAY))
         except Exception as error:
             log(
                 f'UMSA gui: could not update emulator progress: {error}',
@@ -200,7 +203,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                     f'error: {close_error}', level='warning')
             try:
                 ctx.dialog.notification(
-                    f'{emu_infos.get("name", "")} error', str(error),
+                    tr(S.RUN_ERROR_TITLE, emu_infos.get("name", "")), str(error),
                     xbmcgui.NOTIFICATION_ERROR, 3500)
             except Exception as notify_error:
                 log(
@@ -237,7 +240,8 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                     f'missing ROM: {close_error}', level='warning')
             try:
                 ctx.dialog.notification(
-                    f'{emu_infos.get("name", "")} error', 'rom not found',
+                    tr(S.RUN_ERROR_TITLE, emu_infos.get("name", "")),
+                    tr(S.RUN_ROM_NOT_FOUND),
                     xbmcgui.NOTIFICATION_ERROR, 3500)
             except Exception as notify_error:
                 log(
@@ -249,7 +253,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                 len(ctx.emulation.emurun['extract_files']) > 1):
             try:
                 which_file = ctx.dialog.select(
-                    'Select file: ', ctx.emulation.emurun['extract_files'])
+                    tr(S.RUN_SELECT_FILE), ctx.emulation.emurun['extract_files'])
             except Exception as error:
                 log(
                     f'UMSA gui: extracted file selection failed: {error}',
@@ -279,7 +283,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
 
     # execute
     try:
-        ctx.emu_dialog.update(50, 'emulator running...')
+        ctx.emu_dialog.update(50, tr(S.RUN_RUNNING))
     except Exception as error:
         log(
             f'UMSA gui: could not update emulator progress: {error}',
@@ -335,12 +339,14 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
 
     end = time.time()
     try:
-        ctx.emu_dialog.update(75, 'emulator stopped...')
+        ctx.emu_dialog.update(75, tr(S.RUN_STOPPED))
     except Exception as error:
         log(
             f'UMSA gui: could not update emulator progress: {error}',
             level='debug')
-    notif = f"Played: {ctx.ggdb.make_time_nice(end - start) if ctx.ggdb else int(end - start)}"
+    notif = tr(
+        S.RUN_PLAYED,
+        ctx.ggdb.make_time_nice(end - start) if ctx.ggdb else int(end - start))
     ctx.stop_screensaver()
     try:
         if ctx.player.isPlayingAudio():
@@ -396,7 +402,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
             log(
                 f'UMSA gui: could not show emulator output: {error}',
                 level='warning')
-        notif += "\nerror: see bottom left"
+        notif += f"\n{tr(S.RUN_SEE_OUTPUT)}"
 
     # finalize status
     try:

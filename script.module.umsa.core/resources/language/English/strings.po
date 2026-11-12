@@ -260,7 +260,7 @@ msgid "Store the ROM cache for Kodi RetroPlayer in Batocera-style system folders
 msgstr ""
 
 msgctxt "#30224"
-msgid "Program used to open manuals. Leave empty to use the Kodi PDF reader add-on if it is installed."
+msgid "Program used to open manuals when the Kodi PDF reader add-on is not installed."
 msgstr ""
 
 msgctxt "#30225"

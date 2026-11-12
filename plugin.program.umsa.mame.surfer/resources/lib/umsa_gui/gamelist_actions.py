@@ -4,27 +4,63 @@ The module reacts on a click or a context action in the game list: it starts
 emulators, plays media, changes the machine of a set or selects a new software.
 """
 
+import os
 import zipfile
 from json import dumps
 
 import xbmc
 import xbmcgui
-from umsa_core import calculate_playback_plan, log, parse_vgm_header
+from umsa_core import ProcessRunner, calculate_playback_plan, log, parse_vgm_header
 from umsa_core.database import split_gamename
 from umsa_core.emulation import format_vgm_title
 from umsa_core.support import marp_search
 from umsa_core.vgm_header import MAX_PLAYBACK_SECONDS
 
+from . import optional_plugins
+from . import strings as S
 from .constants import (
+    ACTION_CHOOSE_EMULATOR,
+    ACTION_START_EXODOS,
+    ACTION_START_EXODOS_ALT,
+    ACTION_START_KODI,
+    ACTION_START_MAME,
+    ENTRY_ACTION,
+    ENTRY_SEARCH,
     GAME_LIST,
-    GAME_LIST_LABEL,
+    KIND_MACHINES,
+    KIND_MEDIA,
+    KIND_SELECT,
     M_ALLEMUS,
+    M_CAT,
     M_MACHINE,
+    M_MAKER,
     M_MEDIA,
+    M_PLAYERS,
+    M_SWL,
+    M_YEAR,
+    SEARCH_MARP,
+    SEARCH_YOUTUBE,
     SET_LIST,
     SYSTEM_WRAPLIST,
 )
-from .optional_plugins import play_pdf
+from .strings import tr
+
+# emulators started by the action rows of the machine list
+ACTION_EMULATORS = {
+    ACTION_START_MAME: {'name': "MAME", 'exe': "mame"},
+    ACTION_START_KODI: {'name': "Retroplayer", 'exe': "kodi"},
+    ACTION_START_EXODOS: {'name': "eXoDOS", 'exe': "exodos"},
+    ACTION_START_EXODOS_ALT: {'name': "exoDOS Alternate", 'exe': "exodos_alt"},
+}
+
+# DBMod query behind an entry of a "Select ..." list, by menu code
+SELECT_QUERIES = {
+    M_SWL: 'get_by_swl',
+    M_CAT: 'get_by_cat',
+    M_MAKER: 'get_by_maker',
+    M_YEAR: 'get_by_year',
+    M_PLAYERS: 'get_by_players',
+}
 
 
 def gamelist_click(gui):
@@ -37,9 +73,9 @@ def gamelist_click(gui):
     if list_id == "0":
         return
     select_label = gui.getControl(GAME_LIST).getSelectedItem().getLabel()
-    label = gui.getControl(GAME_LIST_LABEL).getLabel()
+    kind = gui.gamelist_kind
 
-    xbmc.log(f"UMSA gui: gamelist_click: what {what}, list_id {list_id}, label {label}, select_label {select_label}")
+    xbmc.log(f"UMSA gui: gamelist_click: what {what}, list_id {list_id}, kind {kind}, select_label {select_label}")
 
     # prev or next
     if list_id in ('prev', 'next'):
@@ -65,20 +101,13 @@ def gamelist_click(gui):
         gui.getControl(GAME_LIST).selectItem(pos)
         gui.setFocus(gui.getControl(GAME_LIST))
         return
-    if label[:7] == "Select ":
+    if kind == KIND_SELECT:
         if list_id == 'source':
             my_list, pos, count = gui.ggdb.get_software_for_source(
                 gui.actset['id'], select_label)
-        elif 'Softwarelist' in label:
-            my_list, pos, count = gui.ggdb.get_by_swl(list_id, gui.actset['id'])
-        elif 'Category' in label:
-            my_list, pos, count = gui.ggdb.get_by_cat(list_id, gui.actset['id'])
-        elif 'Maker' in label:
-            my_list, pos, count = gui.ggdb.get_by_maker(list_id, gui.actset['id'])
-        elif 'Year' in label:
-            my_list, pos, count = gui.ggdb.get_by_year(list_id, gui.actset['id'])
-        elif 'Players' in label:
-            my_list, pos, count = gui.ggdb.get_by_players(list_id, gui.actset['id'])
+        else:
+            query = getattr(gui.ggdb, SELECT_QUERIES[gui.gamelist_select])
+            my_list, pos, count = query(list_id, gui.actset['id'])
         gui.popup_gamelist(my_list, f"{select_label} ({count})", pos)
         return
 
@@ -86,31 +115,24 @@ def gamelist_click(gui):
     gui.enter = True
     gui.setFocus(gui.getControl(gui.main_focus))
 
-    # choose emulator for source/swl
-    if select_label == "Choose a different emulator":
-        gui.get_diff_emulator()
-    # start with mame exe
-    elif select_label == "Start with M.A.M.E.":
-        gui.run_emulator({'name': "MAME", 'exe': "mame"})
-    # start kodi retroplayer
-    elif select_label == "Start with Kodi Retroplayer":
-        gui.run_emulator({'name': "Retroplayer", 'exe': "kodi"})
-    # start exodos shell
-    elif select_label == "Start eXoDOS Shell launcher":
-        gui.run_emulator({'name': "eXoDOS", 'exe': "exodos"})
-    elif select_label == "Start eXoDOS Alternate Shell launcher":
-        gui.run_emulator({'name': "exoDOS Alternate", 'exe': "exodos_alt"})
+    # action rows of the machine list: choose emulator for source/swl or
+    # start with MAME, Kodi RetroPlayer or an eXoDOS shell launcher
+    if kind == KIND_MACHINES and what == ENTRY_ACTION:
+        if list_id == ACTION_CHOOSE_EMULATOR:
+            gui.get_diff_emulator()
+        else:
+            gui.run_emulator(dict(ACTION_EMULATORS[list_id]))
     # emulator run
     elif what == "emu_conn":
         gui.run_emulator(gui.ggdb.get_emulator(emu_conn_id=list_id))
     # change/delete emulator
     elif what == "emu":
         if (gui.dialog.yesno(
-                f"Emulator {select_label}", "What shall we do?",
-                nolabel="Reconfigure", yeslabel="Delete")
+                tr(S.EMU_TITLE, select_label), tr(S.EMU_WHAT_TO_DO),
+                nolabel=tr(S.EMU_RECONFIGURE), yeslabel=tr(S.EMU_DELETE))
            ):
             if (gui.dialog.yesno(
-                    'Delete emulator', f'Really delete {select_label}?')
+                    tr(S.EMU_DELETE_TITLE), tr(S.EMU_DELETE_CONFIRM, select_label))
                ):
                 gui.ggdb.delete_emulator(list_id)
                 gui.update_gamelist(M_ALLEMUS)
@@ -118,7 +140,7 @@ def gamelist_click(gui):
             gui.configure_emulator(
                 emu_info=gui.ggdb.get_emulator(emu_id=list_id), reconfigure=True)
     # set machine for swl
-    elif 'Machines for' in label:
+    elif kind == KIND_MACHINES:
         gui.setFocus(gui.getControl(gui.main_focus))
         gui.enter = True
         # get info from db
@@ -134,16 +156,14 @@ def gamelist_click(gui):
         gui.getControl(SET_LIST).getSelectedItem().setProperty(
             'Machine', machine_label)
     # play media
-    elif label == "Choose Media":
+    elif kind == KIND_MEDIA:
         # video
         if list_id[-3:] == 'mp4':
             list_item = xbmcgui.ListItem(select_label)
             gui.player.play(list_id, listitem=list_item, windowed=True)
         # pdf viewer
         elif list_id[-3:] == 'pdf':
-            gui.exit()
-            play_pdf(list_id, compress=True, is_image_plugin=False)
-            #Popen([gui.pdfviewer, list_id])
+            open_manual(gui, list_id)
         # marp
         elif list_id[-3:] == 'zip':
             gui.marp_replayer(dl_file=list_id, set_name=what)
@@ -154,7 +174,7 @@ def gamelist_click(gui):
             vgm_tracklist = zipfile.ZipFile(vgm_zipfile).namelist()
             select = vgm_tracklist.copy()
             if select:
-                which_track = gui.dialog.select('Select VGM track:', select)
+                which_track = gui.dialog.select(tr(S.SELECT_VGM_TRACK), select)
                 if which_track > -1:
                     track = vgm_tracklist[which_track]
                     header = parse_vgm_header(vgm_zipfile, track, logger=log)
@@ -172,13 +192,13 @@ def gamelist_click(gui):
                 f"plugin://plugin.video.youtube/play/?video_id={list_id}",
                 windowed=True)
         # search marp, youtube
-        elif select_label[:9] == "- Youtube":
+        elif what == ENTRY_SEARCH and list_id == SEARCH_YOUTUBE:
             yt_search_url = "plugin://plugin.video.youtube/kodion/search/query/?category_label=REPLACE&incognito=True&q=REPLACE&type=video"
             yt_search_str = f"{split_gamename(gui.actset['gamename'])[0]} {gui.actset['machine_name']}".replace(' ', '%20')
             gui.exit()
             xbmc.executebuiltin(f"ActivateWindow(Videos,{yt_search_url.replace('REPLACE',yt_search_str)},return)")
 
-        elif select_label[:8] == "- Replay":
+        elif what == ENTRY_SEARCH and list_id == SEARCH_MARP:
             if gui.actset['swl_name'] == "mame":
                 gui.ggdb.save_further_media(
                     gui.actset['id'], marp=dumps(
@@ -189,6 +209,41 @@ def gamelist_click(gui):
         xbmc.log(f"UMSA gui: gamelist_click: software id={list_id}")
         software_id = int(list_id)
         gui._remember_and_select(software_id)
+
+
+def open_manual(gui, path):
+    """Open a PDF manual.
+
+    The Kodi PDF reader add-on is used when it is installed, else the
+    external viewer of the settings; without both the user is told so and
+    the window stays open.
+    """
+
+    if optional_plugins.KODIPDF:
+        # the reader takes over the display
+        gui.exit()
+        optional_plugins.play_pdf(path, compress=True, is_image_plugin=False)
+        return
+    viewer = getattr(gui, 'pdfviewer', '')
+    if not viewer:
+        gui.dialog.notification(
+            tr(S.MANUAL_TITLE), tr(S.MANUAL_NO_VIEWER),
+            xbmcgui.NOTIFICATION_ERROR, 5000)
+        return
+    # the viewer is a program of its own: the window stays open, nothing waits
+    try:
+        runner = ProcessRunner()
+        runner.start([viewer, path], cwd=os.path.dirname(viewer) or '.')
+    except OSError as error:
+        log(
+            f'UMSA gui: could not start PDF viewer {viewer!r}: {error}',
+            level='error')
+        gui.dialog.notification(
+            tr(S.MANUAL_TITLE), tr(S.MANUAL_VIEWER_FAILED, viewer),
+            xbmcgui.NOTIFICATION_ERROR, 5000)
+        return
+    # keeps the process owned; a second manual replaces it
+    gui.manual_viewer = runner
 
 
 def gamelist_context(gui):
@@ -205,12 +260,12 @@ def gamelist_context(gui):
     # reconfigure/remove connection
     if what == "emu_conn":
         if gui.dialog.yesno(
-                f"Emulator {label}", "What shall we do?",
-                nolabel="Reconfigure", yeslabel="Remove"):
+                tr(S.EMU_TITLE, label), tr(S.EMU_WHAT_TO_DO),
+                nolabel=tr(S.EMU_RECONFIGURE), yeslabel=tr(S.EMU_REMOVE)):
             last_emu_id = gui.ggdb.delete_emulator_connection(list_id)
             if last_emu_id and gui.dialog.yesno(
-                    'Delete emulator',
-                    f'No other connection for {label}, delete?'):
+                    tr(S.EMU_DELETE_TITLE),
+                    tr(S.EMU_DELETE_LAST_CONNECTION, label)):
                 gui.ggdb.delete_emulator(last_emu_id)
             gui.update_gamelist(M_MACHINE)
         else:

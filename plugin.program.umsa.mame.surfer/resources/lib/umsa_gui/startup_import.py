@@ -10,6 +10,9 @@ import os
 import xbmc
 import xbmcgui
 
+from . import strings as S
+from .strings import tr
+
 
 def run_startup_import(gui):
     """Run the one-time legacy import and report its outcome.
@@ -32,8 +35,7 @@ def run_startup_import(gui):
     except Exception as exc:
         xbmc.log(f"UMSA gui: legacy import failed: {exc}", xbmc.LOGERROR)
         gui.dialog.notification(
-            'UMSA migration',
-            'Legacy data import failed, will retry on next start.',
+            tr(S.IMPORT_TITLE), tr(S.IMPORT_FAILED_RETRY),
             xbmcgui.NOTIFICATION_ERROR, 5000, False)
         return
 
@@ -42,40 +44,39 @@ def run_startup_import(gui):
     if not already_completed:
         if result.status == 'completed':
             gui.dialog.notification(
-                'UMSA migration', 'History and filters migrated.',
+                tr(S.IMPORT_TITLE), tr(S.IMPORT_DONE),
                 xbmcgui.NOTIFICATION_INFO, 4000, False)
         elif result.status == 'completed_discards':
             gui.dialog.notification(
-                'UMSA migration',
-                'Migrated, discarded: ' + ', '.join(result.discarded),
+                tr(S.IMPORT_TITLE),
+                tr(S.IMPORT_DISCARDED, ', '.join(result.discarded)),
                 xbmcgui.NOTIFICATION_WARNING, 6000, False)
         elif result.status == 'completed_no_source':
             gui.dialog.notification(
-                'UMSA migration', 'Nothing to migrate.',
+                tr(S.IMPORT_TITLE), tr(S.IMPORT_NOTHING),
                 xbmcgui.NOTIFICATION_INFO, 3000, False)
     elif result.status == 'completed_discards':
         # Previously completed but with new discards - still show the discard notification
         gui.dialog.notification(
-            'UMSA migration',
-            'Migrated, discarded: ' + ', '.join(result.discarded),
+            tr(S.IMPORT_TITLE),
+            tr(S.IMPORT_DISCARDED, ', '.join(result.discarded)),
             xbmcgui.NOTIFICATION_WARNING, 6000, False)
 
     if result.status == 'failed':
-        detail = result.error or 'unknown'
+        detail = result.error or tr(S.IMPORT_UNKNOWN_ERROR)
         if result.discarded:
-            detail += ' (discarded: ' + ', '.join(result.discarded) + ')'
+            detail = tr(
+                S.IMPORT_ERROR_DISCARDED, detail, ', '.join(result.discarded))
         gui.dialog.notification(
-            'UMSA migration',
-            f'Import failed: {detail} (use retry_import).',
+            tr(S.IMPORT_TITLE), tr(S.IMPORT_FAILED, detail),
             xbmcgui.NOTIFICATION_ERROR, 7000, False)
     if result.pending_cleanup:
         names = ', '.join(
             os.path.basename(path) for path in result.pending_cleanup
         )
         gui.dialog.notification(
-            'UMSA migration',
-            f'{len(result.pending_cleanup)} legacy file(s) not removed: '
-            f'{names}.',
+            tr(S.IMPORT_TITLE),
+            tr(S.IMPORT_NOT_REMOVED, len(result.pending_cleanup), names),
             xbmcgui.NOTIFICATION_WARNING, 5000, False)
 
 

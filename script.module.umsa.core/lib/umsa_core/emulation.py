@@ -230,11 +230,9 @@ class Emulation:
         if 'env' in self.emurun:
             popen_env['env'] = self.emurun['env']
         # run executable depending on emulation start
-        if self.emurun['emulation_start'] == 1: # Watch
-            self.process = subprocess.Popen(
-                args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.emurun['working_dir'],
-                **popen_env)
-        elif self.emurun['emulation_start'] == 0: # Normal
+        # Watch has no pipes here: nothing reads the output of this process
+        # (captured launches go through start_managed_process)
+        if self.emurun['emulation_start'] in (0, 1): # Normal, Watch
             self.process = subprocess.Popen(
                 args, cwd=self.emurun['working_dir'], **popen_env)
         elif self.emurun['emulation_start'] == 2: # Fallback
@@ -355,7 +353,8 @@ class Emulation:
 
         Raises ``ShutdownRequested`` when the host asks to stop while the
         emulator runs. The emulator keeps running (it is detached, neither
-        terminated nor killed) and its captured output is not read.
+        terminated nor killed) and its captured output is not read; it keeps
+        writing to the temporary files of the process runner.
         """
 
         wait = resolve_wait(wait, sleep)

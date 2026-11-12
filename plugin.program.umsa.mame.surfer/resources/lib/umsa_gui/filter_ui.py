@@ -9,18 +9,66 @@ import xbmcgui
 from umsa_core import FILTER_CATEGORIES
 from umsa_core.database import build_filter_lists
 
+from . import strings as S
 from .constants import (
     FILTER_CATEGORY_KEYS,
     FILTER_CATEGORY_LIST,
     FILTER_CONTENT_LIST_ACTIVE,
     FILTER_CONTENT_LIST_INACTIVE,
+    FILTER_KEY_LOAD,
+    FILTER_KEY_SAVE,
     FILTER_LABEL,
     FILTER_LABEL2,
     LABEL_STATUS,
 )
+from .strings import tr
 
 # category shown after loading or saving a filter
 FILTER_START_CATEGORY = "Softwarelists"
+
+# entries of Core's FILTER_CATEGORIES that are no category: their key
+FILTER_ENTRY_KEYS = {
+    "Load Filter": FILTER_KEY_LOAD,
+    "Save Filter": FILTER_KEY_SAVE,
+}
+
+
+# text of the filter category list entries, by key
+CATEGORY_LABELS = {
+    "Softwarelists": S.FILTER_CAT_SOFTWARELISTS,
+    "Game Categories": S.FILTER_CAT_GAME_CATEGORIES,
+    "Machine Categories": S.FILTER_CAT_MACHINE_CATEGORIES,
+    "Players": S.FILTER_CAT_PLAYERS,
+    "Years": S.FILTER_CAT_YEARS,
+    FILTER_KEY_LOAD: S.FILTER_LOAD,
+    FILTER_KEY_SAVE: S.FILTER_SAVE,
+}
+
+
+def category_label(key):
+    """Return the text shown for the filter category (or action) ``key``."""
+
+    string_id = CATEGORY_LABELS.get(key)
+    return tr(string_id) if string_id else key
+
+
+def category_list_items():
+    """Return the entries of the filter category list.
+
+    label2 holds the key the handlers dispatch on: the category name as it
+    is stored in status.db, ``FILTER_KEY_LOAD`` / ``FILTER_KEY_SAVE`` for the
+    two actions and nothing for the separator.
+    """
+
+    items = []
+    for name in FILTER_CATEGORIES:
+        if name in FILTER_CATEGORY_KEYS:
+            key = name
+        else:
+            key = FILTER_ENTRY_KEYS.get(name, '')
+        # the separator has no key and shows as it is
+        items.append(xbmcgui.ListItem(category_label(key) if key else name, key))
+    return items
 
 
 def empty_filter_lists():
@@ -36,7 +84,7 @@ def close_filterlist(gui, no_update=None):
     # update filter
     if not no_update:
         gui.getControl(LABEL_STATUS).setLabel(
-            f"{gui.ggdb.define_filter(gui.filter_lists)} filtered items"
+            tr(S.FILTERED_ITEMS, gui.ggdb.define_filter(gui.filter_lists))
         )
     gui.setFocus(gui.getControl(gui.main_focus))
 
@@ -45,31 +93,32 @@ def filter_category(gui):
     """Open filter category, load and save filters"""
 
     # get filter category and set filter content list
-    cat = gui.getControl(FILTER_CATEGORY_LIST).getSelectedItem().getLabel()
+    cat = gui.getControl(FILTER_CATEGORY_LIST).getSelectedItem().getLabel2()
 
     # save/load filter
-    if cat in ("Load Filter", "Save Filter"):
+    if cat in (FILTER_KEY_LOAD, FILTER_KEY_SAVE):
         files = gui.ggdb.list_filter_names()
 
-        if cat == "Load Filter":
-            ret = gui.dialog.select('Load Filter', files)
+        if cat == FILTER_KEY_LOAD:
+            ret = gui.dialog.select(tr(S.FILTER_LOAD), files)
             if ret == -1:
                 return
             gui.filter_lists = gui.ggdb.load_filter_selections(files[ret])
             gui.getControl(LABEL_STATUS).setLabel(
-                f"{gui.ggdb.define_filter(gui.filter_lists)} filtered items"
+                tr(S.FILTERED_ITEMS, gui.ggdb.define_filter(gui.filter_lists))
             )
             gui.act_filter = files[ret]
-            gui.getControl(FILTER_LABEL2).setLabel(f'Filter: {gui.act_filter}')
+            gui.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, gui.act_filter))
             show_start_category(gui)
 
         else:
-            files.append(' or create a new filter')
-            ret = gui.dialog.select('Save Filter', files)
+            # the entry after the saved filters creates a new one
+            ret = gui.dialog.select(
+                tr(S.FILTER_SAVE), list(files) + [tr(S.FILTER_CREATE_NEW)])
             if ret == -1:
                 return
-            if files[ret] == ' or create a new filter':
-                keyboard = xbmc.Keyboard('', "Name for Filter", 0)
+            if ret == len(files):
+                keyboard = xbmc.Keyboard('', tr(S.FILTER_NAME_PROMPT), 0)
                 keyboard.doModal()
                 if keyboard.isConfirmed():
                     filter_filename = keyboard.getText()
@@ -81,7 +130,7 @@ def filter_category(gui):
             # save filters
             gui.ggdb.save_filter_selections(filter_filename, gui.filter_lists)
             gui.act_filter = filter_filename
-            gui.getControl(FILTER_LABEL2).setLabel(f'Filter: {gui.act_filter}')
+            gui.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, gui.act_filter))
             show_start_category(gui)
 
     # or load the content lists of the chosen category and move into them
@@ -110,10 +159,10 @@ def show_category_content(gui, force=False):
     item = gui.getControl(FILTER_CATEGORY_LIST).getSelectedItem()
     if not item:
         return
-    cat = item.getLabel()
+    cat = item.getLabel2()
     if cat not in FILTER_CATEGORY_KEYS:
         return
-    if not force and gui.getControl(FILTER_LABEL).getLabel() == cat:
+    if not force and gui.act_filter_category == cat:
         return
     gui.set_filter_content(cat, focus_lists=False)
 
@@ -130,7 +179,7 @@ def filter_content(gui, which_content):
         contentlist = FILTER_CONTENT_LIST_INACTIVE
 
     # get actual category
-    filter_category_name = gui.getControl(FILTER_LABEL).getLabel()
+    filter_category_name = gui.act_filter_category
     # get db id for actual content entry
     filter_content_id = gui.getControl(contentlist).getSelectedItem().getLabel2()
 
@@ -198,7 +247,8 @@ def set_filter_content(gui, cat, update=None, focus_lists=True):
     gui.getControl(FILTER_CONTENT_LIST_INACTIVE).reset()
     gui.getControl(FILTER_CONTENT_LIST_ACTIVE).addItems(active)
     gui.getControl(FILTER_CONTENT_LIST_INACTIVE).addItems(inactive)
-    gui.getControl(FILTER_LABEL).setLabel(cat)
+    gui.getControl(FILTER_LABEL).setLabel(category_label(cat))
+    gui.act_filter_category = cat
 
     # set selected items and focus
     if update == 'active':

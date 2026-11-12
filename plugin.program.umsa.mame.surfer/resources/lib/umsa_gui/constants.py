@@ -47,8 +47,11 @@ MAIN_MENU = 4901
 GROUP_GAME_LIST = 407
 GROUP_FILTER = 408
 TEXTLIST = 4033
-# TEXTLIST entry when there is no DAT text; it opens no text viewer
-NO_INFO_LABEL = 'no info'
+# keys of the TEXTLIST entries that are no DAT text (ListItem property 'key');
+# the 'no info' entry stands for a missing DAT text and opens no text viewer
+TEXTLIST_KEY_PROPERTY = 'key'
+TEXTLIST_KEY_NO_INFO = 'no_info'
+TEXTLIST_KEY_EMU_OUTPUT = 'emu_output'
 # placeholder in TEXTLIST_ORDER for DAT categories not listed by name (free
 # "- XYZ -" headings of a DAT, e.g. 'Tips/Tricks'); they sort alphabetically
 TEXTLIST_OTHER_CATEGORIES = None
@@ -110,6 +113,37 @@ LABEL_STATUS = 4101
 SHADOW_MACHINE = 4201
 SHADOW_SET = 4202
 SHADOW_DAT = 4203
+
+# kind of the list shown in GAME_LIST (UMSA.gamelist_kind): the handlers
+# dispatch on it, never on the visible list title
+KIND_SOFTWARE = 'software'
+KIND_SELECT = 'select'
+KIND_MACHINES = 'machines'
+KIND_EMULATORS = 'emulators'
+KIND_MEDIA = 'media'
+
+# GAME_LIST entries carry their id in label2, optionally as '<what>::<id>'
+ENTRY_ACTION = 'action'
+ENTRY_SEARCH = 'search'
+ACTION_START_MAME = 'mame'
+ACTION_START_KODI = 'kodi'
+ACTION_START_EXODOS = 'exodos'
+ACTION_START_EXODOS_ALT = 'exodos_alt'
+ACTION_CHOOSE_EMULATOR = 'choose_emulator'
+SEARCH_YOUTUBE = 'youtube'
+SEARCH_MARP = 'marp'
+
+# keys of the GAME_LIST_OPTIONS / FILTER_OPTIONS entries (label2)
+OPTION_NEW_SEARCH = 'new search'
+OPTIONS_PLAY_STATUS = ('time_played', 'last_played', 'play_count')
+OPTIONS_ORDER = ('name', 'year', 'publisher')
+FILTER_OPTION_ALL = 'all'
+FILTER_OPTION_NONE = 'none'
+FILTER_OPTION_INVERT = 'invert'
+
+# keys of the filter category list entries that are no category (label2)
+FILTER_KEY_LOAD = 'load_filter'
+FILTER_KEY_SAVE = 'save_filter'
 
 # menu
 M_MACHINE = 21

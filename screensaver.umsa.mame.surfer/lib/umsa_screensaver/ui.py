@@ -49,6 +49,7 @@ from . import (
     wall_layout,
 )
 from . import settings as screensaver_settings
+from . import strings as S
 from .constants import (
     ACTION_CONTEXT,
     ACTION_MOVEMENT_RIGHT,
@@ -69,6 +70,7 @@ from .constants import (
     WINDOW_ID,
 )
 from .image_validator import PIL
+from .strings import tr
 from .video_playlist import (
     attach_set_id,
     read_set_id,
@@ -398,7 +400,8 @@ class Saver(xbmcgui.WindowXMLDialog):
     def notify_user(self, message):
         """Show a short notification to the user."""
 
-        xbmc.executebuiltin(f'XBMC.Notification(Screensaver,{message},3000)')
+        xbmc.executebuiltin(
+            f'XBMC.Notification({tr(S.NOTIFICATION_HEADING)},{message},3000)')
 
     def set_mode_property(self, mode):
         """Publish the running mode on the shared window."""
@@ -1149,8 +1152,7 @@ class Monitor(xbmc.Monitor):
             xbmc.log(
                 "UMSA SSaver Monitor: video mode is not possible while music plays",
                 xbmc.LOGINFO)
-            self.saver.notify_user(
-                "video mode is not available while music plays")
+            self.saver.notify_user(tr(S.NO_VIDEO_MODE_WITH_MUSIC))
             candidates = candidates + list(availability.IMAGE_MODES)
         return [mode for mode in candidates if mode != MODE_VIDEOS]
 
@@ -1161,9 +1163,9 @@ class Monitor(xbmc.Monitor):
             f"UMSA SSaver Monitor: no screensaver content available ({plan.reason})",
             xbmc.LOGWARNING)
         if plan.reason == availability.REASON_NO_VIDEOS:
-            self.saver.notify_user("no screensaver videos available")
+            self.saver.notify_user(tr(S.NO_VIDEOS))
         if plan.reason != availability.REASON_NO_MODES:
-            self.saver.notify_user("no screensaver artwork available")
+            self.saver.notify_user(tr(S.NO_ARTWORK))
 
     def startme(self):
         """Start screensaver when emulator is not running."""
@@ -1183,13 +1185,13 @@ class Monitor(xbmc.Monitor):
                 xbmc.log(
                     f"UMSA SSaver Monitor: artwork check failed: {error}",
                     xbmc.LOGERROR)
-                self.saver.notify_user("screensaver artwork check failed")
+                self.saver.notify_user(tr(S.ARTWORK_CHECK_FAILED))
                 return
             if not plan.ok:
                 self.report_no_content(plan)
                 return
             if plan.reason == availability.REASON_NO_VIDEOS:
-                self.saver.notify_user("no screensaver videos available")
+                self.saver.notify_user(tr(S.NO_VIDEOS))
             # Reset session-specific state for the new activation
             self.saver._reset_session_state()
             # an automatic start may rotate its image modes; an explicit

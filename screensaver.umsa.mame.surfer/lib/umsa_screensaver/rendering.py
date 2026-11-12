@@ -10,6 +10,7 @@ from random import randint
 from time import monotonic
 
 from . import left_art
+from . import strings as S
 from .artwork_selector import (
     art_types_for_mode,
     aspect_for,
@@ -28,6 +29,7 @@ from .constants import (
     SCREEN_HEIGHT,
     SCREEN_WIDTH,
 )
+from .strings import tr
 from .wall_layout import KEEP, STRETCH, cell_geometry, next_position
 
 # Screen area the cross mode places its pictures on
@@ -346,7 +348,7 @@ class RenderSession:
                 f"UMSA SSaver: no usable artwork after {self._failures} "
                 "attempts, stopping the screensaver",
                 self.kodi.LOGERROR)
-            self.saver.notify_user("no usable screensaver artwork found")
+            self.saver.notify_user(tr(S.NO_USABLE_ARTWORK))
             self._stop_saver()
             return False
         self._wait_before_retry()

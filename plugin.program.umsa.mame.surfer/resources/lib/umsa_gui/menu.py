@@ -7,6 +7,7 @@ state from the ``UMSA`` instance and fill the skin controls.
 import xbmc
 import xbmcgui
 
+from . import strings as S
 from .constants import (
     LISTMODE_MENU,
     M_ALL,
@@ -32,6 +33,7 @@ from .constants import (
     SERIES_LABEL,
     SUBMENU_ORDER,
 )
+from .strings import tr
 
 
 def build_sublist_menu(gui, select):
@@ -44,7 +46,7 @@ def build_sublist_menu(gui, select):
         xbmc.log(f"UMSA gui: build_sublist_menu: select unknown: {select}")
 
     list_items = []
-    list_items.append(xbmcgui.ListItem('Show all', str(M_ALL)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_SHOW_ALL), str(M_ALL)))
 
     # series
     last_val = gui.last[gui.lastptr] if gui.last else None
@@ -52,12 +54,12 @@ def build_sublist_menu(gui, select):
     series = gui.ggdb.check_series(last_val) if last_val is not None else 0
     xbmc.log(f"UMSA gui: build_sublist_menu: series={series}")
     if series:
-        list_items.append(xbmcgui.ListItem(f"Series ({series})", str(M_SERIES)))
+        list_items.append(xbmcgui.ListItem(tr(S.MENU_SERIES, series), str(M_SERIES)))
     else:
         position = position - 1
 
-    list_items.append(xbmcgui.ListItem('Maker', str(M_MAKER)))
-    list_items.append(xbmcgui.ListItem('Category', str(M_CAT)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_MAKER), str(M_MAKER)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_CATEGORY), str(M_CAT)))
 
     rec = False
     for i in gui.all_dat:
@@ -65,34 +67,29 @@ def build_sublist_menu(gui, select):
             rec = True
             break
     if rec:
-        list_items.append(xbmcgui.ListItem("Recommended", str(M_REC)))
+        list_items.append(xbmcgui.ListItem(tr(S.RECOMMENDED), str(M_REC)))
     else:
         position = position - 1
 
-    list_items.append(xbmcgui.ListItem('Year', str(M_YEAR)))
-    list_items.append(xbmcgui.ListItem('Players', str(M_PLAYERS)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_YEAR), str(M_YEAR)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_PLAYERS), str(M_PLAYERS)))
 
     # source
     if gui.actset['swl_name'] == 'mame':
         count_source = gui.ggdb.count_source(gui.actset['source'])
         if count_source > 1:
             list_items.append(xbmcgui.ListItem(
-                'Source ({}: {})'.format(
-                    gui.actset['source'][:-4], count_source
-                ), str(M_SOURCE)
-            ))
+                tr(S.MENU_SOURCE, gui.actset['source'][:-4], count_source),
+                str(M_SOURCE)))
         else:
             xbmc.log(f"UMSA gui: build_sublist_menu: only 1 source: {gui.actset['source']}")
     # swl
     else:
         list_items.append(xbmcgui.ListItem(
-            'Softwarelist {}'.format(
-                gui.actset['swl_name']
-            ), str(M_SWL)
-        ))
+            tr(S.MENU_SOFTWARELIST, gui.actset['swl_name']), str(M_SWL)))
 
-    list_items.append(xbmcgui.ListItem('Screensaver session', str(M_LSSAVER)))
-    list_items.append(xbmcgui.ListItem('Play Status', str(M_PLAYSTAT)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_SAVER_SESSION), str(M_LSSAVER)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_PLAY_STATUS), str(M_PLAYSTAT)))
 
     gui.getControl(LISTMODE_MENU).reset()
     gui.getControl(LISTMODE_MENU).addItems(list_items)
@@ -113,44 +110,46 @@ def build_main_menu(gui, select=None):
         gui.getControl(SERIES_LABEL).setVisible(False)
     # change list with select parameter
     if select == M_SOURCE:
-        list_items.append(xbmcgui.ListItem("Show source", str(M_SOURCE)))
+        list_items.append(xbmcgui.ListItem(tr(S.MENU_SHOW_SOURCE), str(M_SOURCE)))
     elif select == M_SWL:
-        list_items.append(xbmcgui.ListItem("Show swl", str(M_SWL)))
+        list_items.append(xbmcgui.ListItem(tr(S.MENU_SHOW_SWL), str(M_SWL)))
     elif series:
-        list_items.append(xbmcgui.ListItem(f"Series ({series})", str(M_SERIES)))
+        list_items.append(xbmcgui.ListItem(tr(S.MENU_SERIES, series), str(M_SERIES)))
     else:
-        list_items.append(xbmcgui.ListItem("Show all", str(M_ALL)))
+        list_items.append(xbmcgui.ListItem(tr(S.MENU_SHOW_ALL), str(M_ALL)))
     if select == M_MACHINE:
         position = 2
     # media
     if gui.vidman == (0, 0):
-        list_items.append(xbmcgui.ListItem("Media", str(M_MEDIA)))
+        list_items.append(xbmcgui.ListItem(tr(S.MENU_MEDIA), str(M_MEDIA)))
     else:
-        list_items.append(xbmcgui.ListItem(f"Media ({gui.vidman[0]},{gui.vidman[1]})", str(M_MEDIA)))
+        list_items.append(xbmcgui.ListItem(
+            tr(S.MENU_MEDIA_COUNT, gui.vidman[0], gui.vidman[1]), str(M_MEDIA)))
     # mame machines and different emulators
     count_machines = 0
     if gui.actset['swl_name'] != 'mame':
         count_machines = gui.ggdb.count_machines_for_swl(gui.actset['swl_name'])
     if count_machines > 1:
         list_items.append(
-            xbmcgui.ListItem(f"Emulator (MAME: {count_machines})", str(M_MACHINE)))
+            xbmcgui.ListItem(tr(S.MENU_EMULATOR_COUNT, count_machines), str(M_MACHINE)))
     else:
-        list_items.append(xbmcgui.ListItem("Emulator (MAME)", str(M_MACHINE)))
+        list_items.append(xbmcgui.ListItem(tr(S.MENU_EMULATOR), str(M_MACHINE)))
     # search
     if gui.searchold:
-        list_items.append(xbmcgui.ListItem(f"Search ({gui.searchold})", str(M_SEARCH_NEW)))
+        list_items.append(xbmcgui.ListItem(
+            tr(S.MENU_SEARCH_TERM, gui.searchold), str(M_SEARCH_NEW)))
     else:
-        list_items.append(xbmcgui.ListItem("Search", str(M_SEARCH_NEW)))
+        list_items.append(xbmcgui.ListItem(tr(S.SEARCH), str(M_SEARCH_NEW)))
     # filter
     if gui.ggdb.use_filter:
         list_items.append(xbmcgui.ListItem(
-            f"Filter ({gui.act_filter})", str(M_FILTER)))
+            tr(S.MENU_FILTER_NAME, gui.act_filter), str(M_FILTER)))
     else:
-        list_items.append(xbmcgui.ListItem("Filter (off)", str(M_FILTER)))
-    list_items.append(xbmcgui.ListItem("Screensaver", str(M_SSAVER)))
-    list_items.append(xbmcgui.ListItem("Update", str(M_UPD)))
-    list_items.append(xbmcgui.ListItem("Settings", str(M_ASETTINGS)))
-    list_items.append(xbmcgui.ListItem("Exit", str(M_EXIT)))
+        list_items.append(xbmcgui.ListItem(tr(S.MENU_FILTER_OFF), str(M_FILTER)))
+    list_items.append(xbmcgui.ListItem(tr(S.SCREENSAVER), str(M_SSAVER)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_UPDATE), str(M_UPD)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_SETTINGS), str(M_ASETTINGS)))
+    list_items.append(xbmcgui.ListItem(tr(S.MENU_EXIT), str(M_EXIT)))
     gui.getControl(MAIN_MENU).reset()
     gui.getControl(MAIN_MENU).addItems(list_items)
     gui.getControl(MAIN_MENU).selectItem(position)

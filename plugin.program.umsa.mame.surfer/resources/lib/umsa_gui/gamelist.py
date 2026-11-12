@@ -13,6 +13,7 @@ import xbmc
 import xbmcgui
 from gamelist_strategies import EARLY_RETURN, GAMELIST_STRATEGIES
 
+from . import strings as S
 from .constants import (
     GAME_LIST,
     GAME_LIST_LABEL,
@@ -20,6 +21,10 @@ from .constants import (
     GAME_LIST_OPTIONS,
     GAME_LIST_SORT,
     GAMELIST_SETTLE_DELAY,
+    KIND_EMULATORS,
+    KIND_MACHINES,
+    KIND_SELECT,
+    KIND_SOFTWARE,
     LABEL_STATUS,
     M_ALLEMUS,
     M_CAT,
@@ -31,8 +36,36 @@ from .constants import (
     M_SOURCE,
     M_SWL,
     M_YEAR,
+    OPTION_NEW_SEARCH,
     SOFTWARE_BUTTON,
 )
+from .strings import tr
+
+# text of the GAME_LIST_OPTIONS entries, by option key; other keys show as is
+OPTION_LABELS = {
+    OPTION_NEW_SEARCH: S.OPTION_NEW_SEARCH,
+    'name': S.OPTION_NAME,
+    'year': S.OPTION_YEAR,
+    'publisher': S.OPTION_PUBLISHER,
+    'time_played': S.OPTION_TIME_PLAYED,
+    'last_played': S.OPTION_LAST_PLAYED,
+    'play_count': S.OPTION_PLAY_COUNT,
+    'all swls': S.OPTION_ALL_SWLS,
+    'get connected swls': S.OPTION_CONNECTED_SWLS,
+}
+
+# lists that hold no software entries, by menu code
+LIST_KINDS = {
+    M_MACHINE: KIND_MACHINES,
+    M_ALLEMUS: KIND_EMULATORS,
+}
+
+
+def option_label(key):
+    """Return the text shown for the option ``key``."""
+
+    string_id = OPTION_LABELS.get(key)
+    return tr(string_id) if string_id else key
 
 
 @dataclass
@@ -101,8 +134,8 @@ def update_gamelist(gui, item):
         return
 
     # show loading status (popup title and status line)
-    gui.getControl(GAME_LIST_LABEL).setLabel('loading...')
-    gui.getControl(LABEL_STATUS).setLabel('loading...')
+    gui.getControl(GAME_LIST_LABEL).setLabel(tr(S.LOADING))
+    gui.getControl(LABEL_STATUS).setLabel(tr(S.LOADING))
     time1 = time.time()
 
     strategy = GAMELIST_STRATEGIES.get(item)
@@ -131,7 +164,7 @@ def update_gamelist(gui, item):
         gui.getControl(LABEL_STATUS).setLabel('')
         if item == M_SEARCH:
             gui.searchold = None
-        gui.dialog.notification('Search', 'found nothing...',
+        gui.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_NOTHING),
             xbmcgui.NOTIFICATION_ERROR, 3000, False)
         return
 
@@ -139,7 +172,7 @@ def update_gamelist(gui, item):
     if len(results) == 1 and item not in (M_MACHINE, M_ALLEMUS):
         if item == M_SEARCH:
             gui.searchold = None
-        gui.dialog.notification('Search', 'only one hit...',
+        gui.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_ONE_HIT),
             xbmcgui.NOTIFICATION_INFO, 2000, False)
         # TODO: check if this id is the one already shown
         gui._remember_and_select(results[0]['id'])
@@ -147,17 +180,19 @@ def update_gamelist(gui, item):
         return
 
     if gui.ggdb.use_filter:
-        use_filter = ['filter: on', 'filter: off']
+        use_filter = [tr(S.LIST_FILTER_ON), tr(S.LIST_FILTER_OFF)]
     else:
-        use_filter = ['filter: off', 'filter: on']
+        use_filter = [tr(S.LIST_FILTER_OFF), tr(S.LIST_FILTER_ON)]
 
     time2 = time.time()
     gui.getControl(LABEL_STATUS).setLabel(
-        f'took {(time2-time1)*1000:.0f}ms'
+        tr(S.QUERY_TOOK, f'{(time2-time1)*1000:.0f}')
     )
 
     # now show gamelist with gathered info from above
-    gui.popup_gamelist(results, gl_label, pos=pos, sort=use_filter, options=gl_options)
+    gui.popup_gamelist(
+        results, gl_label, pos=pos, sort=use_filter, options=gl_options,
+        kind=LIST_KINDS.get(item, KIND_SOFTWARE))
     # build submenu with lists in it
     gui.build_sublist_menu(item)
 
@@ -166,8 +201,17 @@ def update_gamelist(gui, item):
     xbmc.log(f'UMSA gui: update_gamelist: time overall: {(time3-time1)*1000:.0f}ms')
 
 
-def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None):
-    """Pop up gamelist."""
+def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None,
+                   kind=KIND_SOFTWARE, select_what=None):
+    """Pop up gamelist.
+
+    ``kind`` tells the click and move handlers what the list holds
+    (``KIND_*``); ``select_what`` is the menu code of a ``KIND_SELECT`` list.
+    ``options`` are option keys: the entries carry them in label2.
+    """
+
+    gui.gamelist_kind = kind
+    gui.gamelist_select = select_what
 
     list_items = []
     for i in gamelist:
@@ -182,7 +226,8 @@ def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None):
     gui.getControl(GAME_LIST_LABEL).setLabel(label)
     gui.getControl(GAME_LIST_OPTIONS).reset()
     if options:
-        gui.getControl(GAME_LIST_OPTIONS).addItems(options)
+        gui.getControl(GAME_LIST_OPTIONS).addItems(
+            [xbmcgui.ListItem(option_label(option), option) for option in options])
     gui.getControl(GAME_LIST_SORT).reset()
     if sort:
         gui.getControl(GAME_LIST_SORT).addItems(sort)
@@ -206,10 +251,9 @@ def gamelist_move(gui, pos=None, force=False):
     that Kodi refreshes the info labels of the selected entry.
     """
 
-    # check label if we have games in list
-    g_label = gui.getControl(GAME_LIST_LABEL).getLabel()
-    if g_label.startswith(('Machines for', 'Choose Media', 'Emulators', 'Select')):
-        xbmc.log(f"UMSA gui: gamelist_move: label {g_label} = return")
+    # only software lists have a snap and machines to load
+    if gui.gamelist_kind != KIND_SOFTWARE:
+        xbmc.log(f"UMSA gui: gamelist_move: list kind {gui.gamelist_kind} = return")
         return
     control = gui.getControl(GAME_LIST)
     if pos is None:
@@ -223,7 +267,7 @@ def gamelist_move(gui, pos=None, force=False):
         return
     gamelist_id = gamelist_item.getLabel2()
     # check if gamelist_id is valid (0 = invalid, prev/next = paging entries)
-    if gamelist_id in ("0", "prev", "next"):
+    if gamelist_id in ("0", "prev", "next") or "::" in gamelist_id:
         xbmc.log(f"UMSA gui: gamelist_move: pos {pos}: no software id ({gamelist_id}) = return")
         return
     # data already loaded: only refresh when forced
@@ -263,7 +307,11 @@ def gamelist_switch_filter(gui):
 
 
 def show_fulllist(gui, what, label):
-    """Show full list of maker, cat, year..."""
+    """Show full list of maker, cat, year...
+
+    Menu entries without such a list (Show all, Series, Recommended,
+    Screensaver session, Play Status) are ignored.
+    """
 
     if what == M_MAKER:
         my_list = gui.ggdb.get_maker()
@@ -279,4 +327,10 @@ def show_fulllist(gui, what, label):
         my_list = gui.ggdb.get_players()
     elif what == M_CAT:
         my_list = gui.ggdb.get_categories()
-    gui.popup_gamelist(my_list, f"Select {label}")
+    else:
+        xbmc.log(
+            f"UMSA gui: show_fulllist: no select list for menu code {what}",
+            xbmc.LOGDEBUG)
+        return
+    gui.popup_gamelist(
+        my_list, tr(S.LIST_SELECT, label), kind=KIND_SELECT, select_what=what)

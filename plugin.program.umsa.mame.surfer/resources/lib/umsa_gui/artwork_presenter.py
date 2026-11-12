@@ -16,18 +16,21 @@ from umsa_core import (
     resolve_artwork_path,
 )
 
+from . import strings as S
 from .constants import (
     IMAGE_BIG_LIST,
     IMAGE_LIST,
-    NO_INFO_LABEL,
     SHADOW_DAT,
     SYSTEM_WRAPLIST,
     TEXTLIST,
     TEXTLIST_HIDDEN,
+    TEXTLIST_KEY_NO_INFO,
+    TEXTLIST_KEY_PROPERTY,
     TEXTLIST_ORDER,
     TEXTLIST_OTHER_CATEGORIES,
 )
 from .paths import SKIN_MEDIA_FOLDER
+from .strings import tr
 
 _TEXTLIST_RANK = {name: rank for rank, name in enumerate(TEXTLIST_ORDER)}
 
@@ -236,9 +239,9 @@ def show_artwork(gui, howmuch='all'):
     stattext = ''
     if gui.played['count'] > 0:
         if gui.actset['last_played']:
-            played_text = gui.actset['last_played']['last_nice'] + ' ago'
+            played_text = tr(S.PLAYED_AGO, gui.actset['last_played']['last_nice'])
         else:
-            played_text = "never"
+            played_text = tr(S.PLAYED_NEVER)
         stattext = (
             f"{played_text}, {gui.played['played']}h, "
             f"{gui.played['count']}x[CR]"
@@ -263,7 +266,8 @@ def show_artwork(gui, howmuch='all'):
 
     if len(list_items) == 0:
         list_item = xbmcgui.ListItem()
-        list_item.setLabel(NO_INFO_LABEL)
+        list_item.setLabel(tr(S.NO_INFO))
+        list_item.setProperty(TEXTLIST_KEY_PROPERTY, TEXTLIST_KEY_NO_INFO)
         list_item.setProperty('text', stattext)
         list_items.append(list_item)
 

@@ -40,6 +40,9 @@ import sqlite3
 
 from .sqlite import require_row_connection
 
+# ids per ``IN (...)`` statement, below SQLite's historical limit of 999
+_IN_BLOCK = 500
+
 
 def _dict_or_none(row):
     """Return ``row`` as a plain dict, or ``None`` when the row is missing.
@@ -536,6 +539,43 @@ class GameRepository:
                     pos = count
 
             return machines, pos
+        finally:
+            cursor.close()
+
+    def get_software_for_sets(self, set_ids) -> dict:
+        """Return ``{set id: software info}`` for a collection of set ids.
+
+        The info is a plain dict with ``id`` (software id), ``name``, ``year``
+        and ``maker`` (developer). Set ids that match no software are missing
+        from the mapping; an empty collection returns an empty mapping. The
+        ids are queried in blocks so the statement stays below SQLite's
+        variable limit.
+        """
+        ids = list(set_ids)
+        result = {}
+        cursor = self._conn.cursor()
+        try:
+            for start in range(0, len(ids), _IN_BLOCK):
+                block = ids[start:start + _IN_BLOCK]
+                placeholders = ",".join(["?"] * len(block))
+                cursor.execute(
+                    "SELECT sets.id AS set_id, software.id, software.name, "
+                    "       year.name AS year, maker.name AS maker "
+                    "FROM software "
+                    "   JOIN year ON software.year_id = year.id "
+                    "   JOIN maker ON software.developer_id = maker.id "
+                    "   JOIN sets ON software.id = sets.softwarelink_id "
+                    f"WHERE sets.id IN ({placeholders})",
+                    block,
+                )
+                for row in cursor.fetchall():
+                    result[row["set_id"]] = {
+                        'id': row["id"],
+                        'name': row["name"],
+                        'year': row["year"],
+                        'maker': row["maker"],
+                    }
+            return result
         finally:
             cursor.close()
 

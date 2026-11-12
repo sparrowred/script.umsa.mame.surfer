@@ -14,12 +14,14 @@ from umsa_core_kodi import (
     set_screensaver_manual,
 )
 
+from . import strings as S
 from .availability import REASON_NO_VIDEOS, AvailabilityError, plan_request
 from .constants import (
     MODE_PROPERTY,
     RUNNING_PROPERTY,
     WINDOW_ID,
 )
+from .strings import tr
 from .ui import Monitor
 
 
@@ -174,7 +176,7 @@ class ScreensaverRuntime:
             xbmc.log(
                 f"UMSA Screensaver: artwork check failed: {error}",
                 xbmc.LOGERROR)
-            saver.notify_user("screensaver artwork check failed")
+            saver.notify_user(tr(S.ARTWORK_CHECK_FAILED))
             return
         if not plan.ok:
             monitor.report_no_content(plan)
@@ -184,7 +186,7 @@ class ScreensaverRuntime:
                 "UMSA Screensaver: no videosnap available, "
                 f"using the {plan.mode} mode instead",
                 xbmc.LOGWARNING)
-            saver.notify_user("no screensaver videos available")
+            saver.notify_user(tr(S.NO_VIDEOS))
         # the artwork types of the request only belong to the requested
         # mode: a fallback mode uses its own artwork types
         saver.running = plan.mode

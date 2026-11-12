@@ -10,7 +10,9 @@ from umsa_core.screensaver_request import encode_request
 from umsa_core.window_properties import SCREENSAVER_MODE_PROPERTY, SHARED_WINDOW_ID
 from umsa_core_kodi import clear_vgm_info, publish_vgm_info, set_screensaver_manual
 
+from . import strings as S
 from .constants import MUSIC_INFO
+from .strings import tr
 
 # optional dependency in addon.xml: check before every start
 SCREENSAVER_ADDON_ID = "screensaver.umsa.mame.surfer"
@@ -32,7 +34,7 @@ def ensure_screensaver_available(gui):
     xbmc.log(f"UMSA gui: screensaver add-on {SCREENSAVER_ADDON_ID} is not "
              "installed or disabled", xbmc.LOGWARNING)
     gui.dialog.notification(
-        "Screensaver", "screensaver add-on is not installed or disabled",
+        tr(S.SCREENSAVER), tr(S.SAVER_NOT_AVAILABLE),
         xbmcgui.NOTIFICATION_WARNING, 5000)
     return False
 

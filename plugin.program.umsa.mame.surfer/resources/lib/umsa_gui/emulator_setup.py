@@ -12,7 +12,9 @@ import xbmc
 import xbmcgui
 from umsa_core.support import marp_search
 
-from .constants import TEXTLIST
+from . import strings as S
+from .constants import TEXTLIST, TEXTLIST_KEY_EMU_OUTPUT, TEXTLIST_KEY_PROPERTY
+from .strings import tr
 
 
 def get_diff_emulator(gui):
@@ -20,10 +22,10 @@ def get_diff_emulator(gui):
 
     emus = gui.ggdb.get_emulators()
     if emus:
-        emu_names = ['Configure new emulator']
+        emu_names = [tr(S.EMU_CONFIGURE_NEW)]
         for i in emus:
             emu_names.append(i['name'])
-        ret = gui.dialog.select('Emulators', emu_names)
+        ret = gui.dialog.select(tr(S.EMULATORS), emu_names)
         if ret == -1:
             return
         if ret == 0:
@@ -40,25 +42,33 @@ def get_diff_emulator(gui):
         gui.configure_emulator()
 
 
-EXTRACT_OPTIONS = ('Extract zip/chd', 'Start with zip/chd')
-START_MODES = ('Normal', 'Watch', 'Fallback')
+# string ids of the option texts; the database stores the index
+EXTRACT_OPTIONS = (S.EMU_EXTRACT, S.EMU_START_ARCHIVE)
+START_MODES = (S.EMU_MODE_NORMAL, S.EMU_MODE_WATCH, S.EMU_MODE_FALLBACK)
+
+
+def _option_labels(options):
+    """Texts of an option list in the order of the stored indexes."""
+
+    return [tr(string_id) for string_id in options]
 
 
 def _option_label(options, index):
     """Label of a stored option index; out-of-range values show the first."""
 
-    return options[index] if isinstance(index, int) and 0 <= index < len(options) else options[0]
+    valid = isinstance(index, int) and 0 <= index < len(options)
+    return tr(options[index] if valid else options[0])
 
 
 def _emulator_menu(emu_info, save_label):
     """Entries of the emulator field menu with the current values."""
 
     return [
-        f"Executable: {emu_info['exe']}",
-        f"Working directory: {emu_info['dir']}",
-        f"Extract: {_option_label(EXTRACT_OPTIONS, emu_info['zip'])}",
-        f"Start mode: {_option_label(START_MODES, emu_info['mode'])}",
-        f"Name: {emu_info['name']}",
+        tr(S.EMU_FIELD_EXECUTABLE, emu_info['exe']),
+        tr(S.EMU_FIELD_DIRECTORY, emu_info['dir']),
+        tr(S.EMU_FIELD_EXTRACT, _option_label(EXTRACT_OPTIONS, emu_info['zip'])),
+        tr(S.EMU_FIELD_MODE, _option_label(START_MODES, emu_info['mode'])),
+        tr(S.EMU_FIELD_NAME, emu_info['name']),
         save_label,
     ]
 
@@ -71,24 +81,29 @@ def _edit_emulator_field(gui, emu_info, field):
     """
 
     if field == 0:
-        exe = gui.dialog.browse(1, 'Emulator executable', 'files', defaultt=emu_info['exe'])
+        exe = gui.dialog.browse(
+            1, tr(S.EMU_EXECUTABLE), 'files', defaultt=emu_info['exe'])
         if exe:
             emu_info['exe'] = exe
     elif field == 1:
         default = emu_info['dir'] or os.path.dirname(emu_info['exe'])
-        work_dir = gui.dialog.browse(0, 'Working directory', 'files', defaultt=default)
+        work_dir = gui.dialog.browse(0, tr(S.EMU_DIRECTORY), 'files', defaultt=default)
         if work_dir:
             emu_info['dir'] = work_dir
     elif field == 2:
-        ret = gui.dialog.select('Extract?', list(EXTRACT_OPTIONS), preselect=emu_info['zip'])
+        ret = gui.dialog.select(
+            tr(S.EMU_EXTRACT_PROMPT), _option_labels(EXTRACT_OPTIONS),
+            preselect=emu_info['zip'])
         if ret > -1:
             emu_info['zip'] = ret
     elif field == 3:
-        ret = gui.dialog.select('Emulator start', list(START_MODES), preselect=emu_info['mode'])
+        ret = gui.dialog.select(
+            tr(S.EMU_START_PROMPT), _option_labels(START_MODES),
+            preselect=emu_info['mode'])
         if ret > -1:
             emu_info['mode'] = ret
     elif field == 4:
-        name = gui.dialog.input('Name of emulator', emu_info['name'])
+        name = gui.dialog.input(tr(S.EMU_NAME_PROMPT), emu_info['name'])
         if name:
             emu_info['name'] = name
 
@@ -103,9 +118,9 @@ def configure_emulator(gui, emu_info=None, reconfigure=False):
     """
 
     if not emu_info:
-        exe = gui.dialog.browse(1, 'Emulator executable', 'files', defaultt='')
+        exe = gui.dialog.browse(1, tr(S.EMU_EXECUTABLE), 'files', defaultt='')
         if not exe:
-            gui.dialog.notification('Configure Emulator', 'no executable selected',
+            gui.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_NO_EXECUTABLE),
                 xbmcgui.NOTIFICATION_ERROR, 3000, False)
             return
         emu_info = {
@@ -118,21 +133,21 @@ def configure_emulator(gui, emu_info=None, reconfigure=False):
     else:
         emu_info = dict(emu_info)
 
-    save_label = 'Save' if reconfigure else 'Save and start'
+    save_label = tr(S.EMU_SAVE if reconfigure else S.EMU_SAVE_AND_START)
     save_index = 5
     selected = save_index
     while True:
         selected = gui.dialog.select(
-            f"Emulator {emu_info['name']}".strip(),
+            tr(S.EMU_TITLE, emu_info['name']).strip(),
             _emulator_menu(emu_info, save_label), preselect=selected)
         if selected == -1:
-            gui.dialog.notification('Configure Emulator', 'cancelled, nothing saved',
+            gui.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_CANCELLED),
                 xbmcgui.NOTIFICATION_INFO, 2500, False)
             return
         if selected == save_index:
             if emu_info['exe'] and emu_info['dir'] and emu_info['name']:
                 break
-            gui.dialog.notification('Configure Emulator', 'executable, directory and name needed',
+            gui.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_INCOMPLETE),
                 xbmcgui.NOTIFICATION_ERROR, 3000, False)
             continue
         _edit_emulator_field(gui, emu_info, selected)
@@ -160,7 +175,7 @@ def marp_replayer(gui, dl_file=None, set_name=None, random=None):
         all_marps = marp_search(version=rand_version)
         if not all_marps:
             gui.dialog.notification(
-                "MARP", f"no replays found for version {rand_version}")
+                tr(S.MARP), tr(S.MARP_NO_REPLAYS, rand_version))
             return
         if random:
             marp_rand = choice(all_marps)
@@ -172,7 +187,7 @@ def marp_replayer(gui, dl_file=None, set_name=None, random=None):
                 marp_list.append("{}[CR] {}: {} ({}, {})".format(
                     i['gamename'], i['player'], i['rank'], i['percentage'], i['points']))
             ret = gui.dialog.select(
-                f"Select MARP {rand_version} replay:", marp_list, useDetails=True)
+                tr(S.MARP_SELECT_REPLAY, rand_version), marp_list, useDetails=True)
             # select() returns -1 on cancel; index 0 is a valid choice
             if ret < 0:
                 return
@@ -189,7 +204,8 @@ def add_or_update_emu_output(gui, out, err, exit_code, cmd_args):
     no_emu_out = True
     try:
         for i in range(gui.getControl(TEXTLIST).size()):
-            if gui.getControl(TEXTLIST).getListItem(i).getLabel() == 'Emulator output':
+            if (gui.getControl(TEXTLIST).getListItem(i).getProperty(TEXTLIST_KEY_PROPERTY)
+                    == TEXTLIST_KEY_EMU_OUTPUT):
                 no_emu_out = False
                 emu_out_item = gui.getControl(TEXTLIST).getListItem(i)
                 break
@@ -198,12 +214,14 @@ def add_or_update_emu_output(gui, out, err, exit_code, cmd_args):
     if no_emu_out and (out or err):
         try:
             emu_out_item = xbmcgui.ListItem()
-            emu_out_item.setLabel('Emulator output')
+            emu_out_item.setLabel(tr(S.EMULATOR_OUTPUT))
             gui.getControl(TEXTLIST).addItem(emu_out_item)
         except Exception:
             return
     try:
         cmd_str = ' '.join(cmd_args) if cmd_args else ''
+        # the key marks the entry for the next emulator run
+        emu_out_item.setProperty(TEXTLIST_KEY_PROPERTY, TEXTLIST_KEY_EMU_OUTPUT)
         emu_out_item.setProperty(
             'text', f'cmd: {cmd_str}\nerr {exit_code}: {err}\nout: {out}')
         gui.getControl(TEXTLIST).selectItem(gui.getControl(TEXTLIST).size() - 1)
@@ -219,7 +237,7 @@ def notify_final_launch(gui, notif_text, emu_name, mode):
     if mode != 'no':
         try:
             gui.emu_dialog.update(
-                90, f"{notif_text}\nScreensaver active. Press a button to escape!")
+                90, f"{notif_text}\n{tr(S.RUN_SAVER_ACTIVE)}")
         except Exception as error:
             xbmc.log(
                 f'UMSA gui: could not update emulator dialog: {error}',
@@ -232,7 +250,7 @@ def notify_final_launch(gui, notif_text, emu_name, mode):
                 f'UMSA gui: could not close emulator dialog: {error}',
                 xbmc.LOGWARNING)
         try:
-            gui.dialog.notification(f'{emu_name} stopped', f'{notif_text}',
+            gui.dialog.notification(tr(S.RUN_EMULATOR_STOPPED, emu_name), f'{notif_text}',
                                     xbmcgui.NOTIFICATION_INFO, 3000, False)
         except Exception as error:
             xbmc.log(

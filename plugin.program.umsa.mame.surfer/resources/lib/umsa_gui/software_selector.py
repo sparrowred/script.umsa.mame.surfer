@@ -12,6 +12,7 @@ import xbmcgui
 from umsa_core.artwork import machine_set_name
 from umsa_core.database import split_gamename
 
+from . import strings as S
 from .constants import (
     COMPILATION_LABEL,
     LABEL_STATUS,
@@ -26,6 +27,7 @@ from .constants import (
     SYSTEM_WRAPLIST,
     TEXTLIST,
 )
+from .strings import tr
 
 
 def fill_set_list(gui, pos):
@@ -106,7 +108,7 @@ def select_software(gui, software_id):
         gui.emulation.playintrovgm = False
         gui.emulation.send_vgmaction(b'exit')
 
-    gui.getControl(LABEL_STATUS).setLabel('loading software...')
+    gui.getControl(LABEL_STATUS).setLabel(tr(S.LOADING_SOFTWARE))
 
     # get infos
     (all_info,
@@ -118,9 +120,10 @@ def select_software(gui, software_id):
     # error if no info
     if len(all_info) == 0:
         xbmc.log(f"UMSA gui: select_software: ERROR: software id={software_id}", xbmc.LOGERROR)
-        gui.dialog.notification('Select Software', f'id-{software_id} feels funny?!?',
+        gui.dialog.notification(
+            tr(S.SELECT_SOFTWARE), tr(S.SOFTWARE_BROKEN, software_id),
             xbmcgui.NOTIFICATION_ERROR, 4000)
-        gui.getControl(LABEL_STATUS).setLabel('loading software...')
+        gui.getControl(LABEL_STATUS).setLabel(tr(S.LOADING_SOFTWARE))
         return False
 
     gui.info = all_info
@@ -268,7 +271,7 @@ def select_software(gui, software_id):
             and gui.vgms and intro_duration > 0):
         play_vgm = choice(tuple(gui.vgms))
         xbmc.log(f'UMSA gui: play intro vgm {play_vgm}')
-        gui.dialog.notification('VGM Intro', f'Playing {play_vgm}',
+        gui.dialog.notification(tr(S.VGM_INTRO), tr(S.VGM_PLAYING, play_vgm),
             xbmcgui.NOTIFICATION_INFO, 3000, False)
         gui.emulation.play_vgm(
             play_vgm, intro_duration, xbmc.sleep, intro=True)

@@ -778,7 +778,7 @@
         <posy>128</posy>
         <width>300</width>
         <height>30</height>
-        <label>active</label>
+        <label>$ADDON[plugin.program.umsa.mame.surfer 32414]</label>
         <font>font10</font>
         <textcolor>FF35F04E</textcolor>
         <visible>ControlGroup(408).HasFocus</visible>
@@ -788,7 +788,7 @@
         <posy>128</posy>
         <width>300</width>
         <height>30</height>
-        <label>inactive</label>
+        <label>$ADDON[plugin.program.umsa.mame.surfer 32415]</label>
         <font>font10</font>
         <textcolor>FF91C98A</textcolor>
         <visible>ControlGroup(408).HasFocus</visible>

@@ -15,78 +15,7 @@ msgstr ""
 "Language: en\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-msgctxt "#32000"
-msgid "Screensaver"
-msgstr ""
-
-msgctxt "#33000"
-msgid "Outside MAME"
-msgstr ""
-
-msgctxt "#32010"
-msgid "Show"
-msgstr ""
-
-msgctxt "#30054"
-msgid "Titles - Rows to show: between"
-msgstr ""
-
-msgctxt "#30055"
-msgid "and"
-msgstr ""
-
-msgctxt "#30066"
-msgid "Snaps - Rows to show: between"
-msgstr ""
-
-msgctxt "#30056"
-msgid "Show game info"
-msgstr ""
-
-msgctxt "#30058"
-msgid "Videos"
-msgstr ""
-
-msgctxt "#30059"
-msgid "Wall"
-msgstr ""
-
-msgctxt "#30065"
-msgid "Slide"
-msgstr ""
-
-msgctxt "#30068"
-msgid "Crossover"
-msgstr ""
-
-msgctxt "#30060"
-msgid "Random"
-msgstr ""
-
-msgctxt "#30067"
-msgid "Modes:"
-msgstr ""
-
-msgctxt "#30061"
-msgid "Show music info"
-msgstr ""
-
-msgctxt "#30062"
-msgid "Wall Options:"
-msgstr ""
-
-msgctxt "#30063"
-msgid "Snaps or Titles?"
-msgstr ""
-
-msgctxt "#30064"
-msgid "How much free tiles?"
-msgstr ""
-
-msgctxt "#30010"
-msgid "Amount of seconds to display each image"
-msgstr ""
-
+# settings
 msgctxt "#32100"
 msgid "UMSA"
 msgstr ""
@@ -97,4 +26,769 @@ msgstr ""
 
 msgctxt "#32201"
 msgid "Opens the UMSA settings (emulators, media, frontend, maintenance) of the UMSA Core add-on."
+msgstr ""
+
+# frontend texts (umsa_gui/strings.py)
+msgctxt "#32300"
+msgid "Show all"
+msgstr ""
+
+msgctxt "#32301"
+msgid "Series ({0})"
+msgstr ""
+
+msgctxt "#32302"
+msgid "Maker"
+msgstr ""
+
+msgctxt "#32303"
+msgid "Category"
+msgstr ""
+
+msgctxt "#32304"
+msgid "Recommended"
+msgstr ""
+
+msgctxt "#32305"
+msgid "Year"
+msgstr ""
+
+msgctxt "#32306"
+msgid "Players"
+msgstr ""
+
+msgctxt "#32307"
+msgid "Source ({0}: {1})"
+msgstr ""
+
+msgctxt "#32308"
+msgid "Softwarelist {0}"
+msgstr ""
+
+msgctxt "#32309"
+msgid "Screensaver session"
+msgstr ""
+
+msgctxt "#32310"
+msgid "Play Status"
+msgstr ""
+
+msgctxt "#32311"
+msgid "Show source"
+msgstr ""
+
+msgctxt "#32312"
+msgid "Show swl"
+msgstr ""
+
+msgctxt "#32313"
+msgid "Media"
+msgstr ""
+
+msgctxt "#32314"
+msgid "Media ({0},{1})"
+msgstr ""
+
+msgctxt "#32315"
+msgid "Emulator (MAME: {0})"
+msgstr ""
+
+msgctxt "#32316"
+msgid "Emulator (MAME)"
+msgstr ""
+
+msgctxt "#32317"
+msgid "Search ({0})"
+msgstr ""
+
+msgctxt "#32318"
+msgid "Search"
+msgstr ""
+
+msgctxt "#32319"
+msgid "Filter ({0})"
+msgstr ""
+
+msgctxt "#32320"
+msgid "Filter (off)"
+msgstr ""
+
+msgctxt "#32321"
+msgid "Screensaver"
+msgstr ""
+
+msgctxt "#32322"
+msgid "Update"
+msgstr ""
+
+msgctxt "#32323"
+msgid "Settings"
+msgstr ""
+
+msgctxt "#32324"
+msgid "Exit"
+msgstr ""
+
+msgctxt "#32340"
+msgid "Complete list ({0})"
+msgstr ""
+
+msgctxt "#32341"
+msgid "swl: {0} ({1})"
+msgstr ""
+
+msgctxt "#32342"
+msgid "Category: {0} ({1})"
+msgstr ""
+
+msgctxt "#32343"
+msgid "Year: {0} ({1})"
+msgstr ""
+
+msgctxt "#32344"
+msgid "Players: {0} ({1})"
+msgstr ""
+
+msgctxt "#32345"
+msgid "Publisher: {0} ({1})"
+msgstr ""
+
+msgctxt "#32346"
+msgid "play status"
+msgstr ""
+
+msgctxt "#32347"
+msgid "Emulators for source {0} ({1})"
+msgstr ""
+
+msgctxt "#32348"
+msgid "Machines for {0} ({1})"
+msgstr ""
+
+msgctxt "#32349"
+msgid "Emulators"
+msgstr ""
+
+msgctxt "#32350"
+msgid "source: {0} ({1})"
+msgstr ""
+
+msgctxt "#32351"
+msgid "last screensaver session"
+msgstr ""
+
+msgctxt "#32352"
+msgid "Series"
+msgstr ""
+
+msgctxt "#32353"
+msgid "Search for"
+msgstr ""
+
+msgctxt "#32354"
+msgid "{0} results for {1}"
+msgstr ""
+
+msgctxt "#32355"
+msgid "Select {0}"
+msgstr ""
+
+msgctxt "#32356"
+msgid "loading..."
+msgstr ""
+
+msgctxt "#32357"
+msgid "found no results"
+msgstr ""
+
+msgctxt "#32358"
+msgid "found nothing..."
+msgstr ""
+
+msgctxt "#32359"
+msgid "only one hit..."
+msgstr ""
+
+msgctxt "#32360"
+msgid "filter: on"
+msgstr ""
+
+msgctxt "#32361"
+msgid "filter: off"
+msgstr ""
+
+msgctxt "#32362"
+msgid "took {0}ms"
+msgstr ""
+
+msgctxt "#32363"
+msgid "Start eXoDOS Shell launcher"
+msgstr ""
+
+msgctxt "#32364"
+msgid "Start eXoDOS Alternate Shell launcher"
+msgstr ""
+
+msgctxt "#32365"
+msgid "Start with M.A.M.E."
+msgstr ""
+
+msgctxt "#32366"
+msgid "Start with Kodi Retroplayer"
+msgstr ""
+
+msgctxt "#32367"
+msgid "Choose a different emulator"
+msgstr ""
+
+msgctxt "#32368"
+msgid "new search"
+msgstr ""
+
+msgctxt "#32369"
+msgid "name"
+msgstr ""
+
+msgctxt "#32370"
+msgid "year"
+msgstr ""
+
+msgctxt "#32371"
+msgid "publisher"
+msgstr ""
+
+msgctxt "#32372"
+msgid "time_played"
+msgstr ""
+
+msgctxt "#32373"
+msgid "last_played"
+msgstr ""
+
+msgctxt "#32374"
+msgid "play_count"
+msgstr ""
+
+msgctxt "#32375"
+msgid "all swls"
+msgstr ""
+
+msgctxt "#32376"
+msgid "get connected swls"
+msgstr ""
+
+msgctxt "#32377"
+msgid "loading software..."
+msgstr ""
+
+msgctxt "#32378"
+msgid "Select Software"
+msgstr ""
+
+msgctxt "#32379"
+msgid "id-{0} feels funny?!?"
+msgstr ""
+
+msgctxt "#32400"
+msgid "Filter: {0}"
+msgstr ""
+
+msgctxt "#32401"
+msgid "{0} filtered items"
+msgstr ""
+
+msgctxt "#32402"
+msgid "Load Filter"
+msgstr ""
+
+msgctxt "#32403"
+msgid "Save Filter"
+msgstr ""
+
+msgctxt "#32404"
+msgid " or create a new filter"
+msgstr ""
+
+msgctxt "#32405"
+msgid "Name for Filter"
+msgstr ""
+
+msgctxt "#32406"
+msgid "Softwarelists"
+msgstr ""
+
+msgctxt "#32407"
+msgid "Game Categories"
+msgstr ""
+
+msgctxt "#32408"
+msgid "Machine Categories"
+msgstr ""
+
+msgctxt "#32409"
+msgid "Players"
+msgstr ""
+
+msgctxt "#32410"
+msgid "Years"
+msgstr ""
+
+msgctxt "#32411"
+msgid "all"
+msgstr ""
+
+msgctxt "#32412"
+msgid "none"
+msgstr ""
+
+msgctxt "#32413"
+msgid "invert"
+msgstr ""
+
+msgctxt "#32414"
+msgid "active"
+msgstr ""
+
+msgctxt "#32415"
+msgid "inactive"
+msgstr ""
+
+msgctxt "#32420"
+msgid "- Videos -"
+msgstr ""
+
+msgctxt "#32421"
+msgid "- Manuals -"
+msgstr ""
+
+msgctxt "#32422"
+msgid "- Music -"
+msgstr ""
+
+msgctxt "#32423"
+msgid "- Youtube -"
+msgstr ""
+
+msgctxt "#32424"
+msgid "- Youtube (click for online search) -"
+msgstr ""
+
+msgctxt "#32425"
+msgid "- Replays -"
+msgstr ""
+
+msgctxt "#32426"
+msgid "- Replays (click for MARP search) -"
+msgstr ""
+
+msgctxt "#32427"
+msgid "Choose Media"
+msgstr ""
+
+msgctxt "#32428"
+msgid "Select VGM track:"
+msgstr ""
+
+msgctxt "#32429"
+msgid "VGM Intro"
+msgstr ""
+
+msgctxt "#32430"
+msgid "Playing {0}"
+msgstr ""
+
+msgctxt "#32431"
+msgid "Starting random VGM..."
+msgstr ""
+
+msgctxt "#32432"
+msgid "no info"
+msgstr ""
+
+msgctxt "#32433"
+msgid "Emulator output"
+msgstr ""
+
+msgctxt "#32434"
+msgid "{0} ago"
+msgstr ""
+
+msgctxt "#32435"
+msgid "never"
+msgstr ""
+
+msgctxt "#32440"
+msgid "Configure new emulator"
+msgstr ""
+
+msgctxt "#32441"
+msgid "Extract zip/chd"
+msgstr ""
+
+msgctxt "#32442"
+msgid "Start with zip/chd"
+msgstr ""
+
+msgctxt "#32443"
+msgid "Normal"
+msgstr ""
+
+msgctxt "#32444"
+msgid "Watch"
+msgstr ""
+
+msgctxt "#32445"
+msgid "Fallback"
+msgstr ""
+
+msgctxt "#32446"
+msgid "Executable: {0}"
+msgstr ""
+
+msgctxt "#32447"
+msgid "Working directory: {0}"
+msgstr ""
+
+msgctxt "#32448"
+msgid "Extract: {0}"
+msgstr ""
+
+msgctxt "#32449"
+msgid "Start mode: {0}"
+msgstr ""
+
+msgctxt "#32450"
+msgid "Name: {0}"
+msgstr ""
+
+msgctxt "#32451"
+msgid "Emulator executable"
+msgstr ""
+
+msgctxt "#32452"
+msgid "Working directory"
+msgstr ""
+
+msgctxt "#32453"
+msgid "Extract?"
+msgstr ""
+
+msgctxt "#32454"
+msgid "Emulator start"
+msgstr ""
+
+msgctxt "#32455"
+msgid "Name of emulator"
+msgstr ""
+
+msgctxt "#32456"
+msgid "Configure Emulator"
+msgstr ""
+
+msgctxt "#32457"
+msgid "no executable selected"
+msgstr ""
+
+msgctxt "#32458"
+msgid "Save and start"
+msgstr ""
+
+msgctxt "#32459"
+msgid "Save"
+msgstr ""
+
+msgctxt "#32460"
+msgid "cancelled, nothing saved"
+msgstr ""
+
+msgctxt "#32461"
+msgid "executable, directory and name needed"
+msgstr ""
+
+msgctxt "#32462"
+msgid "Emulator {0}"
+msgstr ""
+
+msgctxt "#32463"
+msgid "What shall we do?"
+msgstr ""
+
+msgctxt "#32464"
+msgid "Reconfigure"
+msgstr ""
+
+msgctxt "#32465"
+msgid "Delete"
+msgstr ""
+
+msgctxt "#32466"
+msgid "Remove"
+msgstr ""
+
+msgctxt "#32467"
+msgid "Delete emulator"
+msgstr ""
+
+msgctxt "#32468"
+msgid "Really delete {0}?"
+msgstr ""
+
+msgctxt "#32469"
+msgid "No other connection for {0}, delete?"
+msgstr ""
+
+msgctxt "#32470"
+msgid "MARP"
+msgstr ""
+
+msgctxt "#32471"
+msgid "no replays found for version {0}"
+msgstr ""
+
+msgctxt "#32472"
+msgid "Select MARP {0} replay:"
+msgstr ""
+
+msgctxt "#32480"
+msgid "Emulator: {0}"
+msgstr ""
+
+msgctxt "#32481"
+msgid "warm up..."
+msgstr ""
+
+msgctxt "#32482"
+msgid "Select CHD:"
+msgstr ""
+
+msgctxt "#32483"
+msgid "searching shellscript..."
+msgstr ""
+
+msgctxt "#32484"
+msgid "download replay..."
+msgstr ""
+
+msgctxt "#32485"
+msgid "{0} error"
+msgstr ""
+
+msgctxt "#32486"
+msgid "rom not found"
+msgstr ""
+
+msgctxt "#32487"
+msgid "Select file:"
+msgstr ""
+
+msgctxt "#32488"
+msgid "emulator running..."
+msgstr ""
+
+msgctxt "#32489"
+msgid "emulator stopped..."
+msgstr ""
+
+msgctxt "#32490"
+msgid "Played: {0}"
+msgstr ""
+
+msgctxt "#32491"
+msgid "error: see bottom left"
+msgstr ""
+
+msgctxt "#32492"
+msgid "{0} stopped"
+msgstr ""
+
+msgctxt "#32493"
+msgid "Screensaver active. Press a button to escape!"
+msgstr ""
+
+msgctxt "#32494"
+msgid "searching roms..."
+msgstr ""
+
+msgctxt "#32495"
+msgid "error"
+msgstr ""
+
+msgctxt "#32496"
+msgid "{0}: not found in Batocera map"
+msgstr ""
+
+msgctxt "#32497"
+msgid "check rom in cache deadend?"
+msgstr ""
+
+msgctxt "#32498"
+msgid "seems we can not find the rom?"
+msgstr ""
+
+msgctxt "#32510"
+msgid "Scan Status"
+msgstr ""
+
+msgctxt "#32511"
+msgid "scan already running..."
+msgstr ""
+
+msgctxt "#32512"
+msgid "another scan is already running..."
+msgstr ""
+
+msgctxt "#32513"
+msgid "scan cancelled"
+msgstr ""
+
+msgctxt "#32514"
+msgid "What should we do?"
+msgstr ""
+
+msgctxt "#32515"
+msgid "Update database"
+msgstr ""
+
+msgctxt "#32516"
+msgid "Scan dat files"
+msgstr ""
+
+msgctxt "#32517"
+msgid "Scan artwork"
+msgstr ""
+
+msgctxt "#32518"
+msgid "Scan eXoDOS"
+msgstr ""
+
+msgctxt "#32519"
+msgid "Scan GB64"
+msgstr ""
+
+msgctxt "#32520"
+msgid "Updating UMSA database"
+msgstr ""
+
+msgctxt "#32521"
+msgid "downloading zip..."
+msgstr ""
+
+msgctxt "#32522"
+msgid "download cancelled"
+msgstr ""
+
+msgctxt "#32523"
+msgid "download failed: {0}"
+msgstr ""
+
+msgctxt "#32524"
+msgid "UMSA database"
+msgstr ""
+
+msgctxt "#32525"
+msgid "reopening database..."
+msgstr ""
+
+msgctxt "#32526"
+msgid "Scan support files"
+msgstr ""
+
+msgctxt "#32527"
+msgid "Scan eXoDOS files"
+msgstr ""
+
+msgctxt "#32528"
+msgid "Scan GameBase64 files"
+msgstr ""
+
+msgctxt "#32529"
+msgid "Scan artwork folders"
+msgstr ""
+
+msgctxt "#32530"
+msgid "warm up"
+msgstr ""
+
+msgctxt "#32531"
+msgid "Which show would please you?"
+msgstr ""
+
+msgctxt "#32532"
+msgid "I wanna see random videos"
+msgstr ""
+
+msgctxt "#32533"
+msgid "Make me the artwork crossover"
+msgstr ""
+
+msgctxt "#32534"
+msgid "Just slide one after another"
+msgstr ""
+
+msgctxt "#32535"
+msgid "Gimme da wall, now"
+msgstr ""
+
+msgctxt "#32536"
+msgid "Astonish me with a MARP replay"
+msgstr ""
+
+msgctxt "#32537"
+msgid "Play random Video Game Music"
+msgstr ""
+
+msgctxt "#32538"
+msgid "What do you want to see?"
+msgstr ""
+
+msgctxt "#32539"
+msgid "screensaver add-on is not installed or disabled"
+msgstr ""
+
+msgctxt "#32550"
+msgid "UMSA migration"
+msgstr ""
+
+msgctxt "#32551"
+msgid "Legacy data import failed, will retry on next start."
+msgstr ""
+
+msgctxt "#32552"
+msgid "History and filters migrated."
+msgstr ""
+
+msgctxt "#32553"
+msgid "Migrated, discarded: {0}"
+msgstr ""
+
+msgctxt "#32554"
+msgid "Nothing to migrate."
+msgstr ""
+
+msgctxt "#32555"
+msgid "Import failed: {0} (use retry_import)."
+msgstr ""
+
+msgctxt "#32556"
+msgid "unknown"
+msgstr ""
+
+msgctxt "#32557"
+msgid "{0} (discarded: {1})"
+msgstr ""
+
+msgctxt "#32558"
+msgid "{0} legacy file(s) not removed: {1}."
+msgstr ""
+
+msgctxt "#32559"
+msgid "Manual"
+msgstr ""
+
+msgctxt "#32560"
+msgid "No PDF viewer: install the Kodi PDF reader add-on or set an external PDF viewer in the settings."
+msgstr ""
+
+msgctxt "#32561"
+msgid "Could not start the PDF viewer: {0}"
 msgstr ""

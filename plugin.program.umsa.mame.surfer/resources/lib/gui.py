@@ -8,18 +8,19 @@ they receive the ``UMSA`` instance as an argument so that the Kodi dialog
 stays the single owner of the skin controls.
 """
 
+import functools
 import os
 import sys
 from dataclasses import dataclass
 from random import choice, randint
-from threading import Thread
+from threading import Lock, Thread
 
 import xbmc
 import xbmcgui
 from emulator_launcher import LaunchCtx, launch_emulator
 from retroplayer_cache import run_retroplayer
 from settings_adapter import load_all_settings
-from umsa_core import FILTER_CATEGORIES, set_log
+from umsa_core import set_log
 from umsa_core.database import DBMod, split_gamename
 from umsa_core.default_filter import DEFAULT_FILTER_NAME
 from umsa_core.emulation import Emulation
@@ -55,11 +56,13 @@ from umsa_gui import (
 from umsa_gui import (
     gamelist as gamelist_workflows,
 )
+from umsa_gui import strings as S
 from umsa_gui.action_backlog import ActionBacklog
 from umsa_gui.artwork_presenter import create_gui_element_from_snap
 from umsa_gui.constants import (
     ACTION_BACKLOG_THRESHOLD,
     ACTION_CANCEL_DIALOG,
+    ACTION_CHOOSE_EMULATOR,
     ACTION_CONTEXT,
     ACTION_ENTER,
     ACTION_INFO,
@@ -73,15 +76,26 @@ from umsa_gui.constants import (
     ACTION_PLAY_NEXTITEM,
     ACTION_PLAYFULLSCREEN,
     ACTION_SOUND_VOLUME,
+    ACTION_START_EXODOS,
+    ACTION_START_EXODOS_ALT,
+    ACTION_START_KODI,
+    ACTION_START_MAME,
     COMPILATION_LABEL,
     EMULATOR_RUNNING_PROPERTY,
+    ENTRY_ACTION,
+    ENTRY_SEARCH,
     FILTER_CATEGORY_KEYS,
     FILTER_CATEGORY_LIST,
     FILTER_CONTENT_LIST_ACTIVE,
     FILTER_CONTENT_LIST_INACTIVE,
+    FILTER_KEY_LOAD,
+    FILTER_KEY_SAVE,
     FILTER_LABEL,
     FILTER_LABEL2,
     FILTER_LIST_BG,
+    FILTER_OPTION_ALL,
+    FILTER_OPTION_INVERT,
+    FILTER_OPTION_NONE,
     FILTER_OPTIONS,
     GAME_LIST,
     GAME_LIST_BG,
@@ -97,6 +111,11 @@ from umsa_gui.constants import (
     IMAGE_BIG_LIST,
     IMAGE_LIST,
     IMAGE_RIGHT,
+    KIND_EMULATORS,
+    KIND_MACHINES,
+    KIND_MEDIA,
+    KIND_SELECT,
+    KIND_SOFTWARE,
     LABEL_STATUS,
     LEFT_IMAGE_HORI,
     LEFT_IMAGE_VERT,
@@ -130,7 +149,11 @@ from umsa_gui.constants import (
     MAIN_MENU,
     MEDIA_LABEL,
     MUSIC_INFO,
-    NO_INFO_LABEL,
+    OPTION_NEW_SEARCH,
+    OPTIONS_ORDER,
+    OPTIONS_PLAY_STATUS,
+    SEARCH_MARP,
+    SEARCH_YOUTUBE,
     SERIES_LABEL,
     SET_LIST,
     SHADOW_DAT,
@@ -142,6 +165,9 @@ from umsa_gui.constants import (
     SYSTEM_WRAPLIST,
     TEXTLIST,
     TEXTLIST_HIDDEN,
+    TEXTLIST_KEY_EMU_OUTPUT,
+    TEXTLIST_KEY_NO_INFO,
+    TEXTLIST_KEY_PROPERTY,
     TEXTLIST_ORDER,
     TEXTLIST_OTHER_CATEGORIES,
     VIDEO_LABEL,
@@ -152,6 +178,12 @@ from umsa_gui.filter_ui import empty_filter_lists
 from umsa_gui.gamelist import GamelistCtx, GamelistSettle
 from umsa_gui.optional_plugins import KODIPDF, KODIYT, play_pdf
 from umsa_gui.paths import ADDON, ADDON_PATH, RESOURCE_LIB
+from umsa_gui.request_queue import (
+    REQUEST_CLOSE,
+    REQUEST_OPEN_SOFTWARE,
+    RequestQueue,
+)
+from umsa_gui.strings import tr
 
 __addon__ = ADDON
 __cwd__ = ADDON_PATH
@@ -168,6 +200,7 @@ SETTINGS_FOLDER = CORE_DATA_PATHS.filters_dir
 __all__ = [
     "ACTION_BACKLOG_THRESHOLD",
     "ACTION_CANCEL_DIALOG",
+    "ACTION_CHOOSE_EMULATOR",
     "ACTION_CONTEXT",
     "ACTION_ENTER",
     "ACTION_INFO",
@@ -181,17 +214,28 @@ __all__ = [
     "ACTION_PLAYFULLSCREEN",
     "ACTION_PLAY_NEXTITEM",
     "ACTION_SOUND_VOLUME",
+    "ACTION_START_EXODOS",
+    "ACTION_START_EXODOS_ALT",
+    "ACTION_START_KODI",
+    "ACTION_START_MAME",
     "COMPILATION_LABEL",
     "CORE_DATA_PATHS",
     "EMULATOR_RUNNING_PROPERTY",
+    "ENTRY_ACTION",
+    "ENTRY_SEARCH",
     "FILTER_CATEGORY_KEYS",
     "FILTER_CATEGORY_LIST",
     "FILTER_CONTENT_LIST_ACTIVE",
     "FILTER_CONTENT_LIST_INACTIVE",
+    "FILTER_KEY_LOAD",
+    "FILTER_KEY_SAVE",
     "FILTER_LABEL",
     "FILTER_LABEL2",
     "FILTER_LIST_BG",
     "FILTER_OPTIONS",
+    "FILTER_OPTION_ALL",
+    "FILTER_OPTION_INVERT",
+    "FILTER_OPTION_NONE",
     "GAMELIST_SETTLE_DELAY",
     "GAME_LIST",
     "GAME_LIST_BG",
@@ -206,6 +250,11 @@ __all__ = [
     "IMAGE_BIG_LIST",
     "IMAGE_LIST",
     "IMAGE_RIGHT",
+    "KIND_EMULATORS",
+    "KIND_MACHINES",
+    "KIND_MEDIA",
+    "KIND_SELECT",
+    "KIND_SOFTWARE",
     "KODIPDF",
     "KODIYT",
     "LABEL_STATUS",
@@ -241,8 +290,12 @@ __all__ = [
     "M_SWL",
     "M_UPD",
     "M_YEAR",
-    "NO_INFO_LABEL",
+    "OPTIONS_ORDER",
+    "OPTIONS_PLAY_STATUS",
+    "OPTION_NEW_SEARCH",
     "PLATFORM",
+    "SEARCH_MARP",
+    "SEARCH_YOUTUBE",
     "SERIES_LABEL",
     "SETTINGS_FOLDER",
     "SET_LIST",
@@ -255,6 +308,9 @@ __all__ = [
     "SYSTEM_WRAPLIST",
     "TEXTLIST",
     "TEXTLIST_HIDDEN",
+    "TEXTLIST_KEY_EMU_OUTPUT",
+    "TEXTLIST_KEY_NO_INFO",
+    "TEXTLIST_KEY_PROPERTY",
     "TEXTLIST_ORDER",
     "TEXTLIST_OTHER_CATEGORIES",
     "UMSA",
@@ -277,6 +333,12 @@ class VgmCommandMonitor(xbmc.Monitor):
     The VGM process and the software selection belong to this script, so
     the screensaver (a separate add-on) asks for volume/next/stop and for
     opening a displayed software over Kodi notifications.
+
+    Kodi delivers the callback also in the middle of a running window
+    handler. Closing the window and opening a software are therefore only
+    queued (``UMSA.requests``) and run once no handler is active; the VGM
+    actions only write to the VGM socket and run at once. After
+    ``release_resources()`` the monitor ignores everything.
     """
 
     def __init__(self, owner):
@@ -286,27 +348,75 @@ class VgmCommandMonitor(xbmc.Monitor):
     def onNotification(self, sender, method, data):
         if sender != VGM_SENDER:
             return
+        if getattr(self.owner, '_resources_released', False):
+            return
         if is_frontend_close_method(method):
             # the maintenance script deletes databases: release them first
             xbmc.log("UMSA gui: close requested by maintenance")
-            self.owner.exit()
+            self.owner.requests.post(REQUEST_CLOSE)
             return
         software_id = parse_software_open_method(method)
         if software_id is not None:
-            self.owner.open_software(software_id)
+            self.owner.requests.post(REQUEST_OPEN_SOFTWARE, software_id)
             return
         action = parse_vgm_action_method(method)
         if action in ('volume_up', 'volume_down', 'next', 'stop'):
             self.owner._handle_vgm_action(action)
 
 
+# guards the hand-over of the database close to a still running scan thread
+_SCAN_LOCK = Lock()
+
+# screen aspect -> divisor for the width of the left images (skin is 16:9)
+_LEFT_IMAGE_ASPECTS = {"16:10": 1.6, "5:4": 1.25, "4:3": 1.33}
+
+
+def _window_handler(method):
+    """Mark a Kodi window callback as running for ``UMSA.requests``.
+
+    Requests of the monitor that arrive meanwhile run after the outermost
+    handler returned.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        requests = getattr(self, 'requests', None)
+        if not isinstance(requests, RequestQueue):
+            return method(self, *args, **kwargs)
+        with requests.busy():
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _close_database(window):
+    """Close the databases, then tell the maintenance script they are free."""
+
+    try:
+        window.ggdb.close()
+    except Exception as exc:
+        xbmc.log(f"UMSA gui: exit: could not close database: {exc}", xbmc.LOGERROR)
+    set_frontend_running(False)
+
+
 class UMSA(xbmcgui.WindowXMLDialog):
     """Main UMSA class"""
+
+    # one-time part of onInit done (Kodi runs onInit on every window init)
+    _initialized = False
+    # skin widths of the left images, read on the first onInit
+    _left_image_widths = None
+    # the running scan thread closes the databases when it ends
+    _close_db_after_scan = False
+    # the scan thread left update() (set under _SCAN_LOCK)
+    _scan_ended = False
 
     def __init__(self, strXMLname, strFallbackPath, strDefaultName, forceFallback):
 
         # initialize
         self.quit = False
+        # close / open-software requests of the monitor, run while idle
+        self.requests = RequestQueue(self._handle_request)
         # set once release_resources() ran (exit() or Kodi shutdown)
         self._resources_released = False
         self.selected_control_id = SOFTWARE_BUTTON # holds the old control id from skin
@@ -332,6 +442,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.lastptr = 0
         # old search
         self.searchold = None
+        # what the game list shows (KIND_*) and, for a "Select ..." list,
+        # the menu code it was opened for
+        self.gamelist_kind = KIND_SOFTWARE
+        self.gamelist_select = None
+        # filter category shown in the filter content lists
+        self.act_filter_category = None
         # diff emu toggle
         self.diff_emu = False
         # set for vgms for software
@@ -356,6 +472,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.played = None
         self.vidman = None
         self.emulation_start = 0
+        self.pdfviewer = ''
+        # ProcessRunner of the external PDF viewer (gamelist_actions.open_manual)
+        self.manual_viewer = None
         self.initial_software_id = None
 
         # Clear stale emulator running state from any previous crashed instance
@@ -370,8 +489,40 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         xbmc.log("UMSA gui: __init__ done")
 
+    @_window_handler
     def onInit(self):
-        """Kodi onInit"""
+        """Kodi onInit.
+
+        Kodi runs it again whenever the window is initialised anew, so only
+        the controls are set up every time; objects, databases and the
+        history are created once (``_init_once``).
+        """
+
+        self._init_controls()
+        first_run = not self._initialized
+        if first_run:
+            if not self._init_once():
+                return
+            self._initialized = True
+        self.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, self.act_filter))
+
+        # select software
+        if first_run and self.initial_software_id is not None:
+            self._remember_and_select(self.initial_software_id)
+        else:
+            # a later run only fills the controls again, no history entry
+            self.select_software(self.last[self.lastptr])
+
+        xbmc.log("UMSA gui: onInit: done")
+        xbmc.log(f"UMSA gui: PDF Reader import: {KODIPDF}")
+        xbmc.log(f"UMSA gui: Youtube import: {KODIYT}")
+
+        if self.quit:
+            self.close()
+            return
+
+    def _init_controls(self):
+        """Set the skin controls up; safe to repeat on every onInit."""
 
         # make all popups unvisible
         self.getControl(MACHINE_PLUS).setVisible(False)
@@ -387,6 +538,37 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.getControl(COMPILATION_LABEL).setVisible(False)
         self.getControl(MEDIA_LABEL).setVisible(False)
 
+        # set aspectratio for left images depending on screen aspect; always
+        # from the widths of the skin, so a repeated run does not scale twice
+        if self._left_image_widths is None:
+            self._left_image_widths = (
+                self.getControl(LEFT_IMAGE_HORI).getWidth(),
+                self.getControl(LEFT_IMAGE_VERT).getWidth())
+        aspect = _LEFT_IMAGE_ASPECTS.get(self.aratio)
+        if aspect is not None:
+            _4to3, _3to4 = self._left_image_widths
+            self.getControl(LEFT_IMAGE_HORI).setWidth(int(_4to3 / aspect * 1.77)) # 4:3
+            self.getControl(LEFT_IMAGE_VERT).setWidth(int(_3to4 * 1.77 / aspect)) # 3:4
+
+        # fill filter lists
+        self.getControl(FILTER_CATEGORY_LIST).reset()
+        self.getControl(FILTER_CATEGORY_LIST).addItems(
+            filter_ui.category_list_items())
+        self.getControl(FILTER_OPTIONS).reset()
+        self.getControl(FILTER_OPTIONS).addItems([
+            xbmcgui.ListItem(tr(string_id), key)
+            for key, string_id in (
+                (FILTER_OPTION_ALL, S.FILTER_OPTION_ALL),
+                (FILTER_OPTION_NONE, S.FILTER_OPTION_NONE),
+                (FILTER_OPTION_INVERT, S.FILTER_OPTION_INVERT))])
+
+    def _init_once(self):
+        """Create player, dialogs, emulation, monitor, database and history.
+
+        Returns False when the window was closed (first start without a
+        database download).
+        """
+
         self.player = xbmc.Player()
 
         # for kodi dialogs
@@ -400,23 +582,6 @@ class UMSA(xbmcgui.WindowXMLDialog):
         if self.player.isPlayingVideo():
             self.already_playing = True
 
-        # set aspectratio for left images depending on screen aspect
-        if self.aratio == "16:10":
-            _4to3 = self.getControl(LEFT_IMAGE_HORI).getWidth()
-            _3to4 = self.getControl(LEFT_IMAGE_VERT).getWidth()
-            self.getControl(LEFT_IMAGE_HORI).setWidth(int(_4to3 /1.6*1.77)) # 4:3
-            self.getControl(LEFT_IMAGE_VERT).setWidth(int(_3to4 *1.77/1.6)) # 3:4
-        elif self.aratio == "5:4":
-            _4to3 = self.getControl(LEFT_IMAGE_HORI).getWidth()
-            _3to4 = self.getControl(LEFT_IMAGE_VERT).getWidth()
-            self.getControl(LEFT_IMAGE_HORI).setWidth(int(_4to3 /1.25*1.77)) # 4:3
-            self.getControl(LEFT_IMAGE_VERT).setWidth(int(_3to4 *1.77/1.25)) # 3:4
-        elif self.aratio == "4:3":
-            _4to3 = self.getControl(LEFT_IMAGE_HORI).getWidth()
-            _3to4 = self.getControl(LEFT_IMAGE_VERT).getWidth()
-            self.getControl(LEFT_IMAGE_HORI).setWidth(int(_4to3  /1.33*1.77)) # 4:3
-            self.getControl(LEFT_IMAGE_VERT).setWidth(int(_3to4  *1.77/1.33)) # 3:4
-
         # initalize Emulation class
         self.emulation = Emulation(
             self.temp_dir, self.mameini, self.mame_dir, self.mame_exe, self.chdman_exe,
@@ -425,22 +590,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
             vgm_max_duration=self.vgm_max_duration)
 
         # receive VGM control commands from the screensaver add-on
-        if not hasattr(self, 'vgm_monitor'):
-            self.vgm_monitor = VgmCommandMonitor(self)
-            # abort-aware wait for long Core loops (emulator run, CHD, scans)
-            self.abort_wait = make_abort_wait(self.vgm_monitor)
+        self.vgm_monitor = VgmCommandMonitor(self)
+        # abort-aware wait for long Core loops (emulator run, CHD, scans)
+        self.abort_wait = make_abort_wait(self.vgm_monitor)
 
         # filters are loaded from status.db after the database is open and the
         # one-time legacy import has run (the migration runs at DBMod open)
         self.filter_lists = empty_filter_lists()
         self.act_filter = DEFAULT_FILTER_NAME
-
-        # fill filter lists
-        list_items = []
-        for i in FILTER_CATEGORIES:
-            list_items.append(xbmcgui.ListItem(i))
-        self.getControl(FILTER_CATEGORY_LIST).addItems(list_items)
-        self.getControl(FILTER_OPTIONS).addItems(('all', 'none', 'invert'))
 
         # database connection
         if CORE_DATA_PATHS.umsa_db.is_file():
@@ -451,9 +608,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 xbmc.log("UMSA gui: onInit: no umsa.db after download, closing",
                          xbmc.LOGERROR)
                 self.close()
-                return
-            self.scan_thread = Thread(target=self.update, args=('dat',))
-            self.scan_thread.start()
+                return False
+            self._start_scan('dat')
 
         # one-time legacy import + load persisted filter selections and history
         self.run_startup_import()
@@ -461,7 +617,6 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.ggdb.ensure_default_filter()
         self.filter_lists = self.ggdb.load_filter_selections(self.act_filter)
         self.ggdb.define_filter(self.filter_lists)
-        self.getControl(FILTER_LABEL2).setLabel(f'Filter: {self.act_filter}')
 
         # load last internal software list
         self.last = self.ggdb.load_lastgames()
@@ -470,22 +625,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.last.append(self.ggdb.get_random_id())
         # initialize pointer to the newest entry
         self.lastptr = len(self.last) - 1
-        # select software
-        if self.initial_software_id is None:
-            self.select_software(self.last[self.lastptr])
-        else:
-            self._remember_and_select(self.initial_software_id)
-
-        xbmc.log("UMSA gui: onInit: done")
-        xbmc.log(f"UMSA gui: PDF Reader import: {KODIPDF}")
-        xbmc.log(f"UMSA gui: Youtube import: {KODIYT}")
-
-        if self.quit:
-            self.close()
-            return
+        return True
 
     # sequence: onFocus, onClick, onAction
 
+    @_window_handler
     def onFocus(self, control_id):
         """Kodi onFocus"""
 
@@ -526,6 +670,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.enter = None
         self.selected_control_id = control_id
 
+    @_window_handler
     def onClick(self, control_id):
         """Kodi onClick"""
         xbmc.log("UMSA gui: onClick")
@@ -544,32 +689,34 @@ class UMSA(xbmcgui.WindowXMLDialog):
             self.run_emulator({'exe': "mame", 'name': "MAME"})
             return
 
-        item = self.getControl(control_id).getSelectedItem().getLabel()
+        selected = self.getControl(control_id).getSelectedItem()
+        # option lists carry their key in label2
+        item = selected.getLabel2()
         if control_id == TEXTLIST:
             # placeholder without DAT text: nothing to show
-            if item == NO_INFO_LABEL:
+            if selected.getProperty(TEXTLIST_KEY_PROPERTY) == TEXTLIST_KEY_NO_INFO:
                 return
             # text viewer: show the text of the entry itself, entries like
             # 'Emulator output' exist only in the list, not in all_dat
             else:
-                text = self.getControl(TEXTLIST).getSelectedItem().getProperty('text')
-                self.dialog.textviewer(item, text)
+                self.dialog.textviewer(
+                    selected.getLabel(), selected.getProperty('text'))
 
         elif control_id == GAME_LIST_OPTIONS:
-            if item == "new search":
-                keyboard = xbmc.Keyboard('', "Search for", 0)
+            if item == OPTION_NEW_SEARCH:
+                keyboard = xbmc.Keyboard('', tr(S.SEARCH_FOR), 0)
                 keyboard.doModal()
                 if keyboard.isConfirmed():
                     self.searchold = keyboard.getText()
                 else:
                     return
                 gamelist, pos, result_count = self.ggdb.get_searchresults(self.searchold)
-                gl_label = f'{result_count} results for {self.searchold}'
-                gl_options = ('new search',)
+                gl_label = tr(S.LIST_SEARCH_RESULTS, result_count, self.searchold)
+                gl_options = (OPTION_NEW_SEARCH,)
 
                 # check how many results
                 if len(gamelist) == 0:
-                    self.dialog.notification('Search', 'found no results',
+                    self.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_NO_RESULTS),
                         xbmcgui.NOTIFICATION_ERROR, 5000, False)
                     return
                 if len(gamelist) == 1:
@@ -581,7 +728,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.popup_gamelist(gamelist, gl_label, pos=pos, options=gl_options)
 
             # options from play status
-            elif item in ('time_played', 'last_played', 'play_count'):
+            elif item in OPTIONS_PLAY_STATUS:
                 gamelist, pos = self.ggdb.get_last_played(item)
                 self.getControl(GAME_LIST).reset()
                 gui_list = []
@@ -594,7 +741,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.getControl(GAME_LIST).addItems(gui_list)
                 self.setFocus(self.getControl(GAME_LIST))
 
-            elif item in ('name', 'year', 'publisher'):
+            elif item in OPTIONS_ORDER:
                 self.ggdb.set_order(item)
                 content = int(self.getControl(GAME_LIST_LABEL_ID).getLabel())
                 self.update_gamelist(content)
@@ -604,14 +751,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         # FILTER: select all, none or invert lists
         elif control_id == FILTER_OPTIONS:
-            filter_category_name = self.getControl(FILTER_LABEL).getLabel()
-            if item == 'none':
+            filter_category_name = self.act_filter_category
+            if item == FILTER_OPTION_NONE:
                 self.filter_lists[filter_category_name] = []
-            elif item == 'all':
+            elif item == FILTER_OPTION_ALL:
                 self.filter_lists[filter_category_name] = []
                 for i in self.ggdb.get_all_dbentries(filter_category_name):
                     self.filter_lists[filter_category_name].append(str(i['id']))
-            elif item == 'invert':
+            elif item == FILTER_OPTION_INVERT:
                 templist = []
                 for i in self.ggdb.get_all_dbentries(filter_category_name):
                     if str(i['id']) not in self.filter_lists[filter_category_name]:
@@ -625,6 +772,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             else:
                 self.setFocus(self.getControl(FILTER_CONTENT_LIST_ACTIVE))
 
+    @_window_handler
     def onAction(self, action):
         """Kodi onAction"""
 
@@ -743,51 +891,47 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
                 elif menu_item == M_UPD:
                     self.setFocus(self.getControl(self.main_focus))
-                    # sanity
-                    if self.scan_thread and not self.scan_thread.is_alive():
-                        self.scan_thread = None
-                    if self.scan_thread:
-                        self.dialog.notification('Scan Status', 'scan already running...',
-                            xbmcgui.NOTIFICATION_ERROR, 4000)
+                    if self._refuse_while_scanning():
                         return
 
                     ret = self.dialog.select(
-                        'What should we do?',
-                        ('Update database', 'Scan dat files', 'Scan artwork', 'Scan eXoDOS', 'Scan GB64')
+                        tr(S.UPDATE_WHAT), [
+                            tr(S.UPDATE_DATABASE),
+                            tr(S.UPDATE_SCAN_DATS),
+                            tr(S.UPDATE_SCAN_ARTWORK),
+                            tr(S.UPDATE_SCAN_EXODOS),
+                            tr(S.UPDATE_SCAN_GB64),
+                        ]
                     )
                     if ret == 0:
                         self.update('db')
                     elif ret == 1:
-                        self.scan_thread = Thread(target=self.update, args=('dat',))
-                        self.scan_thread.start()
+                        self._start_scan('dat')
                     elif ret == 2:
-                        self.scan_thread = Thread(target=self.update, args=('art',))
-                        self.scan_thread.start()
+                        self._start_scan('art')
                     elif ret == 3:
-                        self.scan_thread = Thread(target=self.update, args=('exo',))
-                        self.scan_thread.start()
+                        self._start_scan('exo')
                     elif ret == 4:
-                        self.scan_thread = Thread(target=self.update, args=('gb64',))
-                        self.scan_thread.start()
+                        self._start_scan('gb64')
 
                 elif menu_item == M_SSAVER:
                     self.setFocus(self.getControl(self.main_focus))
                     ret = self.dialog.select(
-                        'Which show would please you?', (
-                            'I wanna see random videos',
-                            'Make me the artwork crossover',
-                            'Just slide one after another',
-                            'Gimme da wall, now',
-                            'Astonish me with a MARP replay',
-                            'Play random Video Game Music'
-                        )
+                        tr(S.SAVER_WHICH_SHOW), [
+                            tr(S.SAVER_SHOW_VIDEOS),
+                            tr(S.SAVER_SHOW_CROSS),
+                            tr(S.SAVER_SHOW_SLIDE),
+                            tr(S.SAVER_SHOW_WALL),
+                            tr(S.SAVER_SHOW_MARP),
+                            tr(S.SAVER_SHOW_VGM),
+                        ]
                     )
                     if ret == 0:
                         self.start_screensaver('videos')
                     elif (ret == 1 or ret == 2) and self.ensure_screensaver_available():
                         art_types = self.ggdb.get_art_types()
                         ret2 = self.dialog.multiselect(
-                            "What do you want to see?", art_types
+                            tr(S.SAVER_WHICH_ARTWORK), art_types
                         )
                         if ret2:
                             selected_art_types = []
@@ -802,7 +946,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     elif ret == 4:
                         self.marp_replayer()
                     elif ret == 5:
-                        self._show_vgm_info('Starting random VGM...')
+                        self._show_vgm_info(tr(S.VGM_RANDOM_STARTING))
                         self.emulation.play_random_vgm(
                             self.ggdb, None, SETTINGS_FOLDER, xbmc.sleep)
                 elif menu_item == M_ASETTINGS:
@@ -825,14 +969,18 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 elif menu_item == M_FILTER:
                     if self.ggdb.use_filter:
                         self.ggdb.set_filter_enabled(False)
-                        self.getControl(MAIN_MENU).getSelectedItem().setLabel("Filter (off)")
+                        self.getControl(MAIN_MENU).getSelectedItem().setLabel(
+                            tr(S.MENU_FILTER_OFF))
                     else:
                         self.ggdb.set_filter_enabled(True)
                         self.getControl(MAIN_MENU).getSelectedItem().setLabel(
-                            f"Filter ({self.act_filter})")
+                            tr(S.MENU_FILTER_NAME, self.act_filter))
                 # update umsa db
                 elif menu_item == M_UPD:
                     self.setFocus(self.getControl(self.main_focus))
+                    # umsa.db is closed for the update: not under a scan
+                    if self._refuse_while_scanning():
+                        return
                     self.update('db')
                 # shortcut to play status
                 elif menu_item == M_EXIT:
@@ -1126,10 +1274,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Update gamelist"""
         return gamelist_workflows.update_gamelist(self, item)
 
-    def popup_gamelist(self, gamelist, label, pos=0, sort=None, options=None):
+    def popup_gamelist(self, gamelist, label, pos=0, sort=None, options=None,
+                       kind=KIND_SOFTWARE, select_what=None):
         """Pop up gamelist."""
         return gamelist_workflows.popup_gamelist(
-            self, gamelist, label, pos, sort, options)
+            self, gamelist, label, pos, sort, options, kind, select_what)
 
     def choose_media(self):
         """Dialog to choose media for playing."""
@@ -1266,6 +1415,56 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Update UMSA database, artwork or support files"""
         return scan_orchestrator.update(self, what, CORE_DATA_PATHS)
 
+    def _scan_running(self):
+        """Return whether a scan thread is alive; forget a finished one."""
+
+        if self.scan_thread and not self.scan_thread.is_alive():
+            self.scan_thread = None
+        return bool(self.scan_thread)
+
+    def _refuse_while_scanning(self):
+        """Tell the user that a scan runs; True when the caller must stop."""
+
+        if not self._scan_running():
+            return False
+        self.dialog.notification(
+            tr(S.SCAN_STATUS), tr(S.SCAN_ALREADY_RUNNING),
+            xbmcgui.NOTIFICATION_ERROR, 4000)
+        return True
+
+    def _start_scan(self, what):
+        """Run ``update(what)`` in the scan thread."""
+
+        self._scan_ended = False
+        self.scan_thread = Thread(target=self._run_scan, args=(what,))
+        self.scan_thread.start()
+
+    def _run_scan(self, what):
+        """Body of the scan thread.
+
+        A scan that outlived ``release_resources()`` closes the databases
+        itself: they are never closed under a running scan.
+        """
+
+        try:
+            self.update(what)
+        finally:
+            with _SCAN_LOCK:
+                self._scan_ended = True
+                if self._close_db_after_scan:
+                    xbmc.log("UMSA gui: scan ended after exit, closing database")
+                    _close_database(self)
+
+    def _handle_request(self, kind, value):
+        """Run a queued request of the monitor (``self.requests``)."""
+
+        if self._resources_released:
+            return
+        if kind == REQUEST_CLOSE:
+            self.exit()
+        elif kind == REQUEST_OPEN_SOFTWARE:
+            self.open_software(value)
+
     def exit(self):
         """Exit add-on: stop video, close database."""
 
@@ -1278,11 +1477,18 @@ class UMSA(xbmcgui.WindowXMLDialog):
         ``exit()`` calls it before closing the window; ``main()`` calls it
         when Kodi closed the window without ``exit()`` (shutdown), so a
         playing VGM or a running scan does not keep the script alive.
+
+        A scan that does not stop in time keeps the databases: its thread
+        closes them when it ends (``_run_scan``).
         """
 
         if getattr(self, '_resources_released', False):
             return
         self._resources_released = True
+
+        requests = getattr(self, 'requests', None)
+        if isinstance(requests, RequestQueue):
+            requests.close()
 
         settle = getattr(self, 'gamelist_settle', None)
         if settle is not None:
@@ -1306,6 +1512,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         except Exception as exc:
             xbmc.log(f"UMSA gui: exit: could not request scan stop: {exc}", xbmc.LOGERROR)
 
+        scan_alive = False
         try:
             scan_thread = getattr(self, 'scan_thread', None)
             if scan_thread and scan_thread.is_alive():
@@ -1313,16 +1520,21 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     scan_thread.join(timeout=5)
                 except Exception as exc:
                     xbmc.log(f"UMSA gui: exit: could not join scan thread: {exc}", xbmc.LOGERROR)
+                scan_alive = scan_thread.is_alive()
         except Exception as exc:
             xbmc.log(f"UMSA gui: exit: could not inspect scan thread: {exc}", xbmc.LOGERROR)
 
-        try:
-            self.ggdb.close()
-        except Exception as exc:
-            xbmc.log(f"UMSA gui: exit: could not close database: {exc}", xbmc.LOGERROR)
+        with _SCAN_LOCK:
+            if scan_alive and not getattr(self, '_scan_ended', False):
+                # never close the databases under a running scan
+                self._close_db_after_scan = True
+                xbmc.log(
+                    "UMSA gui: exit: scan still running, its thread closes "
+                    "the database", xbmc.LOGWARNING)
+                return
 
         # databases are closed: the maintenance script may go on
-        set_frontend_running(False)
+        _close_database(self)
 
 
 def main():
@@ -1349,8 +1561,10 @@ def main():
         if monitor is not None and monitor.abortRequested():
             gui.release_resources()
     finally:
-        # also covers windows closed without exit() (e.g. failed first start)
-        set_frontend_running(False)
+        # also covers windows closed without exit() (e.g. failed first start);
+        # a scan that still runs clears the flag when it closed the databases
+        if not getattr(gui, '_close_db_after_scan', False):
+            set_frontend_running(False)
     del gui
 
 

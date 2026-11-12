@@ -96,3 +96,32 @@ msgstr ""
 msgctxt "#30063"
 msgid "Titles or snaps"
 msgstr ""
+
+# screensaver texts (umsa_screensaver/strings.py)
+msgctxt "#32300"
+msgid "Screensaver"
+msgstr ""
+
+msgctxt "#32301"
+msgid "no screensaver artwork available"
+msgstr ""
+
+msgctxt "#32302"
+msgid "no usable screensaver artwork found"
+msgstr ""
+
+msgctxt "#32303"
+msgid "screensaver artwork check failed"
+msgstr ""
+
+msgctxt "#32304"
+msgid "no screensaver videos available"
+msgstr ""
+
+msgctxt "#32305"
+msgid "no screensaver videos found"
+msgstr ""
+
+msgctxt "#32306"
+msgid "video mode is not available while music plays"
+msgstr ""
