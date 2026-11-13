@@ -109,23 +109,22 @@ def update(gui, what, core_data_paths):
         title = tr(titles[what])
         gui.progress_dialog.create(title, tr(S.SCAN_WARM_UP))
 
-        scans = {
-            'dat': ('scan_dats', (gui.datdir, settings_folder)),
-            'exo': ('scan_exodos_to_db', ('', settings_folder)),
-            'gb64': ('scan_gb64_to_db', ('', settings_folder)),
-            'art': (
-                'scan_artwork',
-                ([gui.progettosnaps, gui.own_artwork], settings_folder, os.listdir)
-            ),
+        scans = gui.scans
+        runs = {
+            'dat': ('dats', lambda: scans.dats(gui.datdir)),
+            'exo': ('exodos', scans.exodos),
+            'gb64': ('gb64', scans.gb64),
+            'art': ('artwork', lambda: scans.artwork(
+                [gui.progettosnaps, gui.own_artwork], listdir=os.listdir)),
         }
-        scan_method, scan_args = scans[what]
+        scan_name, scan = runs[what]
 
         def progress(percent, title, message):
             gui.progress_dialog.update(percent, title, message)
 
         try:
             scan_result = run_scan_with_progress(
-                gui.ggdb, scan_method, scan_args, progress, title, xbmc.sleep,
+                scans.state, scan_name, scan, progress, title, xbmc.sleep,
                 wait=getattr(gui, 'abort_wait', None),
                 is_cancelled=lambda: _cancel_pressed(gui.progress_dialog))
         except ShutdownRequested:

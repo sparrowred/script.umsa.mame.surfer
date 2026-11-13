@@ -4,12 +4,12 @@ This module provides a single process-wide lock shared by every covered scan
 workflow:
 
 * DAT scans that use the shared staging tables (``DatScanner`` /
-  ``DBMod.scan_dats``).
-* The MAME artwork scan (``ArtworkScanner`` / ``DBMod.scan_artwork``).
+  ``Scans.dats``).
+* The MAME artwork scan (``ArtworkScanner`` / ``Scans.artwork``).
 * The GB64 scan, including its DAT metadata work
-  (``GB64Scanner`` / ``DBMod.scan_gb64_to_db``).
+  (``GB64Scanner`` / ``Scans.gb64``).
 * The eXoDOS scan, including its DAT metadata work
-  (``DBMod.scan_exodos_to_db``).
+  (``ExodosScanner`` / ``Scans.exodos``).
 
 The lock is process-local: it does not coordinate separate Python processes
 that may access the same database files.

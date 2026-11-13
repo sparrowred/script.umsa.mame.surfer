@@ -4,7 +4,9 @@
      No full-screen background, the overlay stays transparent. The texts are
      buttons with an automatic width: only a button stretches its texture to
      the length of its text, which gives every line a translucent dark plate
-     (Python cannot measure a text). Focus and no-focus look the same and
+     (Python cannot measure a text). The plate texture has rounded corners;
+     border="10" keeps them unstretched (nine-slice, radius 10 px, white so
+     colordiffuse sets colour and alpha). Focus and no-focus look the same and
      there is no onclick, the buttons only display. -->
 <window>
     <!-- above umsa_saver.xml (zorder 1) -->
@@ -57,8 +59,8 @@
                     <textcolor>white</textcolor>
                     <focusedcolor>white</focusedcolor>
                     <shadowcolor>black</shadowcolor>
-                    <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
-                    <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
+                    <texturenofocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturenofocus>
+                    <texturefocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturefocus>
                 </control>
             </control>
             <control type="grouplist">
@@ -81,8 +83,8 @@
                     <textcolor>white</textcolor>
                     <focusedcolor>white</focusedcolor>
                     <shadowcolor>black</shadowcolor>
-                    <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
-                    <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
+                    <texturenofocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturenofocus>
+                    <texturefocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturefocus>
                 </control>
             </control>
         </control>
@@ -102,8 +104,8 @@
                 <textcolor>FFB2D4F5</textcolor>
                 <focusedcolor>FFB2D4F5</focusedcolor>
                 <shadowcolor>ff000000</shadowcolor>
-                <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
-                <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
+                <texturenofocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturenofocus>
+                <texturefocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturefocus>
             </control>
             <control type="button" id="4101">
                 <description>Kodi music: Song – Artist (-mm:ss remaining); empty parts drop their separator</description>
@@ -119,8 +121,8 @@
                 <textcolor>FFB2D4F5</textcolor>
                 <focusedcolor>FFB2D4F5</focusedcolor>
                 <shadowcolor>ff000000</shadowcolor>
-                <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
-                <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
+                <texturenofocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturenofocus>
+                <texturefocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturefocus>
             </control>
             <control type="button" id="4102">
                 <description>Kodi music without title: Artist (-mm:ss remaining)</description>
@@ -136,8 +138,8 @@
                 <textcolor>FFB2D4F5</textcolor>
                 <focusedcolor>FFB2D4F5</focusedcolor>
                 <shadowcolor>ff000000</shadowcolor>
-                <texturenofocus colordiffuse="99000000">screensaver-black.png</texturenofocus>
-                <texturefocus colordiffuse="99000000">screensaver-black.png</texturefocus>
+                <texturenofocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturenofocus>
+                <texturefocus border="10" colordiffuse="99000000">screensaver-rounded.png</texturefocus>
             </control>
         </control>
     </controls>

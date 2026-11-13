@@ -29,6 +29,10 @@ from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 
+
+class _ExodosCancellationCheckError(Exception):
+    """Raised when the host cancellation predicate itself fails."""
+
 SOURCE = "exodos"
 DAT_FILE = "eXoDOS"
 
@@ -48,7 +52,8 @@ class ExodosScanner:
         progress: Optional ``progress(percent, what)`` callback. Either value
             may be ``None`` to leave it unchanged.
         is_cancelled: Optional predicate returning ``True`` when the host wants
-            the scan to stop.
+            the scan to stop. A predicate that raises aborts the scan (it is
+            never mistaken for "not cancelled"), like in the other scanners.
     """
 
     def __init__(self, db_paths, initialize_dat=None, initialize_art=None,
@@ -67,13 +72,17 @@ class ExodosScanner:
         if self._progress is not None:
             self._progress(percent, what)
 
-    def _cancelled(self):
-        """Return ``True`` when the host requested a stop."""
+    def _cancelled(self, cancel_event=None):
+        """Return ``True`` when the host or the cancel event requested a stop."""
 
+        if cancel_event is not None and cancel_event.is_set():
+            return True
         try:
             return bool(self._is_cancelled())
-        except Exception:
-            return False
+        except Exception as exc:
+            log(f"UMSA exodos scan: cancellation predicate failed ({exc}); "
+                "aborting", level='error')
+            raise _ExodosCancellationCheckError(str(exc)) from exc
 
     def _init_dat_schema(self, conn):
         """Ensure the DAT schema exists on ``conn`` (committed separately)."""
@@ -211,11 +220,11 @@ class ExodosScanner:
             'artwork_videosnap_state': 'skipped',
         }
 
-        if cancel_event is not None and cancel_event.is_set():
-            summary['aborted'] = True
-            summary['errors'] += 1
-            return summary
-        if self._cancelled():
+        try:
+            cancelled = self._cancelled(cancel_event)
+        except _ExodosCancellationCheckError:
+            cancelled = True
+        if cancelled:
             summary['aborted'] = True
             summary['errors'] += 1
             return summary
@@ -273,6 +282,18 @@ class ExodosScanner:
                     level='warning')
             summary['unmatched'] = len(parsed.unmatched)
 
+            # last stop before the eXoDOS metadata is replaced
+            try:
+                cancelled = self._cancelled(cancel_event)
+            except _ExodosCancellationCheckError:
+                cancelled = True
+            if cancelled:
+                log("UMSA exodos scan: stopped before writing metadata, "
+                    "existing records kept", level='warning')
+                summary['aborted'] = True
+                summary['errors'] += 1
+                return summary
+
             # The complete result has been parsed and validated before anything
             # is deleted. An entirely unmatched/empty result must not wipe the
             # previously published eXoDOS metadata, so it is skipped.
@@ -289,10 +310,22 @@ class ExodosScanner:
             # one-pass filesystem inventories and neither parses the XML nor
             # writes the DAT metadata. It persists every unit through the
             # repository, so its report is folded into the scan summary.
+            # A failing predicate stops the artwork phase like a cancel (its
+            # checks partly sit under broad except blocks, a raise there could
+            # be taken for a unit error) and is counted as an error afterwards.
+            predicate_failed = []
+
+            def artwork_cancelled():
+                try:
+                    return self._cancelled(cancel_event)
+                except _ExodosCancellationCheckError:
+                    predicate_failed.append(True)
+                    return True
+
             try:
                 artwork = scan_exodos_artwork(
                     exodos_path, exodos_sets, art_repo, self._report,
-                    is_cancelled=self._cancelled)
+                    is_cancelled=artwork_cancelled)
             except Exception as exc:
                 # The metadata phase already succeeded and stays committed; an
                 # unexpected artwork failure is reported as a failed artwork
@@ -314,6 +347,10 @@ class ExodosScanner:
                 summary['errors'] += artwork['errors']
                 if artwork.get('aborted'):
                     summary['artwork_aborted'] = True
+            if predicate_failed:
+                summary['artwork_aborted'] = True
+                summary['artwork_errors'] += 1
+                summary['errors'] += 1
 
             # Persist the metadata phase regardless of the artwork outcome.
             dat_conn.commit()

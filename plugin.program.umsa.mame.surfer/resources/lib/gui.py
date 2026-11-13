@@ -26,6 +26,7 @@ from umsa_core.default_filter import DEFAULT_FILTER_NAME
 from umsa_core.emulation import Emulation
 from umsa_core.game_labels import split_gamename
 from umsa_core.rom_cache import CacheLayout
+from umsa_core.scans import Scans
 from umsa_core.support import youtube_search
 from umsa_core_kodi import (
     VGM_SENDER,
@@ -412,6 +413,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
     _close_db_after_scan = False
     # the scan thread left update() (set under _SCAN_LOCK)
     _scan_ended = False
+    # scan entry points and the progress of the active scan (_init_once)
+    scans = None
     # ROM cache settings, set by _read_settings()
     rom_cache = False
     cache_layout = None
@@ -608,6 +611,10 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # one-time legacy import has run (the migration runs at DBMod open)
         self.filter_lists = empty_filter_lists()
         self.act_filter = DEFAULT_FILTER_NAME
+
+        # scans write through their own connections; created before the
+        # first start's DAT scan and kept when update('db') replaces ggdb
+        self.scans = Scans(CORE_DATA_PATHS, lambda: self.nonmame)
 
         # database connection
         if CORE_DATA_PATHS.umsa_db.is_file():
@@ -1539,8 +1546,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 xbmc.log(f"UMSA gui: exit: could not clear VGM info: {exc}", xbmc.LOGERROR)
 
         try:
-            if hasattr(self, 'ggdb') and self.ggdb and hasattr(self.ggdb, 'scan_status'):
-                self.ggdb.scan_status = False
+            if self.scans is not None:
+                self.scans.state.request_stop()
                 xbmc.log('UMSA gui: exit: requested scan stop', xbmc.LOGDEBUG)
         except Exception as exc:
             xbmc.log(f"UMSA gui: exit: could not request scan stop: {exc}", xbmc.LOGERROR)

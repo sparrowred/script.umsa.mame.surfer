@@ -31,9 +31,8 @@ hold a connection that ``open_db()`` has replaced; ``gamelist`` and
 queries belong into those modules, not into ``DBMod``
 (``tests/arch/test_dbmod_surface.py``).
 
-The scan entry points (``scan_dats``, ``scan_artwork``, ``scan_exodos_to_db``,
-``scan_gb64_to_db``) still live here with the shared scan progress fields;
-the scanners write through their own connections.
+Scans are not part of ``DBMod``: :class:`umsa_core.scans.Scans` runs them
+with their own connections and holds the progress of the active scan.
 """
 
 import os
@@ -42,19 +41,15 @@ from urllib.request import pathname2url
 
 from .artwork_queries import ArtworkQueries
 from .artwork_repository import ArtworkRepository, create_artwork_tables
-from .artwork_scanner import ArtworkScanner
 from .dat_repository import DatRepository, create_dat_tables
-from .dat_scanner import DatScanner
 from .data_paths import CoreDataPaths
 from .default_filter import ensure_default_filter
 from .emulator_repository import EmulatorRepository
 from .game_repository import GameRepository
 from .gamelist_filter import Gamelist
-from .gb64_scanner import GB64Scanner
 from .history_import import run_legacy_import as _run_legacy_import
 from .history_repository import HistoryRepository
 from .logging import log
-from .scan_progress import _scan_state_ownership
 from .software_details import SoftwareDetails
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
@@ -74,9 +69,6 @@ class DBMod:
 
         self.nonmame = nonmame
         self.pref_country = pref_country
-        self.scan_perc = 0
-        self.scan_what = 'nothing'
-        self.scan_status = True
         # filter, order and selector state of the game lists; asks for the
         # connection on every call because open_db() replaces it
         self.gamelist = Gamelist(lambda: self.gdb)
@@ -286,175 +278,6 @@ class DBMod:
 
         for _alias, statement, params in self._source_attach_statements():
             self.gdbc.execute(statement, params)
-
-    def _run_scan_with_shared_state(self, start_what, run):
-        """Run ``run`` while owning the shared scan progress/status fields.
-
-        ``scan_perc``/``scan_what``/``scan_status`` describe the single active
-        scan, so only the invocation that actually acquires the process-wide
-        scan lock may initialise or finalise them. A competing invocation that
-        cannot take the lock delegates straight to the scanner, whose public
-        ``scan()`` returns its ``busy`` summary without touching this instance's
-        progress or cancellation state (in particular it does not clear
-        ``scan_status`` and thereby cancel the active scan).
-        """
-
-        with _scan_state_ownership(self, start_what):
-            return run()
-
-    def scan_gb64_to_db(self, empty, db_path):
-        """Read GameBase64 info from zip and artwork.
-
-        This is a thin compatibility wrapper around
-        :class:`umsa_core.gb64_scanner.GB64Scanner`. It keeps the historical
-        ``scan_gb64_to_db(empty, db_path)`` interface, the
-        ``scan_perc``/``scan_what``/``scan_status`` attributes used by
-        ``run_scan_with_progress()`` and the GUI, and returns the scanner's
-        summary dictionary unchanged.
-
-        The ``empty`` argument is a legacy placeholder that is never read; the
-        GameBase64 root is taken from the Core ``gb64`` setting instead. See
-        :meth:`GB64Scanner.scan` for the import semantics.
-        """
-
-        db_paths = _core_data_paths(db_path) if db_path else self.db_paths
-        gb64_root = self.nonmame.get('gb64', '') if self.nonmame else ''
-
-        def progress(percent, what):
-            if percent is not None:
-                self.scan_perc = percent
-            if what is not None:
-                self.scan_what = what
-
-        def is_cancelled():
-            return not self.scan_status
-
-        def run():
-            return GB64Scanner(
-                db_paths,
-                initialize_dat=create_dat_tables,
-                initialize_art=create_artwork_tables,
-                progress=progress,
-                is_cancelled=is_cancelled,
-            ).scan(gb64_root)
-
-        return self._run_scan_with_shared_state('reading covers...', run)
-
-    def scan_exodos_to_db(self, empty, db_path):
-        """Read eXoDOS xml and artwork.
-
-        This is a thin compatibility wrapper around
-        :class:`umsa_core.exodos_scanner.ExodosScanner`. It keeps the historical
-        ``scan_exodos_to_db(empty, db_path)`` interface, the
-        ``scan_perc``/``scan_what``/``scan_status`` attributes used by
-        ``run_scan_with_progress()`` and the GUI, and returns the scanner's
-        summary dictionary unchanged.
-        """
-
-        db_paths = _core_data_paths(db_path) if db_path else self.db_paths
-        exodos_root = self.nonmame.get('exodos', '') if self.nonmame else ''
-
-        def progress(percent, what):
-            if percent is not None:
-                self.scan_perc = percent
-            if what is not None:
-                self.scan_what = what
-
-        def is_cancelled():
-            return not self.scan_status
-
-        def run():
-            from .exodos_scanner import ExodosScanner
-            return ExodosScanner(
-                db_paths,
-                initialize_dat=create_dat_tables,
-                initialize_art=create_artwork_tables,
-                progress=progress,
-                is_cancelled=is_cancelled,
-            ).scan(exodos_root)
-
-        return self._run_scan_with_shared_state(
-            'reading MS-DOS.xml from zip', run)
-
-    def scan_dats(self, datdir, db_path):
-        """Read all MAME dat files from a directory
-
-        datdir -- directory with dat files
-        db_path -- directory for database files
-
-        This is a thin compatibility wrapper around
-        :class:`umsa_core.dat_scanner.DatScanner`. It keeps the public
-        ``scan_dats(datdir, db_path)`` interface, the
-        ``scan_perc``/``scan_what``/``scan_status`` attributes used by
-        ``run_scan_with_progress()`` and the GUI, and returns the scanner's
-        summary dictionary unchanged.
-
-        See :meth:`DatScanner.scan` for the staging/replacement semantics.
-        """
-
-        db_paths = _core_data_paths(db_path) if db_path else self.db_paths
-
-        def progress(percent, what):
-            if percent is not None:
-                self.scan_perc = percent
-            if what is not None:
-                self.scan_what = what
-
-        def is_cancelled():
-            return not self.scan_status
-
-        def run():
-            return DatScanner(
-                db_paths,
-                initialize_tables=create_dat_tables,
-                progress=progress,
-                is_cancelled=is_cancelled,
-            ).scan(datdir)
-
-        return self._run_scan_with_shared_state('files', run)
-
-    def scan_artwork(self, paths=None, db_path=None, listdir=None, source=None,
-                     cancel_event=None, only_types=None, resume=True, **kwargs):
-        """Scan artwork folders, unit-based and resumable.
-
-        This is a thin compatibility wrapper around
-        :class:`umsa_core.artwork_scanner.ArtworkScanner`. It preserves the
-        historical ``DBMod.scan_artwork()`` interface, keeps the
-        ``scan_status``/``scan_perc``/``scan_what`` attributes used by
-        ``run_scan_with_progress()`` and the GUI in sync, and returns the
-        scanner's summary dictionary unchanged.
-
-        See :meth:`ArtworkScanner.scan` for the discovery/inventory semantics,
-        resumability, filesystem retry policy and summary keys.
-        """
-
-        db_paths = _core_data_paths(db_path) if db_path else self.db_paths
-
-        def progress(percent, what):
-            if percent is not None:
-                self.scan_perc = percent
-            if what is not None:
-                self.scan_what = what
-
-        def is_cancelled():
-            return not self.scan_status
-
-        def run():
-            return ArtworkScanner(
-                db_paths,
-                create_artwork_tables,
-                progress=progress,
-                is_cancelled=is_cancelled,
-                listdir=listdir,
-            ).scan(
-                paths,
-                source=source,
-                only_types=only_types,
-                resume=resume,
-                cancel_event=cancel_event,
-            )
-
-        return self._run_scan_with_shared_state('discovering', run)
 
     # Repositories are built per access, never cached: they can never hold a
     # connection that open_db() has replaced, and they never own or close it.
