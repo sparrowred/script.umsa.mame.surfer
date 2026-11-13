@@ -9,6 +9,7 @@ from umsa_core import log
 from umsa_core.cmdline import get_cmd_line_options
 from umsa_core.rom_cache import CacheLayout, cache_archives
 from umsa_core.rom_finder import NONMAME
+from umsa_core.savestates import state_subdir
 from umsa_core.support import marp_download
 
 
@@ -156,6 +157,8 @@ class LaunchPreparer:
             emurun['args'] = get_cmd_line_options(
                 ggdb.games, actset['id'], actset['name'],
                 actset['machine_name'], actset['swl_name'])
+        # folder of the set's save states (umsa_core.savestates)
+        emurun['state_subdir'] = state_subdir(actset, emurun['args'])
 
     def demul(self, emurun):
         """Set parameters for Demul.

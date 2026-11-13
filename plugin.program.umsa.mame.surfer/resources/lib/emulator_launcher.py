@@ -5,6 +5,7 @@ from GUI lifecycle and control wiring.
 """
 
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +15,7 @@ from umsa_core import ShutdownRequested, log
 from umsa_core.emulation import CHDExtractionCancelled, CHDExtractionError
 from umsa_core.game_labels import make_time_nice
 from umsa_core.rom_cache import CacheCopyCancelled
+from umsa_core.savestates import list_savestates, with_savestate
 from umsa_gui import strings as S
 from umsa_gui.strings import tr
 
@@ -74,6 +76,36 @@ def _close_emu_dialog(ctx: LaunchCtx, reason: str) -> None:
         log(
             f'UMSA gui: could not close emulator dialog after {reason}: '
             f'{error}', level='warning')
+
+
+def _choose_savestate(ctx: LaunchCtx) -> bool:
+    """Offer the save states of the set before a MAME start.
+
+    Adds ``-state <slot>`` to ``emurun['args']`` for a chosen state.
+    Returns False when the user cancelled the selection (no start).
+    """
+
+    emurun = ctx.emulation.emurun
+    states = list_savestates(
+        getattr(ctx.emulation, 'state_directory', ''), emurun.get('state_subdir'))
+    if not states:
+        return True
+    labels = [tr(S.RUN_START_WITHOUT_SAVESTATE)] + [
+        tr(S.RUN_SAVESTATE_ENTRY, state.slot,
+           time.strftime('%Y-%m-%d %H:%M', time.localtime(state.mtime)))
+        for state in states]
+    try:
+        choice = ctx.dialog.select(tr(S.RUN_SELECT_SAVESTATE), labels)
+    except Exception as error:  # noqa: BLE001 - a dialog failure starts without a state
+        log(f'UMSA gui: save state selection failed: {error}', level='warning')
+        return True
+    if choice < 0:
+        return False
+    if choice > 0:
+        slot = states[choice - 1].slot
+        emurun['args'] = with_savestate(emurun['args'], slot)
+        log(f'UMSA gui: loading save state {slot!r}', level='debug')
+    return True
 
 
 def _launch_emulator(ctx: LaunchCtx) -> None:
@@ -172,6 +204,13 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
     # mame
     elif exe == "mame":
         ctx.emulation.prepare_mame_run(ctx.ggdb, ctx.actset, dialog=ctx.emu_dialog)
+        if not _choose_savestate(ctx):
+            log(
+                f'UMSA gui: launch={launch_id} save state selection cancelled',
+                level='debug')
+            ctx.stop_screensaver()
+            _close_emu_dialog(ctx, 'save state selection')
+            return
     # other emulator
     else:
         import xbmcgui
@@ -299,7 +338,6 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
         log(
             f'UMSA gui: could not update emulator progress: {error}',
             level='debug')
-    import time
     ctx.sleep(100)
     emurun = ctx.emulation.emurun
     uses_process_runner = emurun.get('emulation_start') in (0, 1)

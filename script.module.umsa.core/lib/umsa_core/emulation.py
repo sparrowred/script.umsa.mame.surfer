@@ -29,6 +29,7 @@ from umsa_core.rom_finder import (
     find_nonmame_roms,
     find_roms,
 )
+from umsa_core.savestates import state_directory
 from umsa_core.vgm_header import (
     MAX_PLAYBACK_SECONDS,
     format_vgm_title,  # noqa: F401  (re-exported for the GUI)
@@ -237,6 +238,12 @@ class Emulation:
         """Absolute MAME snapshot directory ('' when unset)."""
 
         return self.mame_ini.get('snapshot_directory', '')
+
+    @property
+    def state_directory(self):
+        """Absolute MAME save state directory (mame.ini, else ``sta``)."""
+
+        return state_directory(self.mame_ini, self.mame_dir)
 
     @property
     def rom_paths(self):

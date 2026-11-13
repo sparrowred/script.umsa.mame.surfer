@@ -613,8 +613,20 @@ msgctxt "#32495"
 msgid "error"
 msgstr ""
 
+msgctxt "#32496"
+msgid "Load save state?"
+msgstr ""
+
+msgctxt "#32497"
+msgid "Start without save state"
+msgstr ""
+
 msgctxt "#32498"
 msgid "seems we can not find the rom?"
+msgstr ""
+
+msgctxt "#32499"
+msgid "Load state {0} ({1})"
 msgstr ""
 
 msgctxt "#32510"
