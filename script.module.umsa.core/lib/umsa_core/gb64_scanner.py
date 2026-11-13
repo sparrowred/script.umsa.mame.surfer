@@ -39,6 +39,11 @@ COVER_UNIT = "Extras/Cover"
 SCREENSHOT_DIR = "Screenshots"
 LEGACY_SCREENSHOT_UNIT = "Screenshots"
 GAMES_DIR = "Games"
+# archives written per transaction (C-M15): one commit per archive cost
+# three fsyncs each and invalidated the screensaver's candidate cache
+COMMIT_EVERY = 250
+# summary counters of archives that only count once their batch is committed
+_BATCH_COUNTERS = ('dat', 'artwork', 'processed')
 
 
 class _GB64CancellationCheckError(Exception):
@@ -444,6 +449,8 @@ class GB64Scanner:
 
         dat_conn = None
         art_conn = None
+        # summary counters when the open archive batch began (None: no batch)
+        batch_start = None
         try:
             dat_conn = connect_sqlite(
                 self._db_paths.dat_db, row_factory=sqlite3.Row)
@@ -470,7 +477,14 @@ class GB64Scanner:
             setnames = sorted(gb64_sets)
             total = len(setnames)
             summary['sets'] = total
+            # The archives are written in batches of COMMIT_EVERY: every
+            # repository call nests a savepoint in the open transaction, so a
+            # failed archive still rolls back alone.
+            batch_start = self._begin_batch(dat_conn, art_conn, summary)
             for index, setname in enumerate(setnames):
+                if index and index % COMMIT_EVERY == 0:
+                    self._commit_batch(dat_conn, art_conn, summary, batch_start)
+                    batch_start = self._begin_batch(dat_conn, art_conn, summary)
                 if self._cancelled(cancel_event):
                     summary['cancelled'] = True
                     log("UMSA gb64 scan: cancelled before archive")
@@ -502,12 +516,6 @@ class GB64Scanner:
                     continue
 
                 summary['zips'] += 1
-
-                try:
-                    art_repo.set_scan_unit_running(SOURCE, root_key, unit)
-                except Exception as exc:
-                    log(f"UMSA gb64 scan: could not mark unit '{unit}' running: "
-                        f"{exc}", level='warning')
 
                 # Write the DAT metadata first; it is authoritative and comes
                 # from the archive itself. Only if it succeeds do we touch the
@@ -564,6 +572,10 @@ class GB64Scanner:
                     summary['errors'] += 1
                     self._record_unit_error(art_repo, root_key, unit, exc)
 
+            # what was written so far is kept, also after a cancellation
+            self._commit_batch(dat_conn, art_conn, summary, batch_start)
+            batch_start = None
+
             # Retire the legacy 'Screenshots' unit only after a fully
             # successful scan: every expected archive present (no missing), no
             # errors, no cancellation, no incomplete discovery and no abort. A
@@ -582,9 +594,23 @@ class GB64Scanner:
                     log(f"UMSA gb64 scan: could not retire legacy screenshot "
                         f"unit: {exc}", level='error')
                     summary['errors'] += 1
+                # rows of an earlier GB64 folder (other root key) can never
+                # be resolved again
+                try:
+                    removed = art_repo.delete_other_roots(SOURCE, [root_key])
+                    if removed:
+                        log(f"UMSA gb64 scan: removed {removed} artwork "
+                            "record(s) of roots no longer configured")
+                except sqlite3.Error as exc:
+                    log(f"UMSA gb64 scan: could not remove old roots: {exc}",
+                        level='error')
+                    summary['errors'] += 1
         except _GB64CancellationCheckError:
             summary['aborted'] = True
             summary['errors'] += 1
+            if batch_start is not None:
+                # archives finished before the abort are kept
+                self._commit_batch(dat_conn, art_conn, summary, batch_start)
         finally:
             if art_conn is not None:
                 try:
@@ -645,6 +671,47 @@ class GB64Scanner:
                 log(f"UMSA gb64 scan: could not close artwork schema cursor: "
                     f"{exc}", level='error')
         conn.commit()
+
+    @staticmethod
+    def _begin_batch(dat_conn, art_conn, summary):
+        """Open the archive transaction on both databases.
+
+        Returns the summary counters at its start, which a failed commit
+        restores.
+        """
+
+        dat_conn.execute("BEGIN")
+        art_conn.execute("BEGIN")
+        return {key: summary[key] for key in _BATCH_COUNTERS}
+
+    @staticmethod
+    def _commit_batch(dat_conn, art_conn, summary, batch_start):
+        """Commit the archive batch: DAT metadata first, then the artwork.
+
+        A failed commit rolls the batch back (its units keep their previous
+        records and are read again by the next scan) and counts one error, so
+        no cleanup runs after the scan.
+        """
+
+        for name, conn, counters in (
+                ('DAT', dat_conn, _BATCH_COUNTERS),
+                ('artwork', art_conn, ('artwork', 'processed'))):
+            try:
+                conn.commit()
+            except sqlite3.Error as exc:
+                log(f"UMSA gb64 scan: could not commit {name} batch: {exc}; "
+                    "its archives keep their previous records", level='error')
+                summary['errors'] += 1
+                for batch_conn in (dat_conn, art_conn):
+                    try:
+                        batch_conn.rollback()
+                    except sqlite3.Error as rollback_exc:
+                        log(f"UMSA gb64 scan: could not roll back batch: "
+                            f"{rollback_exc}", level='error')
+                for key in counters:
+                    summary[key] = batch_start[key]
+                return False
+        return True
 
     @staticmethod
     def _record_unit_error(art_repo, root_key, unit, exc):

@@ -24,7 +24,7 @@ import random
 import sqlite3
 from array import array
 
-from .artwork import resolve_artwork_path
+from .artwork import resolve_artwork_path, root_key_for_path
 from .artwork_repository import ArtworkRepository
 from .game_repository import GameRepository
 from .logging import log
@@ -54,9 +54,60 @@ class ArtworkQueries:
         # candidate ids of get_random_art, see _random_art_candidates
         self._random_art_cache = {}
         self._random_art_token = None
+        # (source, root_key) pairs the random selection may pick from;
+        # None = no root filter, see set_source_roots
+        self._root_filter = None
 
     def _execute(self, statement, params=()):
         return self._get_connection().execute(statement, params)
+
+    def set_source_roots(self, source_roots):
+        """Restrict the random selection to the configured artwork roots.
+
+        ``source_roots`` maps an artwork source to its configured folder
+        (as for :func:`umsa_core.artwork.resolve_artwork_path`). Rows of a
+        moved folder (other ``root_key``) or of a source without a folder
+        can never be resolved, so ``has_artwork`` and ``get_random_art``
+        skip them. ``None`` removes the restriction.
+        """
+
+        if source_roots is None:
+            self._root_filter = None
+            return
+        self._root_filter = tuple(sorted(
+            (source, root_key_for_path(path))
+            for source, path in source_roots.items() if path))
+
+    def _root_clause(self):
+        """SQL condition and parameters of the root restriction, or None.
+
+        Rows without a root key of a configured source are kept: the
+        resolver accepts them too.
+        """
+
+        if self._root_filter is None:
+            return None
+        if not self._root_filter:
+            return "0", []
+        pairs = " OR ".join(
+            "(art.source = ? AND art.root_key IN ('', ?))" for _ in self._root_filter)
+        params = [value for pair in self._root_filter for value in pair]
+        return f"({pairs})", params
+
+    def _artwork_conditions(self, types_in, types, filtered):
+        """WHERE clause and parameters shared by the random artwork queries."""
+
+        gamelist = self._gamelist
+        conditions = [f"art.type IN ({types_in})"]
+        params = list(types)
+        if filtered:
+            conditions.extend(gamelist.filter_where)
+            params.extend(gamelist.filter_where_params)
+        root = self._root_clause()
+        if root is not None:
+            conditions.append(root[0])
+            params.extend(root[1])
+        return " AND ".join(conditions), params
 
     def has_artwork(self, art_types):
         """Return whether any artwork of the given types can be selected.
@@ -80,20 +131,18 @@ class ArtworkQueries:
         # with the active filter first, like the random selection
         # (an empty filter would produce an invalid "AND" clause)
         if gamelist.use_filter and gamelist.filter_where:
-            statement = "SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id {} \
-                         WHERE art.type IN ({}) AND {} LIMIT 1".format(
-                             " ".join(gamelist.filter_join),
-                             types_in,
-                             " AND ".join(gamelist.filter_where))
-            if self._execute(
-                    statement,
-                    list(types) + list(gamelist.filter_where_params)).fetchone():
+            where, params = self._artwork_conditions(types_in, types, True)
+            statement = (
+                "SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id "
+                f"{' '.join(gamelist.filter_join)} WHERE {where} LIMIT 1")
+            if self._execute(statement, params).fetchone():
                 return True
 
         # and without filter if the filter found nothing
-        statement = f"SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id \
-                    WHERE art.type IN ({types_in}) LIMIT 1"
-        return bool(self._execute(statement, list(types)).fetchone())
+        where, params = self._artwork_conditions(types_in, types, False)
+        statement = ("SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id "
+                     f"WHERE {where} LIMIT 1")
+        return bool(self._execute(statement, params).fetchone())
 
     def get_random_art(self, art_types):
         """Get 1 random artwork
@@ -198,22 +247,16 @@ class ArtworkQueries:
         if filtered:
             signature = (tuple(gamelist.filter_join), tuple(gamelist.filter_where),
                          tuple(gamelist.filter_where_params))
-        key = (types, signature)
+        # the root restriction is part of the key: other roots, other ids
+        key = (types, signature, self._root_filter)
         if key in cache:
             return cache[key]
 
         types_in = ",".join("?" * len(types))
-        if filtered:
-            statement = "SELECT art.art_id FROM art.art_set art JOIN sets ON sets.id = art.id {} \
-                         WHERE art.type IN ({}) AND {}".format(
-                             " ".join(gamelist.filter_join),
-                             types_in,
-                             " AND ".join(gamelist.filter_where))
-            params = list(types) + list(gamelist.filter_where_params)
-        else:
-            statement = f"SELECT art.art_id FROM art.art_set art JOIN sets ON sets.id = art.id \
-                        WHERE art.type IN ({types_in})"
-            params = list(types)
+        where, params = self._artwork_conditions(types_in, types, filtered)
+        join = " ".join(gamelist.filter_join) if filtered else ""
+        statement = ("SELECT art.art_id FROM art.art_set art "
+                     f"JOIN sets ON sets.id = art.id {join} WHERE {where}")
         ids = array('q', (row[0] for row in connection.execute(statement, params)))
 
         if len(cache) >= _RANDOM_ART_CACHE_SIZE:

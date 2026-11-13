@@ -233,6 +233,48 @@ class ArtworkScanner:
                 log(f"UMSA artwork scan: could not remove vanished units of "
                     f"source '{src}': {exc}", level='error')
 
+    @staticmethod
+    def _remove_old_roots(repo, configured_roots, complete_roots):
+        """Delete the records of roots a source is no longer configured for.
+
+        A moved artwork folder gets a new root key; the rows of the old one
+        can never be resolved again. A source is cleaned up only when every
+        root configured for it was listed completely (an unreachable share
+        never costs artwork). Every configured root key of the source is
+        kept. A failure is logged and leaves the records.
+        """
+
+        complete = set(complete_roots)
+        keys_by_source = {}
+        for src, rkey in configured_roots:
+            keys_by_source.setdefault(src, []).append(rkey)
+        for src, keys in keys_by_source.items():
+            if any((src, rkey) not in complete for rkey in keys):
+                continue
+            try:
+                removed = repo.delete_other_roots(src, keys)
+                if removed:
+                    log(f"UMSA artwork scan: source '{src}': removed {removed} "
+                        "artwork record(s) of roots no longer configured")
+            except sqlite3.Error as exc:
+                log(f"UMSA artwork scan: could not remove old roots of "
+                    f"source '{src}': {exc}", level='error')
+
+    @staticmethod
+    def _load_softlist(gdbc, swl_name):
+        """Return ``(swl_id, {set name: set id})`` of a software list.
+
+        ``swl_id`` is ``None`` (with an empty dict) when umsa.db does not know
+        the software list.
+        """
+
+        gdbc.execute("SELECT id FROM swl WHERE name = ?", (swl_name,))
+        row = gdbc.fetchone()
+        if row is None:
+            return None, {}
+        gdbc.execute("SELECT id,name FROM sets WHERE swllink_id=?", (row[0],))
+        return row[0], {name: set_id for set_id, name in gdbc.fetchall()}
+
     def _unit_mtime(self, unit_path):
         """Return the mtime of a unit directory, ``None`` when it cannot be read."""
 
@@ -500,6 +542,9 @@ class ArtworkScanner:
             # roots listed without any error: only their vanished units are
             # removed after the scan
             complete_roots = []
+            # every configured root, listed or not: rows of other roots of a
+            # source belong to a moved folder
+            configured_roots = []
             for idx, path in enumerate(path_list):
                 # Source identity is positional: the first root is always
                 # 'progettosnaps' and later roots 'own_artwork'. An empty or
@@ -512,6 +557,7 @@ class ArtworkScanner:
                         f"'{source_name}', skipping", level='warning')
                     continue
                 root_key = root_key_for_path(path)
+                configured_roots.append((source_name, root_key))
                 errors_before_root = errors
                 entries = listing(path, 'root')
                 if entries is None:
@@ -587,7 +633,14 @@ class ArtworkScanner:
             total = len(units)
             log(f"UMSA artwork scan: discovered {total} units")
 
-            for i, (src, rkey, rpath, urel, swl_name, atype) in enumerate(units):
+            # C-M11: the same software list appears under every artwork type.
+            # `sets` has no index on swllink_id, so each lookup reads the whole
+            # table: process the units grouped by software list (stable sort,
+            # discovery order inside a list) and keep only the current list.
+            cached_swl_name = None
+            cached_softlist = (None, {})
+            for i, (src, rkey, rpath, urel, swl_name, atype) in enumerate(
+                    sorted(units, key=lambda unit: unit[4])):
                 if self._cancelled(cancel_event):
                     cancelled = True
                     log("UMSA artwork scan: cancelled before unit")
@@ -609,9 +662,11 @@ class ArtworkScanner:
                 # software list missing from the UMSA database (mame included)
                 # must never lead to deleting the unit's existing records or
                 # marking it done.
-                gdbc.execute("SELECT id FROM swl WHERE name = ?", (swl_name,))
-                swl_id_row = gdbc.fetchone()
-                if swl_id_row is None:
+                if swl_name != cached_swl_name:
+                    cached_softlist = self._load_softlist(gdbc, swl_name)
+                    cached_swl_name = swl_name
+                swl_id, swl_dict = cached_softlist
+                if swl_id is None:
                     errors += 1
                     log(f"UMSA artwork scan: software list '{swl_name}' missing "
                         f"from UMSA database for unit '{urel}' "
@@ -624,11 +679,6 @@ class ArtworkScanner:
                         log(f"UMSA artwork scan: could not record error status "
                             f"for unit '{urel}': {status_exc}", level='error')
                     continue
-                swl_dict = {}
-                gdbc.execute("SELECT id,name FROM sets WHERE swllink_id=?",
-                             (swl_id_row[0],))
-                for s in gdbc.fetchall():
-                    swl_dict[s[1]] = s[0]
 
                 # Mark the unit running before the inventory starts so an
                 # interrupted process can be identified on resume.
@@ -702,6 +752,7 @@ class ArtworkScanner:
 
             if not cancelled:
                 self._remove_vanished_units(repo, units, complete_roots, only_types)
+                self._remove_old_roots(repo, configured_roots, complete_roots)
             return finish()
         except _ArtworkScanResourceError as exc:
             # The filesystem ran out of file handles and a single recovery

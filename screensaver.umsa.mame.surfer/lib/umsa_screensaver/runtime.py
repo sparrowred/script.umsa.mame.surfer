@@ -15,6 +15,7 @@ from umsa_core_kodi import (
 )
 
 from . import strings as S
+from .artwork_selector import source_roots
 from .availability import REASON_NO_VIDEOS, AvailabilityError, plan_request
 from .constants import (
     MODE_PROPERTY,
@@ -33,14 +34,26 @@ class ScreensaverRuntime:
         self.monitor = None
         self.settings_folder = None
         self.nonmame = {}
+        self.core_settings = None
 
     def _nonmame_roots(self):
         """Return the configured non-MAME roots for artwork path resolution."""
 
         settings = get_core_settings()
+        self.core_settings = settings
         nonmame = settings.nonmame
         self.nonmame = nonmame
         return nonmame
+
+    def _artwork_roots(self):
+        """Return the configured folder of every artwork source.
+
+        Read after ``_nonmame_roots()``, from the same Core settings.
+        """
+
+        settings = self.core_settings
+        return source_roots(
+            (settings.own_artwork_dir, settings.progettosnaps_dir), self)
 
     def open_software(self, software_id):
         """Hand the currently displayed software back to the Games frontend.
@@ -117,6 +130,9 @@ class ScreensaverRuntime:
                 return
 
             self.ggdb = DBMod(self.settings_folder, self._nonmame_roots())
+            # random artwork only from the configured folders: rows of a
+            # moved folder cannot be resolved until the next artwork scan
+            self.ggdb.art_queries.set_source_roots(self._artwork_roots())
             # random artwork follows the default filter (created on first start)
             self.ggdb.ensure_default_filter()
             self.ggdb.gamelist.define_filter(self.ggdb.history.load_filter_selections(DEFAULT_FILTER_NAME))

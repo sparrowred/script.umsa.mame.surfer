@@ -211,7 +211,8 @@ class VgmPlayer:
         return vgm_args, emurun['env']
 
     def play_random_vgm_thread(self, emurun, textinfo=None, db_path=None,
-                               find_roms_func=None, run_func=None):
+                               find_roms_func=None, run_func=None,
+                               stop_requested=None):
         """Play random vgm until ordered to stop playing.
 
         Candidates are fetched from the database in batches and kept in an
@@ -230,10 +231,18 @@ class VgmPlayer:
             run_func: Function to run a single VGM track
                 (vgm, close_server, plan, title); returning False
                 means MAME could not play it
+            stop_requested: Optional predicate; True ends the playback. A
+                stop that came before this worker set ``playrandomvgm``
+                still counts.
         """
         self.playrandomvgm = True
         candidates = deque()
         consecutive_unplayable = 0
+
+        def keep_playing():
+            if not self.playrandomvgm:
+                return False
+            return not (stop_requested and stop_requested())
 
         def note_unplayable(message):
             """Log an unusable candidate and report whether to stop playback."""
@@ -250,7 +259,7 @@ class VgmPlayer:
             return False
 
         try:
-            while self.playrandomvgm:
+            while keep_playing():
                 if not db_path:
                     break
                 if not candidates:
@@ -320,7 +329,7 @@ class VgmPlayer:
                         textinfo.setLabel(vgm_nice)
                     except Exception as error:
                         log(f'UMSA Emu: VGM label update failed: {error}', level='debug')
-                if not self.playrandomvgm:
+                if not keep_playing():
                     # stopped while this track was prepared
                     break
                 started = True

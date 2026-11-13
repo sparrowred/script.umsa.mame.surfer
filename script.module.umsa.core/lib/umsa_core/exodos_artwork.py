@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import sqlite3
 import stat
 from zipfile import ZipFile
 
@@ -625,5 +626,18 @@ def scan_exodos_artwork(exodos_path, exodos_sets, art_repo,
     summary['unmatched'] += video_result['unmatched']
     summary['videosnap_state'] = video_result['state']
     summary['aborted'] = summary['aborted'] or video_result['aborted']
+
+    # rows of an earlier eXoDOS folder (other root key) can never be
+    # resolved again: drop them after a complete, successful scan only
+    if not summary['aborted'] and summary['errors'] == 0:
+        try:
+            removed = art_repo.delete_other_roots(SOURCE, [root_key])
+            if removed:
+                log(f"UMSA exodos artwork: removed {removed} artwork record(s) "
+                    "of roots no longer configured")
+        except sqlite3.Error as exc:
+            summary['errors'] += 1
+            log(f"UMSA exodos artwork: old root cleanup failed: {exc}",
+                level='error')
 
     return summary

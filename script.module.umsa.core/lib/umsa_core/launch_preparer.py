@@ -146,7 +146,8 @@ class LaunchPreparer:
             emurun['args'] = actset['name']
         # check for Gamebase64 files
         elif actset['swl_name'].startswith('gb64_'):
-            filename = self.nonmame['gb64'] + 'Games/' + actset['name'] + '.zip'
+            filename = os.path.join(
+                self.nonmame['gb64'], 'Games', actset['name'] + '.zip')
             emurun['args'] = [
                 'c64p', f"-{actset['swl_name'][-4:]}", filename]
         # start a swl item

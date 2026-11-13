@@ -4,7 +4,7 @@ import os
 import shlex
 import subprocess
 from platform import platform
-from threading import Event, Thread, current_thread
+from threading import Event, Lock, Thread, current_thread
 from time import monotonic
 
 from umsa_core import (
@@ -111,9 +111,11 @@ class Emulation:
         self.chdman_exe = chdman_exe
         self.process = None
         # VGM playback: the MAME process of the running track, the stop
-        # request of stop_vgm() and the worker threads
+        # request of stop_vgm() and the worker threads; the start lock makes
+        # "is a playback running?" and starting its worker one step
         self._vgm_process = None
         self._vgm_stop = Event()
+        self._vgm_start_lock = Lock()
         self.rvgm_thread = None
         self.pvgm_thread = None
         self.process_runner = ProcessRunner()
@@ -486,6 +488,15 @@ class Emulation:
             if thread is not None and thread is not current_thread()
             and thread.is_alive()]
 
+    def _vgm_busy(self):
+        """True while a VGM playback runs or its worker still ends.
+
+        A worker stopped with ``stop_vgm(timeout=0)`` keeps running for a
+        moment; its ``finally`` resets the playback state and closes the
+        socket server, so no new playback may start before it ended.
+        """
+        return bool(self.playvgm or self.playrandomvgm or self._vgm_workers())
+
     def _end_vgm_process(self, how):
         """Terminate or kill the MAME process of the running track."""
         process = self._vgm_process
@@ -602,7 +613,8 @@ class Emulation:
             self.vgm_player.play_random_vgm_thread(
                 self.emurun, textinfo, db_path,
                 find_roms_func=lambda emurun, rom_paths: self.find_roms(),
-                run_func=run_func)
+                run_func=run_func,
+                stop_requested=self._vgm_stop.is_set)
         finally:
             self._close_vgm_sockets()
 
@@ -610,29 +622,61 @@ class Emulation:
         """Start random vgm playback in a thread.
 
         The socket server lifecycle stays with ``play_random_vgm_thread``,
-        this wrapper only owns the worker thread.
+        this wrapper only owns the worker thread. Returns False when a VGM
+        playback runs (or still ends) and nothing was started.
         """
-        if self.playvgm:
-            return
-        self._vgm_stop.clear()
-        self.vgm_player.begin_vgm_playback()
-        self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
-            args=(textinfo, db_path))
-        self.rvgm_thread.start()
+        with self._vgm_start_lock:
+            if self._vgm_busy():
+                log('UMSA Emu: play random vgm - a VGM playback runs, not started',
+                    level='debug')
+                return False
+            self._vgm_stop.clear()
+            self.vgm_player.begin_vgm_playback()
+            # visible at once: a stop before the worker runs must end it
+            self.playrandomvgm = True
+            thread = Thread(target=self.play_random_vgm_thread,
+                args=(textinfo, db_path))
+            try:
+                thread.start()
+            except RuntimeError as error:
+                log(f'UMSA Emu: play random vgm - worker did not start: {error}',
+                    level='warning')
+                self.playrandomvgm = False
+                return False
+            self.rvgm_thread = thread
+            return True
 
     def play_vgm(self, vgm, sec2run=90, intro=False, info=None, plan=None):
-        if self.playvgm:
-            return
-        self._vgm_stop.clear()
-        self.vgm_player.begin_vgm_playback()
-        if not self._start_vgm_server():
-            self.playvgm = False
-            if info:
-                self.vgm_player._notify_vgm_stopped()
-            return
-        self.pvgm_thread = Thread(target=self.play_vgm_thread,
-            args=(vgm, sec2run, intro), kwargs={'info': info, 'plan': plan})
-        self.pvgm_thread.start()
+        """Start a single VGM track in a thread.
+
+        Returns False when a VGM playback runs (or still ends) or the socket
+        server or the worker could not start.
+        """
+        with self._vgm_start_lock:
+            if self._vgm_busy():
+                log(f'UMSA Emu: play vgm {vgm} - a VGM playback runs, not started',
+                    level='debug')
+                return False
+            self._vgm_stop.clear()
+            self.vgm_player.begin_vgm_playback()
+            if not self._start_vgm_server():
+                self.playvgm = False
+                if info:
+                    self.vgm_player._notify_vgm_stopped()
+                return False
+            thread = Thread(target=self.play_vgm_thread,
+                args=(vgm, sec2run, intro), kwargs={'info': info, 'plan': plan})
+            try:
+                thread.start()
+            except RuntimeError as error:
+                log(f'UMSA Emu: play vgm {vgm} - worker did not start: {error}',
+                    level='warning')
+                self._close_vgm_sockets()
+                if info:
+                    self.vgm_player._notify_vgm_stopped()
+                return False
+            self.pvgm_thread = thread
+            return True
 
     def find_nonmame_roms(self, exodos_shell=''):
         """Search for files from other sources than MAME."""

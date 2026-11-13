@@ -385,6 +385,55 @@ class ArtworkRepository:
         finally:
             cursor.close()
 
+    def delete_other_roots(
+        self, source: str, keep_root_keys: Iterable[str]
+    ) -> int:
+        """Delete the records of every root of ``source`` not in ``keep_root_keys``.
+
+        A moved artwork folder gets a new ``root_key``; the rows of the old
+        root can no longer be resolved and are removed here (``art_set`` and
+        ``art_scan_unit``) in one savepoint. Other sources are never touched.
+        An empty ``keep_root_keys`` deletes nothing, so a source is never
+        emptied completely. It manages its own short transaction, only
+        commits one it started, and never closes the caller's connection.
+        Returns the number of removed artwork rows.
+        """
+
+        keep = sorted({key for key in keep_root_keys if key})
+        if not keep:
+            return 0
+
+        conn = self._conn
+        had_transaction = conn.in_transaction
+        cursor = conn.cursor()
+        placeholders = ",".join("?" * len(keep))
+        args = (source, *keep)
+        try:
+            cursor.execute("SAVEPOINT umsa_art_delete_roots")
+            try:
+                cursor.execute(
+                    f"DELETE FROM {self._qt('art_set')} "
+                    f"WHERE source=? AND root_key NOT IN ({placeholders})",
+                    args,
+                )
+                removed = cursor.rowcount or 0
+                cursor.execute(
+                    f"DELETE FROM {self._qt('art_scan_unit')} "
+                    f"WHERE source=? AND root_key NOT IN ({placeholders})",
+                    args,
+                )
+            except Exception:
+                cursor.execute("ROLLBACK TO umsa_art_delete_roots")
+                cursor.execute("RELEASE umsa_art_delete_roots")
+                raise
+            else:
+                cursor.execute("RELEASE umsa_art_delete_roots")
+                if not had_transaction:
+                    conn.commit()
+            return removed
+        finally:
+            cursor.close()
+
     def delete_scan_units(
         self, source: str, root_key: str, scan_units: Iterable[str]
     ) -> int:
