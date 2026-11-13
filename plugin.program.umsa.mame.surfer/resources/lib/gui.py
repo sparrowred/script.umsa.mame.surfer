@@ -438,6 +438,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.machine_cabinets = {}
         # deferred reload of the gamelist entry once scrolling stopped
         self.gamelist_settle = GamelistSettle()
+        # submenu entry (M_*) whose list the gamelist shows, None otherwise
+        self.listmode_shown = None
         # drops software moves queued while a held left/right key is processed
         self.software_backlog = ActionBacklog()
         self.oldset = () # needed for show_info to see if set has changed
@@ -1038,6 +1040,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 )
             elif action.getId() in ACTION_MOVEMENT_LEFT:
                 self.setFocus(self.getControl(self.main_focus))
+            # load the list of the entry right away (like the filter categories)
+            elif action.getId() in ACTION_LIST_SCROLL:
+                self.preview_listmode_gamelist()
             # show all maker, swl, year
             elif action.getId() in ACTION_CONTEXT:
                 self.show_fulllist(
@@ -1290,23 +1295,27 @@ class UMSA(xbmcgui.WindowXMLDialog):
         """Show full list of maker, cat, year..."""
         return gamelist_workflows.show_fulllist(self, what, label)
 
-    def update_gamelist(self, item):
+    def update_gamelist(self, item, focus=True):
         """Update gamelist"""
-        return gamelist_workflows.update_gamelist(self, item)
+        return gamelist_workflows.update_gamelist(self, item, focus)
+
+    def preview_listmode_gamelist(self):
+        """Load the gamelist of the selected submenu entry (focus stays)."""
+        return gamelist_workflows.preview_listmode_gamelist(self)
 
     def popup_gamelist(self, gamelist, label, pos=0, sort=None, options=None,
-                       kind=KIND_SOFTWARE, select_what=None):
+                       kind=KIND_SOFTWARE, select_what=None, focus=True):
         """Pop up gamelist."""
         return gamelist_workflows.popup_gamelist(
-            self, gamelist, label, pos, sort, options, kind, select_what)
+            self, gamelist, label, pos, sort, options, kind, select_what, focus)
 
     def choose_media(self):
         """Dialog to choose media for playing."""
         return media_list.choose_media(self)
 
-    def show_rec(self):
+    def show_rec(self, focus=True):
         """Shows recommended section from mameinfo.dat in gamelist"""
-        return media_list.show_rec(self)
+        return media_list.show_rec(self, focus)
 
     # --- filter ---------------------------------------------------------
 

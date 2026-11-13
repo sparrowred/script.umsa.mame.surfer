@@ -8,6 +8,7 @@ entry lives in ``gamelist_actions``.
 import threading
 import time
 from dataclasses import dataclass
+from functools import partial
 
 import xbmc
 import xbmcgui
@@ -26,6 +27,7 @@ from .constants import (
     KIND_SELECT,
     KIND_SOFTWARE,
     LABEL_STATUS,
+    LISTMODE_MENU,
     M_ALLEMUS,
     M_CAT,
     M_MACHINE,
@@ -119,8 +121,14 @@ class GamelistSettle:
         xbmc.executebuiltin('Action(noop)')
 
 
-def update_gamelist(gui, item):
-    """Update gamelist"""
+def update_gamelist(gui, item, focus=True):
+    """Update gamelist
+
+    ``focus=False`` is the preview of the list-mode submenu: the list is
+    filled while the focus stays in the submenu, a single hit is listed
+    instead of selected, an empty result shows an empty list without a
+    notification, and the submenu is not rebuilt.
+    """
 
     results, pos = [], 0
 
@@ -146,18 +154,28 @@ def update_gamelist(gui, item):
             last=gui.last,
             lastptr=gui.lastptr,
             searchold=gui.searchold,
-            popup_gamelist=gui.popup_gamelist,
-            show_rec=gui.show_rec,
+            popup_gamelist=(gui.popup_gamelist if focus
+                            else partial(gui.popup_gamelist, focus=False)),
+            show_rec=gui.show_rec if focus else partial(gui.show_rec, focus=False),
         )
         outcome = strategy(gl_ctx)
         gui.searchold = gl_ctx.searchold
         if outcome is EARLY_RETURN:
             # Ensure the submenu is populated for strategies that open a gamelist
             # (Series, Recommended) so that left navigation from the gamelist works.
-            gui.build_sublist_menu(item)
+            if focus:
+                gui.build_sublist_menu(item)
+            gui.listmode_shown = item
             gui.getControl(LABEL_STATUS).setLabel('')
             return
         results, pos, gl_label, gl_options = outcome
+
+    # preview without results: empty list, no notification
+    if not focus and len(results) == 0:
+        gui.getControl(LABEL_STATUS).setLabel('')
+        gui.getControl(GAME_LIST_LABEL).setLabel(gl_label if strategy is not None else '')
+        gui.listmode_shown = item
+        return
 
     # no results = close list
     if len(results) == 0:
@@ -169,7 +187,7 @@ def update_gamelist(gui, item):
         return
 
     # one software result = select
-    if len(results) == 1 and item not in (M_MACHINE, M_ALLEMUS):
+    if focus and len(results) == 1 and item not in (M_MACHINE, M_ALLEMUS):
         if item == M_SEARCH:
             gui.searchold = None
         gui.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_ONE_HIT),
@@ -192,9 +210,11 @@ def update_gamelist(gui, item):
     # now show gamelist with gathered info from above
     gui.popup_gamelist(
         results, gl_label, pos=pos, sort=use_filter, options=gl_options,
-        kind=LIST_KINDS.get(item, KIND_SOFTWARE))
+        kind=LIST_KINDS.get(item, KIND_SOFTWARE), focus=focus)
+    gui.listmode_shown = item
     # build submenu with lists in it
-    gui.build_sublist_menu(item)
+    if focus:
+        gui.build_sublist_menu(item)
 
     time3 = time.time()
     xbmc.log(f'UMSA gui: update_gamelist: popup in gui: {(time3-time2)*1000:.0f}ms')
@@ -202,14 +222,17 @@ def update_gamelist(gui, item):
 
 
 def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None,
-                   kind=KIND_SOFTWARE, select_what=None):
+                   kind=KIND_SOFTWARE, select_what=None, focus=True):
     """Pop up gamelist.
 
     ``kind`` tells the click and move handlers what the list holds
     (``KIND_*``); ``select_what`` is the menu code of a ``KIND_SELECT`` list.
     ``options`` are option keys: the entries carry them in label2.
+    ``focus=False`` fills the list without moving the focus into it.
     """
 
+    # the list no longer shows a submenu entry (update_gamelist sets it again)
+    gui.listmode_shown = None
     gui.gamelist_kind = kind
     gui.gamelist_select = select_what
 
@@ -235,12 +258,33 @@ def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None,
     gui.getControl(GAME_LIST).addItems(list_items)
     gui.getControl(GAME_LIST).selectItem(pos)
 
-    gui.setFocus(gui.getControl(GAME_LIST))
+    if focus:
+        gui.setFocus(gui.getControl(GAME_LIST))
     # load snap, all_machines for the entry at pos: selectItem() runs
     # asynchronously in Kodi, getSelectedItem() would still return entry 0
     gui.gamelist_move(pos)
     # reload once Kodi applied the selection
     gui.schedule_gamelist_settle()
+
+
+def preview_listmode_gamelist(gui):
+    """Load the gamelist of the selected list-mode submenu entry.
+
+    The focus stays in the submenu. An entry whose list is already shown is
+    not reloaded, so callbacks that queued up while a key was held cost
+    nothing.
+    """
+
+    item = gui.getControl(LISTMODE_MENU).getSelectedItem()
+    if not item:
+        return
+    try:
+        menu_item = int(item.getLabel2())
+    except ValueError:
+        return
+    if getattr(gui, 'listmode_shown', None) == menu_item:
+        return
+    update_gamelist(gui, menu_item, focus=False)
 
 
 def gamelist_move(gui, pos=None, force=False):

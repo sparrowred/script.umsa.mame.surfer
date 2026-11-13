@@ -95,7 +95,7 @@ def choose_media(gui):
     gui.popup_gamelist(media_list, tr(S.CHOOSE_MEDIA), pos=pos, kind=KIND_MEDIA)
 
 
-def show_rec(gui):
+def show_rec(gui, focus=True):
     """Shows recommended section from mameinfo.dat in gamelist"""
 
     text = ''
@@ -108,4 +108,4 @@ def show_rec(gui):
                 text = gui.all_dat[i]['Rec']
                 break
     rec_list, pos = parse_recommended_games(text, gui.ggdb.games)
-    gui.popup_gamelist(rec_list, tr(S.RECOMMENDED), pos=pos)
+    gui.popup_gamelist(rec_list, tr(S.RECOMMENDED), pos=pos, focus=focus)
