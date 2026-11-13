@@ -185,7 +185,7 @@ def gamelist_click(gui):
                     # Core turns the title into "<title> -MM:ss (<dB> dB)"
                     title = format_vgm_title(track, gui.actset['gamename'])
                     gui.emulation.play_vgm(
-                        f'{list_id}:{which_track+1:03d}', sleep=xbmc.sleep,
+                        f'{list_id}:{which_track+1:03d}',
                         info=title, plan=plan)
         # youtube
         elif what == "yt":

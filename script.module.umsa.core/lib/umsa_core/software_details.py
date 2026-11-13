@@ -93,19 +93,20 @@ def best_machine_for_set(machines, swl_name, detail, swl_machine_id):
     if swl_name == "famicom_flop":
         best_machine = machines[1]
 
-    # get country from detail
+    # get country from detail (NULL in umsa.db for some sets)
+    detail_text = (detail or '').lower()
     for country_sorted in sorted(COUNTRIES.keys()):
         for country in COUNTRIES[country_sorted]:
-            if country in detail.lower():
+            if country in detail_text:
                 # check gamename of machines for country from detail
                 # first try actual best
                 for country2 in COUNTRIES[country_sorted]:
-                    if country2 in best_machine['fullname'].lower():
+                    if country2 in (best_machine['fullname'] or '').lower():
                         return best_machine
                 # now check all machines
                 for machine in machines:
                     for country2 in COUNTRIES[country_sorted]:
-                        if country2 in machine['fullname'].lower():
+                        if country2 in (machine['fullname'] or '').lower():
                             best_machine = machine
                             return best_machine
     return best_machine

@@ -274,7 +274,7 @@ def select_software(gui, software_id):
         gui.dialog.notification(tr(S.VGM_INTRO), tr(S.VGM_PLAYING, play_vgm),
             xbmcgui.NOTIFICATION_INFO, 3000, False)
         gui.emulation.play_vgm(
-            play_vgm, intro_duration, xbmc.sleep, intro=True)
+            play_vgm, intro_duration, intro=True)
 
     # show artwork and dat info
     gui.show_artwork()
@@ -335,6 +335,9 @@ def software_move(gui, direction):
                 if str(software_id) != str(gui.last[gui.lastptr]):
                     break
                 software_id = gui.ggdb.gamelist.get_random_id()
+            if software_id is None:
+                xbmc.log("UMSA gui: no random software, database is empty")
+                return
             gui._remember_and_select(software_id)
         else:
             gui.lastptr += 1

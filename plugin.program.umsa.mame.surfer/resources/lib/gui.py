@@ -630,7 +630,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.last = self.ggdb.history.load_lastgames()
         # fill with random software if not 10
         while len(self.last) < 10:
-            self.last.append(self.ggdb.gamelist.get_random_id())
+            software_id = self.ggdb.gamelist.get_random_id()
+            if software_id is None:
+                # empty database: nothing to fill in
+                break
+            self.last.append(software_id)
         # initialize pointer to the newest entry
         self.lastptr = len(self.last) - 1
         return True

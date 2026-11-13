@@ -466,11 +466,12 @@ def maker_query(connection: sqlite3.Connection, maker):
     cursor = connection.cursor()
     try:
         # get parent if maker is clone
-        cursor.execute("SELECT cloneof_id FROM maker WHERE maker.name = ?", (maker,))
-        cloneof_id = cursor.fetchone()[0]
-        if not cloneof_id:
-            cursor.execute("SELECT id FROM maker WHERE maker.name = ?", (maker,))
-            cloneof_id = cursor.fetchone()[0]
+        # an unknown maker has no row: no ids, the name match finds nothing
+        cursor.execute("SELECT id, cloneof_id FROM maker WHERE maker.name = ?", (maker,))
+        row = cursor.fetchone()
+        cloneof_id = None
+        if row is not None:
+            cloneof_id = row['cloneof_id'] or row['id']
         # get all maker ids
         all_maker_ids = []
         if cloneof_id:
@@ -625,23 +626,36 @@ class Gamelist:
         return self.execute_statement(set_id)
 
     def get_random_id(self):
-        """Return the id of a random software of the active filter."""
+        """Return the id of a random software, or ``None`` for an empty DB.
 
-        where = ''
-        where_params = []
-        if self.filter_join and self.filter_where:
+        The filter is applied only while ``use_filter`` is on. When it leaves
+        nothing, the pick falls back to the whole database (like the
+        selector-only retry of :meth:`execute_statement` and the random
+        artwork).
+        """
+
+        if self.use_filter and self.filter_join and self.filter_where:
             where = "WHERE sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
                 " ".join(self.filter_join), " AND ".join(self.filter_where)
             )
-            where_params = list(self.filter_where_params)
+            software_id = self._random_software_id(where, self.filter_where_params)
+            if software_id is not None:
+                return software_id
+            log("UMSA database: get_random_id: filter leaves nothing, "
+                "picking unfiltered", level='debug')
+        return self._random_software_id('', [])
+
+    def _random_software_id(self, where, where_params):
+        """Run one random pick; ``None`` when no row matches."""
 
         cursor = self._get_connection().cursor()
         try:
             cursor.execute(
                 f"SELECT DISTINCT software.id \
                   FROM sets JOIN software ON software.id = sets.softwarelink_id \
-                  {where} ORDER BY RANDOM() LIMIT 1", where_params)
-            return cursor.fetchone()[0]
+                  {where} ORDER BY RANDOM() LIMIT 1", list(where_params))
+            row = cursor.fetchone()
+            return None if row is None else row[0]
         finally:
             cursor.close()
 

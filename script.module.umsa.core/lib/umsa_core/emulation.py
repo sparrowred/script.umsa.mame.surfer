@@ -527,7 +527,7 @@ class Emulation:
             return False
         return True
 
-    def play_vgm_thread(self, vgm, sec2run=90, sleep=None, intro=False, close_server=True,
+    def play_vgm_thread(self, vgm, sec2run=90, intro=False, close_server=True,
                     plan=None, info=None, title=None):
         """Play vgm.
 
@@ -579,28 +579,27 @@ class Emulation:
             if info:
                 self.vgm_player._notify_vgm_stopped()
 
-    def play_random_vgm_thread(self, textinfo=None, db_path=None, sleep=None):
+    def play_random_vgm_thread(self, textinfo=None, db_path=None):
         """Play random vgm until ordered to stop playing."""
         self.vgm_player.begin_vgm_playback()
         if not self._start_vgm_server():
             self.playrandomvgm = False
             self.vgm_player._notify_vgm_stopped()
             return
-        def run_func(vgm, sleep=None, close_server=True, plan=None, info=None, vgm_port_env=None,
-                     title=None):
+        def run_func(vgm, close_server=True, plan=None, info=None, title=None):
             return self.play_vgm_thread(
-                vgm, sec2run=90, sleep=sleep, intro=False,
+                vgm, sec2run=90, intro=False,
                 close_server=close_server, plan=plan, info=info, title=title)
 
         try:
             self.vgm_player.play_random_vgm_thread(
-                self.emurun, textinfo, db_path, sleep,
+                self.emurun, textinfo, db_path,
                 find_roms_func=lambda emurun, rom_paths: self.find_roms(),
                 run_func=run_func)
         finally:
             self._close_vgm_sockets()
 
-    def play_random_vgm(self, textinfo=None, db_path=None, sleep=None):
+    def play_random_vgm(self, textinfo=None, db_path=None):
         """Start random vgm playback in a thread.
 
         The socket server lifecycle stays with ``play_random_vgm_thread``,
@@ -611,10 +610,10 @@ class Emulation:
         self._vgm_stop.clear()
         self.vgm_player.begin_vgm_playback()
         self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
-            args=(textinfo, db_path, sleep))
+            args=(textinfo, db_path))
         self.rvgm_thread.start()
 
-    def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):
+    def play_vgm(self, vgm, sec2run=90, intro=False, info=None, plan=None):
         if self.playvgm:
             return
         self._vgm_stop.clear()
@@ -625,7 +624,7 @@ class Emulation:
                 self.vgm_player._notify_vgm_stopped()
             return
         self.pvgm_thread = Thread(target=self.play_vgm_thread,
-            args=(vgm, sec2run, sleep, intro), kwargs={'info': info, 'plan': plan})
+            args=(vgm, sec2run, intro), kwargs={'info': info, 'plan': plan})
         self.pvgm_thread.start()
 
     def find_nonmame_roms(self, exodos_shell=''):
@@ -674,24 +673,6 @@ class Emulation:
         or    --cdrom-drive-0=path/to/cd-image = cue/iso TODO test chd
         """
         self.launch_preparer.fsuae(self.emurun)
-
-    def mame(self):
-        """MAME handling.
-
-        TODO
-        - make backup of cfg, check if changed, ask if to take over new cfg
-          ^ what with default.cfg? also backup and ask
-          ^ do i need to set -w anymore? no
-
-        - general: delete for (swl: use machine)
-          - cfg, diff, hi, nvram
-
-        - general: when sta, offer to load?
-
-        - psx: memcard with setname
-
-        - saturn: own nvram (needed for others?)
-        """
 
     def other_emulator(self, emu_infos, dialog=None, sleep=None, wait=None):
         """Prepare run for other emulators."""

@@ -53,7 +53,10 @@ def get_cmd_line_options(games, set_id, set_name, machine_name, swl_name):
     """Create command line options for MAME emulator run
 
     Based on id, name of set, and the names of machine and swl. ``games``
-    is the game repository (``DBMod.games``).
+    is the game repository (``DBMod.games``). Names umsa.db does not know
+    never raise: an unknown software list has no extra options, an unknown
+    machine no devices (the command line falls back to machine + set), and
+    an unknown required set is passed by its bare name.
     """
 
     # get options for softwarelist
@@ -61,8 +64,10 @@ def get_cmd_line_options(games, set_id, set_name, machine_name, swl_name):
     ## like a device in a slot so the machine supports hdds
     repo = games
     swlopt = repo.get_swl_options(swl_name)
+    if swlopt is None:
+        log(f"UMSA database: get_cmd_line_options: unknown swl {swl_name!r}", level='debug')
     # make swl_options a list
-    if swlopt[0]:
+    if swlopt and swlopt[0]:
         swl_options = swlopt[0].strip().split(' ')
     else:
         swl_options = None
@@ -71,7 +76,12 @@ def get_cmd_line_options(games, set_id, set_name, machine_name, swl_name):
     machine_id = repo.get_machine_id(machine_name)
 
     # get devices supported by the machine
-    _devices = repo.get_devices_for_machine(machine_id[0])
+    if machine_id is None:
+        log(f"UMSA database: get_cmd_line_options: unknown machine {machine_name!r}",
+            level='debug')
+        _devices = []
+    else:
+        _devices = repo.get_devices_for_machine(machine_id[0])
 
     # get all parts for the choosen set
     _part = repo.get_parts_for_set_id(set_id)
@@ -93,18 +103,24 @@ def get_cmd_line_options(games, set_id, set_name, machine_name, swl_name):
         # add sharedfeat
         if _sharedfeat:
             # security if definition for sharedfeat_requirement
-            # is not swl:set
+            # is not swl:set (split at the first colon only)
             if ':' in _sharedfeat[0]:
-                _swl, _set = _sharedfeat[0].split(':')
+                _swl, _set = _sharedfeat[0].split(':', 1)
             else:
                 _set = _sharedfeat[0]
                 _swl = None
+            _setinfo = None
             # when definition is ok
             if _swl:
                 # create new cmdline option for requirement
                 log(f"UMSA database: get_cmd_line_options: set {_set}, swl {_swl}", level='debug')
-                _setinfo = repo.get_info_by_set_and_swl(_set, _swl)
+                try:
+                    _setinfo = repo.get_info_by_set_and_swl(_set, _swl)
+                except TypeError:  # no such set in umsa.db
+                    log("UMSA database: get_cmd_line_options: required set unknown, "
+                        "passing its name", level='debug')
                 log(f"UMSA database: get_cmd_line_options: setid {_setinfo}", level='debug')
+            if _setinfo:
                 _parts2 = repo.get_parts_for_set_id(_setinfo['set_id'])
                 log(f"UMSA database: get_cmd_line_options: parts {_parts2}", level='debug')
                 _cmdopt = create_cmdline(list(_parts2), _devices, _set)[0]

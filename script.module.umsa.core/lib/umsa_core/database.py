@@ -142,8 +142,8 @@ class DBMod:
             gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
             gdbc = gdb.cursor()
 
-            for alias, statement in self._source_attach_statements():
-                gdbc.execute(statement)
+            for alias, statement, params in self._source_attach_statements():
+                gdbc.execute(statement, params)
                 attached.add(alias)
 
             self.gdb = gdb
@@ -267,20 +267,25 @@ class DBMod:
                 conn.close()
 
     def _source_attach_statements(self):
-        """Return (alias, statement) attaching artwork.db/dat.db read-only."""
+        """Return (alias, statement, params) attaching artwork.db/dat.db read-only.
+
+        The URI is a bound parameter (the umsa.db connection is opened with
+        ``uri=True``, so ``mode=ro`` applies); only the constant alias is part
+        of the statement text, because identifiers cannot be bound.
+        """
 
         statements = []
         for alias, path in (('art', self.db_paths.artwork_db),
                             ('dat', self.db_paths.dat_db)):
             uri = f'file:{pathname2url(os.fspath(path))}?mode=ro'
-            statements.append((alias, f"ATTACH DATABASE '{uri}' AS {alias}"))
+            statements.append((alias, f"ATTACH DATABASE ? AS {alias}", (uri,)))
         return statements
 
     def _attach_source_databases(self):
         """Attach artwork.db as 'art' and dat.db as 'dat' (read-only)."""
 
-        for _alias, statement in self._source_attach_statements():
-            self.gdbc.execute(statement)
+        for _alias, statement, params in self._source_attach_statements():
+            self.gdbc.execute(statement, params)
 
     def _run_scan_with_shared_state(self, start_what, run):
         """Run ``run`` while owning the shared scan progress/status fields.

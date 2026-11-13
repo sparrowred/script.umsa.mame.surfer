@@ -210,7 +210,7 @@ class VgmPlayer:
         })
         return vgm_args, emurun['env']
 
-    def play_random_vgm_thread(self, emurun, textinfo=None, db_path=None, sleep=None,
+    def play_random_vgm_thread(self, emurun, textinfo=None, db_path=None,
                                find_roms_func=None, run_func=None):
         """Play random vgm until ordered to stop playing.
 
@@ -226,10 +226,9 @@ class VgmPlayer:
             textinfo: Optional Kodi text control for display
             db_path: Core data directory with umsa.db; without one nothing
                 is played
-            sleep: Optional sleep callback
             find_roms_func: Function to find ROMs (emurun, rom_paths) -> None
             run_func: Function to run a single VGM track
-                (vgm, sleep, close_server, plan, title); returning False
+                (vgm, close_server, plan, title); returning False
                 means MAME could not play it
         """
         self.playrandomvgm = True
@@ -326,7 +325,7 @@ class VgmPlayer:
                     break
                 started = True
                 if run_func:
-                    started = run_func(play_vgm, sleep=sleep, close_server=False,
+                    started = run_func(play_vgm, close_server=False,
                                        plan=plan, title=vgm_title)
                 if started is False:
                     # MAME ended with an error before the Lua script connected:

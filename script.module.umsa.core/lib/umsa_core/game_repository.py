@@ -735,8 +735,7 @@ class GameRepository:
         the single ``options`` column. A ``NULL`` options value stays ``None``
         inside the row (``cmdline.get_cmd_line_options`` branches on ``row[0]``
         truthiness); an unknown software list returns ``None`` — the caller
-        then raises
-        ``TypeError`` on ``row[0]``, the historical valid-input assumption.
+        then uses no extra options.
         Only Core consumes this; it never crosses the add-on boundary.
         """
         cursor = self._conn.cursor()
@@ -755,8 +754,7 @@ class GameRepository:
         Machine rows resolve only under the software list ``mame`` — that name
         is hardcoded in the query, as it always was inside
         ``cmdline.get_cmd_line_options``. An unknown machine returns ``None``;
-        the caller then raises ``TypeError`` on ``row[0]`` (the historical
-        valid-input assumption). Only Core consumes this.
+        the caller then assumes no devices. Only Core consumes this.
         """
         cursor = self._conn.cursor()
         try:
