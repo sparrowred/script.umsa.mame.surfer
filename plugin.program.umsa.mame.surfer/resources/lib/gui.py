@@ -619,6 +619,24 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # database connection
         if CORE_DATA_PATHS.umsa_db.is_file():
             self.ggdb = DBMod(SETTINGS_FOLDER, self.nonmame, self.filter_lists, self.pref_country)
+            # a umsa.db without software (broken download) is fetched again,
+            # once, before the default filter is created from it
+            if not self.ggdb.games.has_software():
+                xbmc.log("UMSA gui: onInit: umsa.db holds no software, "
+                         "downloading it again", xbmc.LOGWARNING)
+                if not self.update('db'):
+                    xbmc.log("UMSA gui: onInit: download failed, closing",
+                             xbmc.LOGERROR)
+                    self.close()
+                    return False
+                if not self.ggdb.games.has_software():
+                    xbmc.log("UMSA gui: onInit: umsa.db still holds no software, "
+                             "closing", xbmc.LOGERROR)
+                    self.dialog.notification(
+                        tr(S.DB_TITLE), tr(S.DB_EMPTY),
+                        xbmcgui.NOTIFICATION_ERROR, 5000)
+                    self.close()
+                    return False
         else:
             # DB download in foreground, dat+art scan in background
             if not self.update('db'):

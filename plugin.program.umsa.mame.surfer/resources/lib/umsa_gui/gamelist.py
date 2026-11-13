@@ -174,6 +174,10 @@ def update_gamelist(gui, item, focus=True):
     if not focus and len(results) == 0:
         gui.getControl(LABEL_STATUS).setLabel('')
         gui.getControl(GAME_LIST_LABEL).setLabel(gl_label if strategy is not None else '')
+        gui.getControl(GAME_LIST_OPTIONS).reset()
+        gui.getControl(GAME_LIST_SORT).reset()
+        gui.gamelist_kind = LIST_KINDS.get(item, KIND_SOFTWARE)
+        gui.gamelist_select = None
         gui.listmode_shown = item
         return
 

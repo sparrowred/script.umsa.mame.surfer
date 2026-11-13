@@ -82,14 +82,20 @@ def resolve_mame_paths(mame_ini, mame_dir):
     ``path`` options are semicolon-separated lists, ``directory`` options are
     single values. Absolute entries pass through unchanged (os.path.join
     semantics), matching the cwd (mame_dir) MAME is launched with.
+    Environment variables and ``~`` are expanded first, like MAME does
+    (the mame.ini of some distributions uses ``$HOME/.mame/...``).
     """
+
+    def resolve(entry):
+        return os.path.join(
+            mame_dir, os.path.expanduser(os.path.expandvars(entry)))
 
     resolved = {}
     for key, value in mame_ini.items():
         if isinstance(value, list):
-            resolved[key] = [os.path.join(mame_dir, entry) for entry in value]
+            resolved[key] = [resolve(entry) for entry in value]
         elif 'directory' in key:
-            resolved[key] = os.path.join(mame_dir, value)
+            resolved[key] = resolve(value)
         else:
             resolved[key] = value
     return resolved

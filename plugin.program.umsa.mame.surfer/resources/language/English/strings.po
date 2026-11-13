@@ -749,6 +749,10 @@ msgctxt "#32539"
 msgid "screensaver add-on is not installed or disabled"
 msgstr ""
 
+msgctxt "#32540"
+msgid "the downloaded database holds no software"
+msgstr ""
+
 msgctxt "#32550"
 msgid "UMSA migration"
 msgstr ""

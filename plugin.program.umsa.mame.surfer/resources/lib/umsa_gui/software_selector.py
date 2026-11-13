@@ -271,10 +271,10 @@ def select_software(gui, software_id):
             and gui.vgms and intro_duration > 0):
         play_vgm = choice(tuple(gui.vgms))
         xbmc.log(f'UMSA gui: play intro vgm {play_vgm}')
-        gui.dialog.notification(tr(S.VGM_INTRO), tr(S.VGM_PLAYING, play_vgm),
-            xbmcgui.NOTIFICATION_INFO, 3000, False)
-        gui.emulation.play_vgm(
-            play_vgm, intro_duration, intro=True)
+        # Emulation refuses the start while an earlier playback still ends
+        if gui.emulation.play_vgm(play_vgm, intro_duration, intro=True):
+            gui.dialog.notification(tr(S.VGM_INTRO), tr(S.VGM_PLAYING, play_vgm),
+                xbmcgui.NOTIFICATION_INFO, 3000, False)
 
     # show artwork and dat info
     gui.show_artwork()

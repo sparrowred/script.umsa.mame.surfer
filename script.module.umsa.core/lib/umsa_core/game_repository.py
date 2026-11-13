@@ -336,6 +336,21 @@ class GameRepository:
         finally:
             cursor.close()
 
+    def has_software(self) -> bool:
+        """Return whether umsa.db holds any software with a set.
+
+        False for a database without rows (a broken download); the GUI then
+        fetches umsa.db again.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT 1 FROM sets JOIN software "
+                "ON software.id = sets.softwarelink_id LIMIT 1")
+            return cursor.fetchone() is not None
+        finally:
+            cursor.close()
+
     def check_series(self, software_id) -> int | None:
         """Return the number of entries in the software's first series.
 

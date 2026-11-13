@@ -114,7 +114,11 @@ def start_random_vgm(gui):
         return False
     show_vgm_info(gui, tr(S.VGM_RANDOM_STARTING))
     # the check above is no lock: Emulation refuses a start that lost the race
-    return gui.emulation.play_random_vgm(None, gui.settings_folder)
+    # (or while a stopped playback still ends); take the info back then
+    if gui.emulation.play_random_vgm(None, gui.settings_folder):
+        return True
+    hide_vgm_info(gui)
+    return False
 
 
 def handle_vgm_action(gui, action):
