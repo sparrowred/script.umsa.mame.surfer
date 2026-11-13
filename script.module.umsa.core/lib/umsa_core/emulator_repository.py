@@ -34,7 +34,7 @@ atomicity, documented in ``docs/database_refactor``).
 
 Reads never commit and own only short-lived cursors that are closed in a
 ``finally`` block. Rows are normalised to plain dicts at the boundary —
-``dict`` is the public shape of all six facade methods.
+``dict`` is the public shape of all six methods.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ class EmulatorRepository:
 
     The repository never opens or closes the supplied connection and never
     caches a different one; :class:`umsa_core.database.DBMod` builds one per
-    call so it can never pin a connection that later code has replaced.
+    access of ``DBMod.emulators`` so it can never pin a connection that later code has replaced.
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:

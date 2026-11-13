@@ -4,8 +4,9 @@ This module centralises the single-purpose, read-only queries over the general
 game tables of ``umsa.db`` (``sets``, ``software``, ``swl``, ``year``,
 ``maker``, ``category``, ``nplayers``, ``swl_status``, plus the media/device
 tables ``part``, ``part_set``, ``device``, ``device_set``, ``sharedfeature``,
-``sharedfeature_set``) that neither depend on
-:class:`~umsa_core.database.DBMod` filter state nor join into other databases.
+``sharedfeature_set``) that neither depend on the filter state of the game
+lists (:class:`~umsa_core.gamelist_filter.Gamelist`) nor join into other
+databases.
 It follows the conventions of :mod:`umsa_core.artwork_repository` and
 :mod:`umsa_core.dat_repository`.
 
@@ -36,9 +37,12 @@ use.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
-from .sqlite import require_row_connection
+from .data_paths import CoreDataPaths
+from .logging import log
+from .sqlite import connect_sqlite_readonly, require_row_connection
 
 # ids per ``IN (...)`` statement, below SQLite's historical limit of 999
 _IN_BLOCK = 500
@@ -679,7 +683,7 @@ class GameRepository:
         ``p.name, pv.name, pv.disk`` (media name, interface, optional disk
         value). A set can have more than one media (two floppies, floppy +
         cd-rom, ...). Returns an empty list when no parts match — including
-        unknown set ids. The only consumer is ``DBMod.create_cmdline``, which
+        unknown set ids. The only consumer is ``cmdline.create_cmdline``, which
         indexes positionally (``part[0]``/``part[1]``); the rows never leave
         Core.
         """
@@ -729,8 +733,9 @@ class GameRepository:
 
         Intentionally Row-returning (Core-internal contract): the row carries
         the single ``options`` column. A ``NULL`` options value stays ``None``
-        inside the row (the facade branches on ``row[0]`` truthiness); an
-        unknown software list returns ``None`` — the facade then raises
+        inside the row (``cmdline.get_cmd_line_options`` branches on ``row[0]``
+        truthiness); an unknown software list returns ``None`` — the caller
+        then raises
         ``TypeError`` on ``row[0]``, the historical valid-input assumption.
         Only Core consumes this; it never crosses the add-on boundary.
         """
@@ -749,8 +754,8 @@ class GameRepository:
         the single ``id`` column (the sets id used as the device variant id).
         Machine rows resolve only under the software list ``mame`` — that name
         is hardcoded in the query, as it always was inside
-        ``DBMod.get_cmd_line_options``. An unknown machine returns ``None``;
-        the facade then raises ``TypeError`` on ``row[0]`` (the historical
+        ``cmdline.get_cmd_line_options``. An unknown machine returns ``None``;
+        the caller then raises ``TypeError`` on ``row[0]`` (the historical
         valid-input assumption). Only Core consumes this.
         """
         cursor = self._conn.cursor()
@@ -771,7 +776,7 @@ class GameRepository:
         Intentionally Row-returning (Core-internal contract): each row is
         ``d.name, dv.name`` (device, interface list). The interface may hold a
         comma-separated list (e.g. ``cart64,c128_cart``) which
-        ``DBMod.create_cmdline`` splits. Returns an empty list for a machine
+        ``cmdline.create_cmdline`` splits. Returns an empty list for a machine
         without devices. The only consumer indexes positionally
         (``device[0]``/``device[1]``); the rows never leave Core.
         """
@@ -791,7 +796,7 @@ class GameRepository:
 
         Intentionally Row-returning (Core-internal contract): the row carries
         the single ``sfv.name`` column — normally an ``swl:set`` string that
-        ``DBMod.get_cmd_line_options`` expands into a chained command line.
+        ``cmdline.get_cmd_line_options`` expands into a chained command line.
         Sets without a requirement (or unknown ids) return ``None``. Only Core
         consumes this; it never crosses the add-on boundary.
         """
@@ -805,3 +810,71 @@ class GameRepository:
             return cursor.fetchone()
         finally:
             cursor.close()
+
+
+def parse_recommended_games(rec_text, games):
+    """Parse the 'Rec' dat field into popup entries.
+
+    ``games`` is the game repository (``DBMod.games``). Returns
+    ``(rec_list, pos)``. Separator entries (names starting with ``-``)
+    are ``{'name', 'id': 0, 'year', 'maker'}`` and each increments ``pos``;
+    found games are ``{'id', 'name', 'year', 'maker'}``. Names not found in the
+    database are kept as ``None`` (popup_gamelist skips them).
+    """
+
+    rec_list = []
+    pos = 0
+    for rec_gamename in rec_text.split('[CR]'):
+        if rec_gamename == '':
+            continue
+        if rec_gamename[0] == '-':
+            rec_list.append({'name': rec_gamename, 'id': 0, 'year': '', 'maker': ''})
+            pos += 1
+        else:
+            found = games.search_single(rec_gamename)
+            rec_list.append(
+                None if found is None else
+                {'id': found['id'], 'name': found['name'],
+                 'year': found['year'], 'maker': found['maker']})
+    return rec_list, pos
+
+
+def random_vgm_batch(db_path, limit=100):
+    """Return up to ``limit`` random vgmplay entries from a short-lived read-only connection.
+
+    ``db_path`` is the Core data directory holding ``umsa.db``. The
+    connection is opened only for this query and closed on every exit
+    path. No filesystem inspection is performed here; callers decide
+    which candidates are actually playable.
+    """
+
+    db_paths = CoreDataPaths(os.path.abspath(db_path))
+    try:
+        db_conn = connect_sqlite_readonly(db_paths.umsa_db)
+    except sqlite3.Error as error:
+        log(f"UMSA database random_vgm_batch: open failed: {error}", level='warning')
+        return []
+
+    dbc = None
+    try:
+        dbc = db_conn.cursor()
+        vgmplay_row = dbc.execute(
+            "SELECT id FROM swl WHERE name = 'vgmplay'").fetchone()
+        if vgmplay_row is None:
+            log("UMSA database random_vgm_batch: no vgmplay software list",
+                level='warning')
+            return []
+        rows = dbc.execute(
+            "SELECT name, gamename FROM sets \
+             WHERE swllink_id = ? ORDER BY RANDOM() LIMIT ?",
+            (vgmplay_row[0], limit)).fetchall()
+    except sqlite3.Error as error:
+        log(f"UMSA database random_vgm_batch: read failed: {error}",
+            level='warning')
+        return []
+    finally:
+        if dbc is not None:
+            dbc.close()
+        db_conn.close()
+
+    return [{'name': row[0], 'gamename': row[1]} for row in rows]

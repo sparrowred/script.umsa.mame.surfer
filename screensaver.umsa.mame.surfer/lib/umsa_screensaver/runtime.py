@@ -119,10 +119,10 @@ class ScreensaverRuntime:
             self.ggdb = DBMod(self.settings_folder, self._nonmame_roots())
             # random artwork follows the default filter (created on first start)
             self.ggdb.ensure_default_filter()
-            self.ggdb.define_filter(self.ggdb.load_filter_selections(DEFAULT_FILTER_NAME))
-            self.ggdb.set_filter_enabled(True)
+            self.ggdb.gamelist.define_filter(self.ggdb.history.load_filter_selections(DEFAULT_FILTER_NAME))
+            self.ggdb.gamelist.set_filter_enabled(True)
             if request is not None and request["art_types"] is not None:
-                available_art_types = set(self.ggdb.get_art_types())
+                available_art_types = set(self.ggdb.artwork.get_art_types())
                 unknown_art_types = set(request["art_types"]) - available_art_types
                 if unknown_art_types:
                     xbmc.log(

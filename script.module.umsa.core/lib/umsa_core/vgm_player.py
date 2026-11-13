@@ -14,6 +14,7 @@ from threading import Event, Thread
 from zipfile import BadZipFile, ZipFile
 
 from umsa_core import log
+from umsa_core.game_repository import random_vgm_batch
 from umsa_core.vgm_header import (
     MAX_PLAYBACK_SECONDS,
     format_vgm_status,
@@ -209,7 +210,7 @@ class VgmPlayer:
         })
         return vgm_args, emurun['env']
 
-    def play_random_vgm_thread(self, emurun, ggdb=None, textinfo=None, db_path=None, sleep=None,
+    def play_random_vgm_thread(self, emurun, textinfo=None, db_path=None, sleep=None,
                                find_roms_func=None, run_func=None):
         """Play random vgm until ordered to stop playing.
 
@@ -222,9 +223,9 @@ class VgmPlayer:
 
         Args:
             emurun: Emulation run state dict
-            ggdb: Database object with get_random_vgm_batch method
             textinfo: Optional Kodi text control for display
-            db_path: Database path
+            db_path: Core data directory with umsa.db; without one nothing
+                is played
             sleep: Optional sleep callback
             find_roms_func: Function to find ROMs (emurun, rom_paths) -> None
             run_func: Function to run a single VGM track
@@ -251,11 +252,11 @@ class VgmPlayer:
 
         try:
             while self.playrandomvgm:
-                if not ggdb:
+                if not db_path:
                     break
                 if not candidates:
                     candidates.extend(
-                        ggdb.get_random_vgm_batch(db_path, VGM_RANDOM_BATCH_SIZE))
+                        random_vgm_batch(db_path, VGM_RANDOM_BATCH_SIZE))
                     if not candidates:
                         log(
                             'UMSA Emu: play random vgm - no candidates in '

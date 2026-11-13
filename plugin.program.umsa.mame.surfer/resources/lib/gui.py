@@ -21,9 +21,10 @@ from emulator_launcher import LaunchCtx, launch_emulator
 from retroplayer_cache import run_retroplayer
 from settings_adapter import load_all_settings
 from umsa_core import set_log
-from umsa_core.database import DBMod, split_gamename
+from umsa_core.database import DBMod
 from umsa_core.default_filter import DEFAULT_FILTER_NAME
 from umsa_core.emulation import Emulation
+from umsa_core.game_labels import split_gamename
 from umsa_core.rom_cache import CacheLayout
 from umsa_core.support import youtube_search
 from umsa_core_kodi import (
@@ -622,14 +623,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.run_startup_import()
         # first start: create the default filter (status.db has none yet)
         self.ggdb.ensure_default_filter()
-        self.filter_lists = self.ggdb.load_filter_selections(self.act_filter)
-        self.ggdb.define_filter(self.filter_lists)
+        self.filter_lists = self.ggdb.history.load_filter_selections(self.act_filter)
+        self.ggdb.gamelist.define_filter(self.filter_lists)
 
         # load last internal software list
-        self.last = self.ggdb.load_lastgames()
+        self.last = self.ggdb.history.load_lastgames()
         # fill with random software if not 10
         while len(self.last) < 10:
-            self.last.append(self.ggdb.get_random_id())
+            self.last.append(self.ggdb.gamelist.get_random_id())
         # initialize pointer to the newest entry
         self.lastptr = len(self.last) - 1
         return True
@@ -717,7 +718,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     self.searchold = keyboard.getText()
                 else:
                     return
-                gamelist, pos, result_count = self.ggdb.get_searchresults(self.searchold)
+                gamelist, pos, result_count = self.ggdb.games.get_searchresults(self.searchold)
                 gl_label = tr(S.LIST_SEARCH_RESULTS, result_count, self.searchold)
                 gl_options = (OPTION_NEW_SEARCH,)
 
@@ -736,7 +737,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
             # options from play status
             elif item in OPTIONS_PLAY_STATUS:
-                gamelist, pos = self.ggdb.get_last_played(item)
+                gamelist, pos = self.ggdb.software.get_last_played(item)
                 self.getControl(GAME_LIST).reset()
                 gui_list = []
                 for i in gamelist:
@@ -749,7 +750,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.setFocus(self.getControl(GAME_LIST))
 
             elif item in OPTIONS_ORDER:
-                self.ggdb.set_order(item)
+                self.ggdb.gamelist.set_order(item)
                 content = int(self.getControl(GAME_LIST_LABEL_ID).getLabel())
                 self.update_gamelist(content)
 
@@ -763,11 +764,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 self.filter_lists[filter_category_name] = []
             elif item == FILTER_OPTION_ALL:
                 self.filter_lists[filter_category_name] = []
-                for i in self.ggdb.get_all_dbentries(filter_category_name):
+                for i in self.ggdb.games.get_all_dbentries(filter_category_name):
                     self.filter_lists[filter_category_name].append(str(i['id']))
             elif item == FILTER_OPTION_INVERT:
                 templist = []
-                for i in self.ggdb.get_all_dbentries(filter_category_name):
+                for i in self.ggdb.games.get_all_dbentries(filter_category_name):
                     if str(i['id']) not in self.filter_lists[filter_category_name]:
                         templist.append(str(i['id']))
                 self.filter_lists[filter_category_name] = templist
@@ -940,7 +941,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     if ret == 0:
                         self.start_screensaver('videos')
                     elif (ret == 1 or ret == 2) and self.ensure_screensaver_available():
-                        art_types = self.ggdb.get_art_types()
+                        art_types = self.ggdb.artwork.get_art_types()
                         ret2 = self.dialog.multiselect(
                             tr(S.SAVER_WHICH_ARTWORK), art_types
                         )
@@ -976,12 +977,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     self.setFocus(self.getControl(LISTMODE_MENU))
                 # switch filter
                 elif menu_item == M_FILTER:
-                    if self.ggdb.use_filter:
-                        self.ggdb.set_filter_enabled(False)
+                    if self.ggdb.gamelist.use_filter:
+                        self.ggdb.gamelist.set_filter_enabled(False)
                         self.getControl(MAIN_MENU).getSelectedItem().setLabel(
                             tr(S.MENU_FILTER_OFF))
                     else:
-                        self.ggdb.set_filter_enabled(True)
+                        self.ggdb.gamelist.set_filter_enabled(True)
                         self.getControl(MAIN_MENU).getSelectedItem().setLabel(
                             tr(S.MENU_FILTER_NAME, self.act_filter))
                 # update umsa db

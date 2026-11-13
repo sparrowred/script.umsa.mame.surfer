@@ -33,7 +33,7 @@ def all_games(ctx):
     results, pos = [], 0
     import xbmc
     xbmc.log("UMSA gui: update_gamelist: get_by_software")
-    results, pos, count = ctx.db.get_by_software(ctx.actset['id'])
+    results, pos, count = ctx.db.gamelist.get_by_software(ctx.actset['id'])
     gl_label = tr(S.LIST_COMPLETE, count)
     gl_options = OPTIONS_ORDER
 
@@ -43,7 +43,7 @@ def software_list(ctx):
     results, pos = [], 0
     import xbmc
     xbmc.log("UMSA gui: update_gamelist: get_by_swl")
-    results, pos, count = ctx.db.get_by_swl(
+    results, pos, count = ctx.db.gamelist.get_by_swl(
         ctx.actset['swl_name'],
         ctx.actset['id'],
     )
@@ -54,7 +54,7 @@ def software_list(ctx):
 
 def category(ctx):
     results, pos = [], 0
-    results, pos, count = ctx.db.get_by_cat(
+    results, pos, count = ctx.db.gamelist.get_by_cat(
         ctx.actset['category'], ctx.actset['id']
     )
     gl_label = tr(S.LIST_CATEGORY, ctx.actset['category'], count)
@@ -64,7 +64,7 @@ def category(ctx):
 
 def year(ctx):
     results, pos = [], 0
-    results, pos, count = ctx.db.get_by_year(
+    results, pos, count = ctx.db.gamelist.get_by_year(
         ctx.actset['year'],
         ctx.actset['id']
     )
@@ -75,7 +75,7 @@ def year(ctx):
 
 def players(ctx):
     results, pos = [], 0
-    results, pos, count = ctx.db.get_by_players(
+    results, pos, count = ctx.db.gamelist.get_by_players(
         ctx.actset['nplayers'],
         ctx.actset['id']
     )
@@ -86,7 +86,7 @@ def players(ctx):
 
 def maker(ctx):
     results, pos = [], 0
-    results, pos, count = ctx.db.get_by_maker(
+    results, pos, count = ctx.db.gamelist.get_by_maker(
         ctx.actset['publisher'],
         ctx.actset['id']
     )
@@ -97,7 +97,7 @@ def maker(ctx):
 
 def play_status(ctx):
     results, pos = [], 0
-    results, pos = ctx.db.get_last_played("time_played")
+    results, pos = ctx.db.software.get_last_played("time_played")
     gl_label = tr(S.LIST_PLAY_STATUS)
     gl_options = OPTIONS_PLAY_STATUS
 
@@ -106,12 +106,12 @@ def play_status(ctx):
 def machine(ctx):
     results, pos = [], 0
     if ctx.actset['swl_name'] == "mame":
-        emus = ctx.db.get_emulators(source=ctx.actset['source'])
+        emus = ctx.db.emulators.get_emulators(source=ctx.actset['source'])
         gl_label = tr(
             S.LIST_EMULATORS_FOR_SOURCE, ctx.actset['source'][:-4], len(emus))
     else:
-        emus = ctx.db.get_emulators(swl_name=ctx.actset['swl_name'])
-        temp_results, pos = ctx.db.get_machines(
+        emus = ctx.db.emulators.get_emulators(swl_name=ctx.actset['swl_name'])
+        temp_results, pos = ctx.db.games.get_machines(
             ctx.actset['swl_name'], ctx.actset['machine_name']
         )
         results.extend(temp_results)
@@ -133,7 +133,7 @@ def machine(ctx):
 
 def all_emulators(ctx):
     results, pos = [], 0
-    for i in ctx.db.get_emulators():
+    for i in ctx.db.emulators.get_emulators():
         results.append(
             {'id': "emu::{}".format(i['id']),
              'name': i['name'],
@@ -145,7 +145,7 @@ def all_emulators(ctx):
 
 def source(ctx):
     results, pos = [], 0
-    results, pos, result_count = ctx.db.get_software_for_source(
+    results, pos, result_count = ctx.db.gamelist.get_software_for_source(
         ctx.actset['id'], ctx.actset['source']
     )
     gl_label = tr(S.LIST_SOURCE, ctx.actset['source'], result_count)
@@ -157,11 +157,11 @@ def last_saver(ctx):
     results, pos = [], 0
     results = []
     # Use database-backed screensaver history instead of legacy file
-    history = ctx.db.get_screensaver_history()
+    history = ctx.db.history.list_screensaver_history()
     for entry in history:
         set_id = entry['set_id']
         software_id = entry['software_id']
-        set_info = ctx.db.get_set_info_by_id(set_id)
+        set_info = ctx.db.games.get_set_info_by_id(set_id)
         if set_info is None:
             # Stale history record: set no longer exists in umsa.db
             # Skip but do not delete the history record
@@ -185,7 +185,7 @@ def last_saver(ctx):
     return results, pos, gl_label, gl_options
 
 def series(ctx):
-    results = ctx.db.get_series(ctx.last[ctx.lastptr])
+    results = ctx.db.games.get_series(ctx.last[ctx.lastptr])
     if results and ctx.popup_gamelist:
         ctx.popup_gamelist(results, tr(S.LIST_SERIES))
     #gui.getControl(GAME_LIST_TEXT).setText('')
@@ -208,7 +208,7 @@ def search_new(ctx):
         ctx.searchold = keyboard.getText()
     else:
         return EARLY_RETURN
-    results, pos, result_count = ctx.db.get_searchresults(ctx.searchold)
+    results, pos, result_count = ctx.db.games.get_searchresults(ctx.searchold)
     gl_label = tr(S.LIST_SEARCH_RESULTS, result_count, ctx.searchold)
     gl_options = (OPTION_NEW_SEARCH,)
 
@@ -224,7 +224,7 @@ def search(ctx):
             ctx.searchold = keyboard.getText()
         else:
             return EARLY_RETURN
-    results, pos, result_count = ctx.db.get_searchresults(ctx.searchold)
+    results, pos, result_count = ctx.db.games.get_searchresults(ctx.searchold)
     gl_label = tr(S.LIST_SEARCH_RESULTS, result_count, ctx.searchold)
     gl_options = (OPTION_NEW_SEARCH,)
 

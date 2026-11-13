@@ -10,7 +10,7 @@ from random import choice
 import xbmc
 import xbmcgui
 from umsa_core.artwork import machine_set_name
-from umsa_core.database import split_gamename
+from umsa_core.game_labels import split_gamename
 
 from . import strings as S
 from .constants import (
@@ -85,7 +85,7 @@ def _vgm_title(gui, vgm_name):
     """Title of a vgmplay set; the set name when umsa.db does not know it."""
 
     try:
-        return gui.ggdb.get_info_by_set_and_swl(vgm_name, 'vgmplay')['name']
+        return gui.ggdb.games.get_info_by_set_and_swl(vgm_name, 'vgmplay')['name']
     except TypeError:  # no such set in umsa.db
         return vgm_name
 
@@ -115,7 +115,7 @@ def select_software(gui, software_id):
      pos_machine,
      pos_set,
      gui.all_dat,
-     gui.all_art) = gui.ggdb.get_all_for_software(software_id)
+     gui.all_art) = gui.ggdb.software.get_all_for_software(software_id)
 
     # error if no info
     if len(all_info) == 0:
@@ -153,7 +153,7 @@ def select_software(gui, software_id):
     gui.actset = gui.info[pos_machine][pos_set]
 
     # scanned cabinets for the machine wraplist (own artwork before progettosnaps)
-    gui.machine_cabinets = gui.ggdb.get_machine_cabinets(
+    gui.machine_cabinets = gui.ggdb.art_queries.get_machine_cabinets(
         {machine_set_name(set_info) for machine in gui.info for set_info in machine})
 
     # fill SET_LIST
@@ -284,7 +284,7 @@ def select_software(gui, software_id):
         gui.getControl(MEDIA_LABEL).setVisible(False)
     else:
         gui.getControl(MEDIA_LABEL).setVisible(True)
-    is_compilation = gui.ggdb.check_compilation(gui.last[gui.lastptr])
+    is_compilation = gui.ggdb.games.check_compilation(gui.last[gui.lastptr])
     if is_compilation == 2 or is_compilation == 1:  # on a compilation
         gui.getControl(COMPILATION_LABEL).setVisible(True)
     else:
@@ -329,12 +329,12 @@ def software_move(gui, direction):
     if direction == 'right':
         if gui.lastptr + 1 >= len(gui.last):
             # moving past the newest entry appends a new random one
-            software_id = gui.ggdb.get_random_id()
+            software_id = gui.ggdb.gamelist.get_random_id()
             # do not draw the software that is already shown
             for _retry in range(3):
                 if str(software_id) != str(gui.last[gui.lastptr]):
                     break
-                software_id = gui.ggdb.get_random_id()
+                software_id = gui.ggdb.gamelist.get_random_id()
             gui._remember_and_select(software_id)
         else:
             gui.lastptr += 1

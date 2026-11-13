@@ -446,11 +446,11 @@ class Saver(xbmcgui.WindowXMLDialog):
     def get_set_artwork(self, art, art_type, source_roots):
         """Return an artwork of the set of ``art`` from the artwork database.
 
-        Core's ``DBMod.get_set_artwork``: the set itself, else its parent,
+        Core's ``ArtworkQueries.get_set_artwork``: the set itself, else its parent,
         else another clone; own artwork first. ``''`` when none is found.
         """
 
-        return self.parent.umsa.ggdb.get_set_artwork(art['id'], art_type, source_roots)
+        return self.parent.umsa.ggdb.art_queries.get_set_artwork(art['id'], art_type, source_roots)
 
     def resolve_art_path(self, art, source_roots):
         """Resolve the path of an artwork row with the shared Core resolver.
@@ -529,7 +529,7 @@ class Saver(xbmcgui.WindowXMLDialog):
         # Try up to 10 candidates to handle cases where some videos
         # are not playable (e.g. failed eXoDOS extraction)
         for _attempt in range(10):
-            rand_vid = self.parent.umsa.ggdb.get_random_art(['videosnaps'])
+            rand_vid = self.parent.umsa.ggdb.art_queries.get_random_art(['videosnaps'])
             if not rand_vid:
                 xbmc.log("UMSA SSaver: did not find any videos", xbmc.LOGWARNING)
                 return False

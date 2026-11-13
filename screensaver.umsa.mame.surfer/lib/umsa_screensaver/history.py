@@ -32,7 +32,7 @@ def record_display(ggdb, art, kodi, log_prefix=IMAGE_LOG_PREFIX):
             kodi.LOGWARNING)
         return False
     try:
-        ggdb.record_screensaver_display(
+        ggdb.history.record_screensaver_display(
             normalized_set_id, software_id)
     except Exception as error:  # noqa: BLE001 - history must never break rendering
         kodi.log(
@@ -76,7 +76,7 @@ def record_video_display(ggdb, video_tag, kodi, read_set_id, read_software_id,
             f"{log_prefix}: no database handle, history not recorded",
             kodi.LOGWARNING)
         return False
-    ggdb.record_screensaver_display(set_id, software_id)
+    ggdb.history.record_screensaver_display(set_id, software_id)
     kodi.log(
         f"{log_prefix}: recorded screensaver history for "
         f"set {set_id}",

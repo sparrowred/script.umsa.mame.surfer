@@ -182,7 +182,7 @@ def render_left_picture(ctx, art, roots):
     row gets the snap. The snap is shown with the aspect ratio of the game
     screen, the flyer/cover with the proportions of its file. Both come from
     the artwork database with the clone/parent fallback of Core
-    (``DBMod.get_set_artwork``); eXoDOS/GB64 rows bring ``left_pic`` along.
+    (``ArtworkQueries.get_set_artwork``); eXoDOS/GB64 rows bring ``left_pic`` along.
     """
 
     saver = ctx.saver
@@ -395,7 +395,7 @@ class RenderSession:
                     break
                 if self._mode_expired() and self._switch_mode():
                     break
-                art = saver.parent.umsa.ggdb.get_random_art(saver.art_types)
+                art = saver.parent.umsa.ggdb.art_queries.get_random_art(saver.art_types)
                 # remember the software being rendered for the context handoff
                 saver.remember_art(art)
                 # no artwork to render: nothing was displayed, so nothing may be

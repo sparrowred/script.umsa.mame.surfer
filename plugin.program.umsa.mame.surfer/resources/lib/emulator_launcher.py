@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from umsa_core import ShutdownRequested, log
 from umsa_core.emulation import CHDExtractionCancelled, CHDExtractionError
+from umsa_core.game_labels import make_time_nice
 from umsa_core.rom_cache import CacheCopyCancelled
 from umsa_gui import strings as S
 from umsa_gui.strings import tr
@@ -61,8 +62,8 @@ def new_emurun(actset, ggdb, emulation_start, working_dir, launch_id=None) -> di
         'source': actset.get('source'),
         'description': actset.get('gamename'),
         'publisher': actset.get('publisher'),
-        'set_clone': ggdb.get_set_name(actset.get('clone')) if ggdb else None,
-        'disks': ggdb.get_disks(actset.get('swl_name'), actset.get('name')) if ggdb else [],
+        'set_clone': ggdb.games.get_set_name(actset.get('clone')) if ggdb else None,
+        'disks': ggdb.games.get_disks(actset.get('swl_name'), actset.get('name')) if ggdb else [],
     }
 
 
@@ -356,7 +357,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
             level='debug')
     notif = tr(
         S.RUN_PLAYED,
-        ctx.ggdb.make_time_nice(end - start) if ctx.ggdb else int(end - start))
+        make_time_nice(end - start))
     ctx.stop_screensaver()
     try:
         if ctx.player.isPlayingAudio():
@@ -419,7 +420,7 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
         if emu_infos.get('exe') != "marp":
             if int(end - start) > 60:
                 try:
-                    ctx.ggdb.write_status_after_play(ctx.actset.get('id'), int(end - start))
+                    ctx.ggdb.status.write_status_after_play(ctx.actset.get('id'), int(end - start))
                 except Exception as error:
                     log(
                         f'UMSA gui: could not record emulator play time: {error}',

@@ -271,7 +271,8 @@ def get_machine_artwork_path(
         fallback_media_dir: Directory with fallback images (pinball.png,
             reels.png, arcade.png)
         cabinets: Optional ``{machine set name: art row}`` from
-            ``DBMod.get_machine_cabinets`` (own artwork already preferred)
+            ``ArtworkQueries.get_machine_cabinets`` (own artwork already
+            preferred)
         source_roots: Artwork source roots to resolve the ``cabinets`` rows
 
     Returns:

@@ -50,7 +50,7 @@ def resolve_art_path(art, roots):
 
     ``art`` carries the ``art_set`` fields (source, root_key,
     relative_path, archive_member). Further artwork of the set (the left
-    picture) comes from the database: ``DBMod.get_set_artwork``.
+    picture) comes from the database: ``ArtworkQueries.get_set_artwork``.
     """
 
     return resolve_artwork_path(art, art, roots)
@@ -60,13 +60,14 @@ def machine_picture(use_set, ggdb, roots, media_folder):
     """Return the full path of the machine picture of a set.
 
     Same Core functions as the frontend's machine wraplist: the scanned
-    cabinet (``DBMod.get_machine_cabinets``, own artwork before progettosnaps)
+    cabinet (``ArtworkQueries.get_machine_cabinets``, own artwork before
+    progettosnaps)
     wins, without an artwork scan the fixed progettosnaps cabinet path is
     used; pinballs, reels and arcade games get the internal pictures.
     """
 
     machine = machine_set_name(use_set)
-    cabinets = ggdb.get_machine_cabinets([machine]) if machine else {}
+    cabinets = ggdb.art_queries.get_machine_cabinets([machine]) if machine else {}
     cab_path = path.join(roots.get('progettosnaps', ''), 'cabinets/cabinets')
     return get_machine_artwork_path(use_set, cab_path, media_folder, cabinets, roots)
 

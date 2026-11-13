@@ -1,4 +1,10 @@
-"""Pure command-line assembly helpers for MAME."""
+"""Command-line options for a MAME run.
+
+:func:`create_cmdline` is the pure assembly; :func:`get_cmd_line_options`
+reads what it needs from the game repository.
+"""
+
+from .logging import log
 
 
 def create_cmdline(parts, devices, setname):
@@ -41,3 +47,83 @@ def create_cmdline(parts, devices, setname):
         return cmd_options, first_device
     else:
         return [], None
+
+
+def get_cmd_line_options(games, set_id, set_name, machine_name, swl_name):
+    """Create command line options for MAME emulator run
+
+    Based on id, name of set, and the names of machine and swl. ``games``
+    is the game repository (``DBMod.games``).
+    """
+
+    # get options for softwarelist
+    ## this is manually set coz some swls need special options
+    ## like a device in a slot so the machine supports hdds
+    repo = games
+    swlopt = repo.get_swl_options(swl_name)
+    # make swl_options a list
+    if swlopt[0]:
+        swl_options = swlopt[0].strip().split(' ')
+    else:
+        swl_options = None
+
+    # get id for machine
+    machine_id = repo.get_machine_id(machine_name)
+
+    # get devices supported by the machine
+    _devices = repo.get_devices_for_machine(machine_id[0])
+
+    # get all parts for the choosen set
+    _part = repo.get_parts_for_set_id(set_id)
+
+    # check if we have a requirement in sharedfeat
+    _sharedfeat = repo.get_sharedfeat_requirement(set_id)
+
+    # create cmd line
+    _cmd_options, first_device = create_cmdline(
+        list(_part), _devices, set_name
+    )
+
+    more_options = []
+    if _cmd_options:
+        # add additional manual swl options
+        if swl_options:
+            more_options += swl_options
+
+        # add sharedfeat
+        if _sharedfeat:
+            # security if definition for sharedfeat_requirement
+            # is not swl:set
+            if ':' in _sharedfeat[0]:
+                _swl, _set = _sharedfeat[0].split(':')
+            else:
+                _set = _sharedfeat[0]
+                _swl = None
+            # when definition is ok
+            if _swl:
+                # create new cmdline option for requirement
+                log(f"UMSA database: get_cmd_line_options: set {_set}, swl {_swl}", level='debug')
+                _setinfo = repo.get_info_by_set_and_swl(_set, _swl)
+                log(f"UMSA database: get_cmd_line_options: setid {_setinfo}", level='debug')
+                _parts2 = repo.get_parts_for_set_id(_setinfo['set_id'])
+                log(f"UMSA database: get_cmd_line_options: parts {_parts2}", level='debug')
+                _cmdopt = create_cmdline(list(_parts2), _devices, _set)[0]
+                more_options += _cmdopt
+            # else add the requirement set as option
+            # directly after machine name
+            # hopefully most of the time mame will then
+            # find the correct swl entry
+            else:
+                more_options += [_set]
+
+        # when we know the devices also set -statename
+        cmd_options = [machine_name]+more_options+_cmd_options+[
+            '-statename', f'%g/%d_{first_device}', ]
+
+    elif swl_options:
+        cmd_options = [machine_name] + swl_options + [set_name]
+    else:
+        cmd_options = [machine_name, set_name]
+    cmd_options.extend(['-snapname', f'{swl_name}/{set_name}/%i'])
+
+    return cmd_options

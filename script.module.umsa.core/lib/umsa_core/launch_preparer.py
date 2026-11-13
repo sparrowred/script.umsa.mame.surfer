@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from umsa_core import log
+from umsa_core.cmdline import get_cmd_line_options
 from umsa_core.rom_cache import CacheLayout, cache_archives
 from umsa_core.rom_finder import NONMAME
 from umsa_core.support import marp_download
@@ -152,8 +153,8 @@ class LaunchPreparer:
             if dialog is not None:
                 dialog.update(20, 'create swl options...')
             # get cmd options
-            emurun['args'] = ggdb.get_cmd_line_options(
-                actset['id'], actset['name'],
+            emurun['args'] = get_cmd_line_options(
+                ggdb.games, actset['id'], actset['name'],
                 actset['machine_name'], actset['swl_name'])
 
     def demul(self, emurun):

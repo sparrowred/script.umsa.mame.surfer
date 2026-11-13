@@ -92,3 +92,33 @@ def resolve_default_filter(connection, spec, nonmame=None):
     finally:
         cursor.close()
     return filter_lists
+
+
+def ensure_default_filter(history, connection, nonmame):
+    """Create the default filter once (first start); never raises.
+
+    ``history`` is the history repository of ``status.db``, ``connection``
+    the ``umsa.db`` connection and ``nonmame`` the configured folders of the
+    other collections. Returns ``True`` when the filter was written now. An existing
+    ``default`` filter is kept; the ``status_meta`` marker prevents that
+    a filter the user deleted later is created again.
+    """
+
+    try:
+        repository = history
+        if repository.get_meta(DEFAULT_FILTER_SEEDED_KEY):
+            return False
+        created = False
+        if DEFAULT_FILTER_NAME not in repository.list_filter_names():
+            # collections without a folder in the settings start inactive
+            filter_lists = resolve_default_filter(
+                connection, load_default_filter_spec(), nonmame)
+            repository.save_filter_selections(DEFAULT_FILTER_NAME, filter_lists)
+            created = True
+            log("UMSA database: default filter created", level='info')
+        repository.set_meta(DEFAULT_FILTER_SEEDED_KEY, "1")
+    except Exception as error:  # noqa: BLE001 - the start must go on
+        log(f"UMSA database: could not create default filter: {error}",
+            level='error')
+        return False
+    return created

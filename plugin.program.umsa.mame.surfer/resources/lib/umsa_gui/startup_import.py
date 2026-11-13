@@ -25,7 +25,7 @@ def run_startup_import(gui):
 
     # Check if the import was already completed before this startup.
     # We only show the success notification if the import is newly performed.
-    marker = gui.ggdb.get_import_marker()
+    marker = gui.ggdb.history.get_import_marker()
     already_completed = marker is not None and marker.get("status") in (
         "completed", "completed_discards", "completed_no_source"
     )
@@ -84,7 +84,7 @@ def save_lastgames(gui):
     """Persist the current in-memory history without trimming it."""
 
     if gui.ggdb is not None:
-        gui.ggdb.save_lastgames(gui.last)
+        gui.ggdb.history.save_lastgames(gui.last)
 
 
 def remember_and_select(gui, software_id):

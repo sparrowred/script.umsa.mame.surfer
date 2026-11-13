@@ -11,8 +11,8 @@ from json import dumps
 import xbmc
 import xbmcgui
 from umsa_core import ProcessRunner, calculate_playback_plan, log, parse_vgm_header
-from umsa_core.database import split_gamename
 from umsa_core.emulation import format_vgm_title
+from umsa_core.game_labels import split_gamename
 from umsa_core.support import marp_search
 from umsa_core.vgm_header import MAX_PLAYBACK_SECONDS
 
@@ -53,7 +53,7 @@ ACTION_EMULATORS = {
     ACTION_START_EXODOS_ALT: {'name': "exoDOS Alternate", 'exe': "exodos_alt"},
 }
 
-# DBMod query behind an entry of a "Select ..." list, by menu code
+# Gamelist query (``DBMod.gamelist``) behind an entry of a "Select ..." list, by menu code
 SELECT_QUERIES = {
     M_SWL: 'get_by_swl',
     M_CAT: 'get_by_cat',
@@ -85,7 +85,7 @@ def gamelist_click(gui):
         else:
             size = gui.getControl(GAME_LIST).size()
             sid = int(gui.getControl(GAME_LIST).getListItem(size - 2).getLabel2())
-        gamelist, pos, _result_count = gui.ggdb.execute_statement(
+        gamelist, pos, _result_count = gui.ggdb.gamelist.execute_statement(
             software_id=sid, prevnext=list_id)
         # create list
         list_items = []
@@ -103,10 +103,11 @@ def gamelist_click(gui):
         return
     if kind == KIND_SELECT:
         if list_id == 'source':
-            my_list, pos, count = gui.ggdb.get_software_for_source(
+            my_list, pos, count = gui.ggdb.gamelist.get_software_for_source(
                 gui.actset['id'], select_label)
         else:
-            query = getattr(gui.ggdb, SELECT_QUERIES[gui.gamelist_select])
+            query = getattr(
+                gui.ggdb.gamelist, SELECT_QUERIES[gui.gamelist_select])
             my_list, pos, count = query(list_id, gui.actset['id'])
         gui.popup_gamelist(my_list, f"{select_label} ({count})", pos)
         return
@@ -124,7 +125,7 @@ def gamelist_click(gui):
             gui.run_emulator(dict(ACTION_EMULATORS[list_id]))
     # emulator run
     elif what == "emu_conn":
-        gui.run_emulator(gui.ggdb.get_emulator(emu_conn_id=list_id))
+        gui.run_emulator(gui.ggdb.emulators.get_emulator(emu_conn_id=list_id))
     # change/delete emulator
     elif what == "emu":
         if (gui.dialog.yesno(
@@ -134,22 +135,22 @@ def gamelist_click(gui):
             if (gui.dialog.yesno(
                     tr(S.EMU_DELETE_TITLE), tr(S.EMU_DELETE_CONFIRM, select_label))
                ):
-                gui.ggdb.delete_emulator(list_id)
+                gui.ggdb.emulators.delete_emulator(list_id)
                 gui.update_gamelist(M_ALLEMUS)
         else:
             gui.configure_emulator(
-                emu_info=gui.ggdb.get_emulator(emu_id=list_id), reconfigure=True)
+                emu_info=gui.ggdb.emulators.get_emulator(emu_id=list_id), reconfigure=True)
     # set machine for swl
     elif kind == KIND_MACHINES:
         gui.setFocus(gui.getControl(gui.main_focus))
         gui.enter = True
         # get info from db
-        machine_name, machine_label = gui.ggdb.get_machine_name(list_id)
+        machine_name, machine_label = gui.ggdb.games.get_machine_name(list_id)
         # save machine for set in self.info
         gui.actset['machine_name'] = machine_name
         gui.actset['machine_label'] = machine_label
         # scanned cabinet of the new machine (own artwork first)
-        gui.machine_cabinets.update(gui.ggdb.get_machine_cabinets([machine_name]))
+        gui.machine_cabinets.update(gui.ggdb.art_queries.get_machine_cabinets([machine_name]))
         # set new image and machine label
         gui.getControl(SYSTEM_WRAPLIST).getSelectedItem().setArt(
             {'icon': gui.get_machine_pic(gui.actset)})
@@ -200,7 +201,7 @@ def gamelist_click(gui):
 
         elif what == ENTRY_SEARCH and list_id == SEARCH_MARP:
             if gui.actset['swl_name'] == "mame":
-                gui.ggdb.save_further_media(
+                gui.ggdb.status.save_further_media(
                     gui.actset['id'], marp=dumps(
                         marp_search(short_name=gui.actset['name'])))
             gui.update_gamelist(M_MEDIA)
@@ -262,18 +263,18 @@ def gamelist_context(gui):
         if gui.dialog.yesno(
                 tr(S.EMU_TITLE, label), tr(S.EMU_WHAT_TO_DO),
                 nolabel=tr(S.EMU_RECONFIGURE), yeslabel=tr(S.EMU_REMOVE)):
-            last_emu_id = gui.ggdb.delete_emulator_connection(list_id)
+            last_emu_id = gui.ggdb.emulators.delete_emulator_connection(list_id)
             if last_emu_id and gui.dialog.yesno(
                     tr(S.EMU_DELETE_TITLE),
                     tr(S.EMU_DELETE_LAST_CONNECTION, label)):
-                gui.ggdb.delete_emulator(last_emu_id)
+                gui.ggdb.emulators.delete_emulator(last_emu_id)
             gui.update_gamelist(M_MACHINE)
         else:
             xbmc.log("UMSA gui: reconfigure emulator")
             xbmc.log(f"UMSA gui: {list_id}")
-            xbmc.log(f'UMSA gui: {dict(gui.ggdb.get_emulator(emu_conn_id=list_id))}')
+            xbmc.log(f'UMSA gui: {dict(gui.ggdb.emulators.get_emulator(emu_conn_id=list_id))}')
             gui.configure_emulator(
-                emu_info=gui.ggdb.get_emulator(emu_conn_id=list_id), reconfigure=True)
+                emu_info=gui.ggdb.emulators.get_emulator(emu_conn_id=list_id), reconfigure=True)
     # switch filter
     else:
         gui.gamelist_switch_filter()

@@ -25,7 +25,7 @@ transaction convention of :class:`umsa_core.dat_repository.DatRepository`):
 Reads never commit and own only short-lived cursors that are closed in a
 ``finally`` block. Rows are returned transparently as the connection's native
 ``sqlite3.Row``, so both ``row['col']`` and ``row[i]`` access keep working;
-presentation and time formatting stay in :class:`umsa_core.database.DBMod`.
+presentation and time formatting live in :mod:`umsa_core.software_details`.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class StatusRepository:
 
     The repository never opens or closes the supplied connection and never
     caches a different one; :class:`umsa_core.database.DBMod` builds one per
-    call so it can never pin a connection that later code has replaced.
+    access of ``DBMod.status`` so it can never pin a connection that later code has replaced.
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:
@@ -107,9 +107,9 @@ class StatusRepository:
         """Return the raw status row for ``set_id``, or ``None``.
 
         Row-transparent: both positional access (``row[1]``…``row[4]``, used
-        by ``DBMod.get_status_for_set``'s dict building) and named access keep
-        working. Time/elapsed formatting is presentation logic and stays in
-        ``DBMod``.
+        by ``software_details.status_dict``) and named access keep working.
+        Time/elapsed formatting is presentation logic and lives in
+        :mod:`umsa_core.software_details`.
         """
 
         cursor = self._conn.cursor()
@@ -194,7 +194,7 @@ class StatusRepository:
         still a candidate, exactly as before). An empty id collection returns
         ``None`` without building malformed SQL, and set ids without a status
         row simply do not match. Returns the bare id value (not a Row), which
-        is the shape ``DBMod.get_latest_by_software`` has always returned.
+        is the shape ``SoftwareDetails.get_latest_by_software`` returns.
         """
 
         ids = list(set_ids)

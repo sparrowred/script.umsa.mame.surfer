@@ -1,81 +1,64 @@
-"""Module for umsa.info sqlite3 database.
+"""Connections and lifecycle of the UMSA databases.
 
-Artwork table access is centralised in :mod:`umsa_core.artwork_repository` and
-DAT table access in :mod:`umsa_core.dat_repository`; DAT parsing lives in
-:mod:`umsa_core.dat_parser` and the DAT scan workflow in
-:mod:`umsa_core.dat_scanner`. ``status.db`` play history and per-set media
-access is centralised in :mod:`umsa_core.status_repository`, emulator
-configuration (``emu``/``emu_conn``) in :mod:`umsa_core.emulator_repository`.
-``DBMod`` remains the public facade.
+``DBMod`` owns the persistent connections and nothing else of the data
+access:
 
-``umsa.db`` is the downloaded game metadata database (read-only during normal
-operation). ``artwork.db`` and ``dat.db`` are the authoritative sources for
-scanned artwork and DAT data respectively. They are attached as read-only
-schemas ``art`` and ``dat`` on the persistent ``umsa.db`` connection. Scanner
-workflows write to their respective source databases through their own
-writable connections.
+- ``umsa.db``, the downloaded game metadata (read-only), with ``artwork.db``
+  and ``dat.db`` attached as the read-only schemas ``art`` and ``dat``. Both
+  are the authoritative sources of scanned artwork and DAT texts; no data is
+  copied into ``umsa.db``. ``open_db()`` reopens this connection after a
+  database update.
+- ``status.db`` with play status, emulator configuration, history and saved
+  filters; its schema is migrated when ``DBMod`` opens it.
 
-A few direct statements intentionally remain here:
+Everything else is reached through the accessors of ``DBMod``:
 
-- ``open_db()`` reopens the downloaded ``umsa.db`` read-only and reattaches
-  the current ``artwork.db`` and ``dat.db`` as read-only schemas. No data is
-  copied into ``umsa.db``.
-- ``get_random_art()`` and ``get_artwork_by_software_id()`` join the attached
-  ``art.art_set`` with the general UMSA game tables (``sets``/``swl``/
-  ``software``) and, for ``get_random_art()``, depend on the active ``DBMod``
-  filter state. These are mixed application queries rather than artwork-table
-  CRUD and are left here on purpose.
+==================  ====================================================
+``games``           :class:`~umsa_core.game_repository.GameRepository`
+``artwork``         :class:`~umsa_core.artwork_repository.ArtworkRepository`
+``dats``            :class:`~umsa_core.dat_repository.DatRepository`
+``status``          :class:`~umsa_core.status_repository.StatusRepository`
+``emulators``       :class:`~umsa_core.emulator_repository.EmulatorRepository`
+``history``         :class:`~umsa_core.history_repository.HistoryRepository`
+``software``        :class:`~umsa_core.software_details.SoftwareDetails`
+``gamelist``        :class:`~umsa_core.gamelist_filter.Gamelist` (filter state)
+``art_queries``     :class:`~umsa_core.artwork_queries.ArtworkQueries`
+==================  ====================================================
 
-TODO
- - remove usage of detail, use split_gamename
+Repositories and ``software`` are built on every access, so they can never
+hold a connection that ``open_db()`` has replaced; ``gamelist`` and
+``art_queries`` keep state and ask for the connection on every call. New
+queries belong into those modules, not into ``DBMod``
+(``tests/arch/test_dbmod_surface.py``).
+
+The scan entry points (``scan_dats``, ``scan_artwork``, ``scan_exodos_to_db``,
+``scan_gb64_to_db``) still live here with the shared scan progress fields;
+the scanners write through their own connections.
 """
 
 import os
-import random
 import sqlite3  # connect, Row, OperationalError
-import time
-from array import array
 from urllib.request import pathname2url
 
-from .artwork import resolve_artwork_path
+from .artwork_queries import ArtworkQueries
 from .artwork_repository import ArtworkRepository, create_artwork_tables
 from .artwork_scanner import ArtworkScanner
-from .dat_parser import DRIVER_WIP, driver_lookup_keys
 from .dat_repository import DatRepository, create_dat_tables
 from .dat_scanner import DatScanner
 from .data_paths import CoreDataPaths
-from .default_filter import (
-    DEFAULT_FILTER_NAME,
-    DEFAULT_FILTER_SEEDED_KEY,
-    load_default_filter_spec,
-    resolve_default_filter,
-)
+from .default_filter import ensure_default_filter
 from .emulator_repository import EmulatorRepository
-from .game_labels import make_time_nice, split_gamename  # noqa: F401
 from .game_repository import GameRepository
-from .gamelist_filter import GamelistFilter
-from .gamelist_filter import category_query as _category_query
-from .gamelist_filter import define_filter as _define_filter
-from .gamelist_filter import execute_statement as _execute_statement
-from .gamelist_filter import maker_query as _maker_query
-from .gamelist_filter import players_query as _players_query
-from .gamelist_filter import software_query as _software_query
-from .gamelist_filter import source_query as _source_query
-from .gamelist_filter import swl_query as _swl_query
-from .gamelist_filter import year_query as _year_query
+from .gamelist_filter import Gamelist
 from .gb64_scanner import GB64Scanner
 from .history_import import run_legacy_import as _run_legacy_import
 from .history_repository import HistoryRepository
 from .logging import log
 from .scan_progress import _scan_state_ownership
+from .software_details import SoftwareDetails
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 from .status_migrations import apply_migrations
-from .status_repository import (
-    PLAY_STATUS_DEFAULT,
-    PLAY_STATUS_ORDERS,
-    StatusRepository,
-)
-from .umsa_db_download import download_and_update_umsa_db  # noqa: F401
+from .status_repository import StatusRepository
 
 
 def _core_data_paths(db_path):
@@ -84,64 +67,6 @@ def _core_data_paths(db_path):
     return CoreDataPaths(os.path.abspath(db_path))
 
 
-def parse_recommended_games(rec_text, db):
-    """Parse the 'Rec' dat field into popup entries.
-
-    Returns ``(rec_list, pos)``. Separator entries (names starting with ``-``)
-    are ``{'name', 'id': 0, 'year', 'maker'}`` and each increments ``pos``;
-    found games are ``{'id', 'name', 'year', 'maker'}``. Names not found in the
-    database are kept as ``None`` (popup_gamelist skips them).
-    """
-
-    rec_list = []
-    pos = 0
-    for rec_gamename in rec_text.split('[CR]'):
-        if rec_gamename == '':
-            continue
-        if rec_gamename[0] == '-':
-            rec_list.append({'name': rec_gamename, 'id': 0, 'year': '', 'maker': ''})
-            pos += 1
-        else:
-            found = db.search_single(rec_gamename)
-            rec_list.append(
-                None if found is None else
-                {'id': found['id'], 'name': found['name'],
-                 'year': found['year'], 'maker': found['maker']})
-    return rec_list, pos
-
-
-def build_filter_lists(filter_lists, category, db):
-    """Partition a filter category's database entries into active/inactive.
-
-    ``active`` holds entries whose id is in ``filter_lists[category]``,
-    ``inactive`` holds the rest (database order preserved). Each entry is a
-    dict ``{'id': str, 'name', 'count'}``. Unknown categories yield empty lists.
-    """
-
-    active_ids = set(filter_lists.get(category, []))
-    active = []
-    inactive = []
-    for entry in (db.get_all_dbentries(category) or []):
-        item = {'id': str(entry['id']), 'name': entry['name'], 'count': entry['count']}
-        (active if item['id'] in active_ids else inactive).append(item)
-    return {'active': active, 'inactive': inactive}
-
-
-
-# kept candidate lists of get_random_art (artwork types x filter)
-_RANDOM_ART_CACHE_SIZE = 8
-
-COUNTRIES = {
-    '1NTSC' : ('ntsc',),
-    '2PAL'  : ('pal',),
-    '3US'   : ('usa', 'america', 'nintendo entertainment system /', 'world'),
-    '4JP'   : ('jpn', 'japan', 'famicom'),
-    '5EU'   : ('euro',),
-    '6EU'   : ('euro', 'pal'),
-    '7KR'   : ('kor',),
-    '8BR'   : ('bra',),
-}
-
 class DBMod:
     """Database class for umsa.info sqlite3 database"""
 
@@ -149,18 +74,15 @@ class DBMod:
 
         self.nonmame = nonmame
         self.pref_country = pref_country
-        self.use_filter = True
-        self.order = 'name'
         self.scan_perc = 0
         self.scan_what = 'nothing'
         self.scan_status = True
-        self.join = ''
-        self.where = ''
-        self._where_params = []
-        self._filter_where_params = []
-        # candidate ids of get_random_art, see _random_art_candidates
-        self._random_art_cache = {}
-        self._random_art_token = None
+        # filter, order and selector state of the game lists; asks for the
+        # connection on every call because open_db() replaces it
+        self.gamelist = Gamelist(lambda: self.gdb)
+        # artwork joined with the game tables; nonmame can change later
+        self.art_queries = ArtworkQueries(
+            lambda: self.gdb, self.gamelist, lambda: self.nonmame)
         if not filter_lists:
             filter_lists = {}
 
@@ -189,7 +111,7 @@ class DBMod:
         self.sdb.row_factory = sqlite3.Row
         self.sdbc = self.sdb.cursor()
 
-        self.define_filter(filter_lists)
+        self.gamelist.define_filter(filter_lists)
 
         # Migrate status.db via repositories in one transaction; failure propagates.
         apply_migrations(self.sdb)
@@ -220,12 +142,9 @@ class DBMod:
             gdb = connect_sqlite_readonly(self.db_paths.umsa_db, row_factory=sqlite3.Row)
             gdbc = gdb.cursor()
 
-            art_uri = f'file:{pathname2url(os.fspath(self.db_paths.artwork_db))}?mode=ro'
-            dat_uri = f'file:{pathname2url(os.fspath(self.db_paths.dat_db))}?mode=ro'
-            gdbc.execute(f"ATTACH DATABASE '{art_uri}' AS art")
-            attached.add('art')
-            gdbc.execute(f"ATTACH DATABASE '{dat_uri}' AS dat")
-            attached.add('dat')
+            for alias, statement in self._source_attach_statements():
+                gdbc.execute(statement)
+                attached.add(alias)
 
             self.gdb = gdb
             self.gdbc = gdbc
@@ -252,26 +171,6 @@ class DBMod:
                     log(f"UMSA database open_db: could not close umsa "
                         f"connection during cleanup: {exc}", level='error')
             raise
-
-    def create_dat_tables(self, db_cursor):
-        """create dat tables
-
-        Delegates to the authoritative DAT schema definition in the DAT
-        repository. The signature is preserved for compatibility with existing
-        callers; the helper also handles the origin column upgrade/backfill.
-        """
-
-        create_dat_tables(db_cursor)
-
-    def create_art_tables(self, db_cursor):
-        """create art tables
-
-        Delegates to the authoritative artwork schema definition in the
-        artwork repository. The signature is preserved for compatibility
-        with existing callers.
-        """
-
-        create_artwork_tables(db_cursor)
 
     def close_umsa_db(self):
         """Close the persistent umsa.db connection, keeping status.db open.
@@ -350,16 +249,6 @@ class DBMod:
         if not cleanup_failed:
             self._status_closed_handles = (sdbc, sdb)
 
-    def close_db(self):
-        """Compatibility wrapper: close only the umsa.db connection.
-
-        Historically ``close_db`` closed only ``umsa.db`` and left
-        ``status.db`` open (the database-update sequence relies on that, then
-        calls :meth:`open_db` again). Use :meth:`close` for a full shutdown.
-        """
-
-        self.close_umsa_db()
-
     def _ensure_source_databases(self):
         """Ensure artwork.db and dat.db exist with authoritative schemas.
 
@@ -367,42 +256,31 @@ class DBMod:
         schemas without truncating or repopulating existing data.
         """
 
-        if not self.db_paths.artwork_db.exists():
-            conn = connect_sqlite(self.db_paths.artwork_db, row_factory=sqlite3.Row)
+        for path, create_tables in (
+                (self.db_paths.artwork_db, create_artwork_tables),
+                (self.db_paths.dat_db, create_dat_tables)):
+            conn = connect_sqlite(path, row_factory=sqlite3.Row)
             try:
-                create_artwork_tables(conn.cursor())
-                conn.commit()
-            finally:
-                conn.close()
-        else:
-            conn = connect_sqlite(self.db_paths.artwork_db, row_factory=sqlite3.Row)
-            try:
-                create_artwork_tables(conn.cursor())
+                create_tables(conn.cursor())
                 conn.commit()
             finally:
                 conn.close()
 
-        if not self.db_paths.dat_db.exists():
-            conn = connect_sqlite(self.db_paths.dat_db, row_factory=sqlite3.Row)
-            try:
-                create_dat_tables(conn.cursor())
-                conn.commit()
-            finally:
-                conn.close()
-        else:
-            conn = connect_sqlite(self.db_paths.dat_db, row_factory=sqlite3.Row)
-            try:
-                create_dat_tables(conn.cursor())
-                conn.commit()
-            finally:
-                conn.close()
+    def _source_attach_statements(self):
+        """Return (alias, statement) attaching artwork.db/dat.db read-only."""
+
+        statements = []
+        for alias, path in (('art', self.db_paths.artwork_db),
+                            ('dat', self.db_paths.dat_db)):
+            uri = f'file:{pathname2url(os.fspath(path))}?mode=ro'
+            statements.append((alias, f"ATTACH DATABASE '{uri}' AS {alias}"))
+        return statements
 
     def _attach_source_databases(self):
         """Attach artwork.db as 'art' and dat.db as 'dat' (read-only)."""
-        art_uri = f'file:{pathname2url(os.fspath(self.db_paths.artwork_db))}?mode=ro'
-        dat_uri = f'file:{pathname2url(os.fspath(self.db_paths.dat_db))}?mode=ro'
-        self.gdbc.execute(f"ATTACH DATABASE '{art_uri}' AS art")
-        self.gdbc.execute(f"ATTACH DATABASE '{dat_uri}' AS dat")
+
+        for _alias, statement in self._source_attach_statements():
+            self.gdbc.execute(statement)
 
     def _run_scan_with_shared_state(self, start_what, run):
         """Run ``run`` while owning the shared scan progress/status fields.
@@ -449,8 +327,8 @@ class DBMod:
         def run():
             return GB64Scanner(
                 db_paths,
-                initialize_dat=self.create_dat_tables,
-                initialize_art=self.create_art_tables,
+                initialize_dat=create_dat_tables,
+                initialize_art=create_artwork_tables,
                 progress=progress,
                 is_cancelled=is_cancelled,
             ).scan(gb64_root)
@@ -484,8 +362,8 @@ class DBMod:
             from .exodos_scanner import ExodosScanner
             return ExodosScanner(
                 db_paths,
-                initialize_dat=self.create_dat_tables,
-                initialize_art=self.create_art_tables,
+                initialize_dat=create_dat_tables,
+                initialize_art=create_artwork_tables,
                 progress=progress,
                 is_cancelled=is_cancelled,
             ).scan(exodos_root)
@@ -523,7 +401,7 @@ class DBMod:
         def run():
             return DatScanner(
                 db_paths,
-                initialize_tables=self.create_dat_tables,
+                initialize_tables=create_dat_tables,
                 progress=progress,
                 is_cancelled=is_cancelled,
             ).scan(datdir)
@@ -559,7 +437,7 @@ class DBMod:
         def run():
             return ArtworkScanner(
                 db_paths,
-                self.create_art_tables,
+                create_artwork_tables,
                 progress=progress,
                 is_cancelled=is_cancelled,
                 listdir=listdir,
@@ -573,1405 +451,61 @@ class DBMod:
 
         return self._run_scan_with_shared_state('discovering', run)
 
-    def _get_artwork_repository(self):
-        """Return a repository bound to the current umsa.db connection.
+    # Repositories are built per access, never cached: they can never hold a
+    # connection that open_db() has replaced, and they never own or close it.
 
-        The repository is created per call rather than cached, so it can
-        never hold a reference to a connection that ``open_db()`` has since
-        replaced. It never owns or closes ``self.gdb``. Uses the ``art``
-        schema where artwork.db is attached.
-        """
-
-        return ArtworkRepository(self.gdb, schema="art")
-
-    def _get_dat_repository(self):
-        """Return a DAT repository bound to the current umsa.db connection.
-
-        Created per call (never cached) so it can never hold a reference to a
-        connection that ``open_db()`` has since replaced. It never owns or
-        closes ``self.gdb``. Uses the ``dat`` schema where dat.db is attached.
-        """
-
-        return DatRepository(self.gdb, schema="dat")
-
-    def _get_game_repository(self):
-        """Return a game repository bound to the current umsa.db connection.
-
-        Created per call (never cached) so it can never hold a reference to a
-        connection that ``open_db()`` has since replaced. It never owns or
-        closes ``self.gdb``.
-        """
+    @property
+    def games(self):
+        """Game metadata of ``umsa.db`` (:class:`GameRepository`)."""
 
         return GameRepository(self.gdb)
 
-    def _get_status_repository(self):
-        """Return a status repository bound to the current status.db connection.
+    @property
+    def artwork(self):
+        """Scanned artwork of the attached ``art`` schema (:class:`ArtworkRepository`)."""
 
-        Created per call (never cached) so it can never hold a reference to a
-        connection that has since been replaced. It never owns or closes
-        ``self.sdb``.
-        """
+        return ArtworkRepository(self.gdb, schema="art")
+
+    @property
+    def dats(self):
+        """DAT texts of the attached ``dat`` schema (:class:`DatRepository`)."""
+
+        return DatRepository(self.gdb, schema="dat")
+
+    @property
+    def status(self):
+        """Play status and further media of ``status.db`` (:class:`StatusRepository`)."""
 
         return StatusRepository(self.sdb)
 
-    def _get_emulator_repository(self):
-        """Return an emulator repository bound to the current status.db connection.
-
-        Created per call (never cached) so it can never hold a reference to a
-        connection that has since been replaced. It never owns or closes
-        ``self.sdb``.
-        """
+    @property
+    def emulators(self):
+        """Emulator configuration of ``status.db`` (:class:`EmulatorRepository`)."""
 
         return EmulatorRepository(self.sdb)
 
-    def _get_history_repository(self):
-        """Return a history repository bound to the current status.db connection.
-
-        Created per call (never cached) so it can never hold a reference to a
-        connection that has since been replaced. It never owns or closes
-        ``self.sdb``.
-        """
+    @property
+    def history(self):
+        """History, saved filters and metadata of ``status.db`` (:class:`HistoryRepository`)."""
 
         return HistoryRepository(self.sdb)
 
-    def get_art_types(self):
-        """get all types of artwork which contain images
-
-        except videosnaps, manuals, soundtracks and patches
-        """
-
-        return self._get_artwork_repository().get_art_types()
-
-    def get_artwork_for_set(self, set_id):
-        """get artwork for one set"""
-
-        repo = self._get_artwork_repository()
-        return repo.get_artwork_for_set(set_id)
-
-    def get_artwork_for_sets(self, set_ids):
-        """get artwork for a list of sets"""
-
-        repo = self._get_artwork_repository()
-        return repo.get_artwork_for_sets(set_ids)
-
-    def get_dat_for_set(self, set_id):
-        """get dat file entries for one set
-
-        Returns a ``{display category: entry text}`` mapping. Delegates to
-        :class:`umsa_core.dat_repository.DatRepository`; the result structure
-        is unchanged.
-        """
-
-        return self._get_dat_repository().get_dat_for_set(set_id)
-
-    def get_dat_for_sets(self, set_ids):
-        """get dat file entries for a list of sets
-
-        Returns a ``{set id: {display category: entry text}}`` mapping.
-        Delegates to :class:`umsa_core.dat_repository.DatRepository`; an empty
-        list returns an empty mapping.
-        """
-
-        return self._get_dat_repository().get_dat_for_sets(set_ids)
-
-    def get_random_id(self):
-        """get a random id"""
-
-        where = ''
-        where_params = []
-        if self.filter_join and self.filter_where:
-            where = "WHERE sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
-                " ".join(self.filter_join), " AND ".join(self.filter_where)
-            )
-            where_params = list(self._filter_where_params)
-
-        select_statement = f"SELECT DISTINCT software.id \
-                            FROM sets JOIN software ON software.id = sets.softwarelink_id \
-                            {where} ORDER BY RANDOM() LIMIT 1"
-        self.gdbc.execute(select_statement, where_params)
-        return self.gdbc.fetchone()[0]
-
-    def has_artwork(self, art_types):
-        """Return whether any artwork of the given types can be selected.
-
-        The check uses the same joined tables, the same artwork database
-        (``art.art_set``) and the same active filter as
-        :meth:`get_random_art`, so a positive answer means the random
-        selection can really return a row. It stops at the first hit and
-        never loads a whole artwork collection.
-
-        ``art_types`` may be empty (the answer is then ``False``) and may
-        contain duplicates.
-        """
-
-        types = list(dict.fromkeys(art_types or []))
-        if not types:
-            return False
-        types_in = ",".join("?" * len(types))
-
-        # with the active filter first, like the random selection
-        # (an empty filter would produce an invalid "AND" clause)
-        if self.use_filter and self.filter_where:
-            statement = "SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id {} \
-                         WHERE art.type IN ({}) AND {} LIMIT 1".format(
-                             " ".join(self.filter_join),
-                             types_in,
-                             " AND ".join(self.filter_where))
-            self.gdbc.execute(statement,
-                              list(types) + list(self._filter_where_params))
-            if self.gdbc.fetchone():
-                return True
-
-        # and without filter if the filter found nothing
-        statement = f"SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id \
-                    WHERE art.type IN ({types_in}) LIMIT 1"
-        self.gdbc.execute(statement, list(types))
-        return bool(self.gdbc.fetchone())
-
-    def get_random_art(self, art_types):
-        """Get 1 random artwork
-
-        TODO
-        - check where get_random_art is used and if machine, left is always needed
-           if not make optional
-        - get machine pic, see screensaver/get_machine_pic
-        - get bottom left, type video/snap/title = cover/flyer
-                           type cover/flyer = snap
-          needs fetch info for snap from db for aspect ratio
-
-        Takes a list of artwork types
-        Returns a dictonary with informations or None if nothing is found
-
-        Artwork locations live in the ``art.art_set`` schema (attached artwork.db):
-        every row carries ``source``, ``root_key``, ``relative_path`` and
-        ``archive_member``. Callers resolve them with
-        :func:`umsa_core.artwork.resolve_artwork_path`; the additional left
-        image is resolved here for the screensaver.
-
-        The random artwork selection intentionally stays in ``DBMod``: it
-        joins the attached ``art.art_set`` with ``sets`` and applies the active
-        ``filter_join``/``filter_where`` state, so it is a mixed application
-        query rather than artwork-table CRUD. The isolated left-image lookup
-        is delegated to :class:`ArtworkRepository`.
-        """
-
-        rand_art = self._pick_random_art(art_types)
-        if not rand_art:
-            log(f"UMSA database get_random art: no artwork for {art_types}", level='warning')
-            return None
-        end_result = {}
-        end_result.update(rand_art)
-
-        # get needed infos
-        self.gdbc.execute(
-            "SELECT sets.name, swl.name as swl_name, gamename, \
-                    year.name as year, maker.name as maker, softwarelink_id as s_id, \
-                    swl.system_id as swl_system_id, cat.name as category, cat.flag as is_machine \
-             FROM sets, swl, year, maker, category cat \
-             WHERE sets.id = ? \
-             AND sets.year_id = year.id AND sets.publisher_id = maker.id \
-             AND sets.swllink_id = swl.id AND sets.classification_id = cat.id",
-            (rand_art['id'],)
-        )
-        art_info = self.gdbc.fetchone()
-        end_result.update(art_info)
-        end_result.update(
-            {'machine_name': self.get_machine_name(end_result['swl_system_id'])[0]})
-
-        # snap/title: get display
-        if 'snap' in art_types or 'titles' in art_types:
-            if end_result['swl_name'] == 'mame':
-                machine = rand_art['id']
-            else:
-                machine = end_result['swl_system_id']
-            self.gdbc.execute(
-                "SELECT display_rotation, display_type \
-                FROM sets WHERE id = ?", (machine,)
-            )
-            art_displayinfo = self.gdbc.fetchone()
-            end_result.update(art_displayinfo)
-        else:
-            end_result.update({'display_rotation': 0, 'display_type': ''})
-
-        # get left pic if swl is nonmame
-        if (end_result['swl_name'] == 'exodos') or (end_result['swl_name'].startswith('gb64_')):
-            if end_result['type'] in ('snap', 'titles', 'videosnaps'):
-                lefttype = 'covers'
-            else:
-                lefttype = 'snap'
-            leftpic = self._get_artwork_repository().get_artwork_record_for_set_type(
-                rand_art['id'], lefttype
-            )
-            if leftpic:
-                left_path = resolve_artwork_path(
-                    leftpic, end_result, self._art_source_roots())
-                if left_path:
-                    end_result.update({'left_pic': left_path})
-
-        return end_result
-
-    def _random_art_candidates(self, art_types, filtered):
-        """Return the ``art_id`` values ``get_random_art`` may pick from.
-
-        The ids of one artwork type selection (with or without the active
-        filter) are read once and kept, so a random pick no longer sorts the
-        whole joined artwork table (``ORDER BY RANDOM()``) for every picture.
-
-        The lists are dropped when ``artwork.db`` changes
-        (``PRAGMA art.data_version`` moves as soon as another connection
-        commits, e.g. an artwork scan of the frontend) and when ``open_db``
-        replaced the ``umsa.db`` connection. The filter clauses are part of
-        the key, so a changed filter gets its own list.
-        """
-
-        self.gdbc.execute("PRAGMA art.data_version")
-        token = (self.gdb, self.gdbc.fetchone()[0])
-        cache = getattr(self, '_random_art_cache', None)
-        if cache is None or getattr(self, '_random_art_token', None) != token:
-            cache = self._random_art_cache = {}
-            self._random_art_token = token
-
-        types = tuple(sorted(set(art_types)))
-        signature = None
-        if filtered:
-            signature = (tuple(self.filter_join), tuple(self.filter_where),
-                         tuple(self._filter_where_params))
-        key = (types, signature)
-        if key in cache:
-            return cache[key]
-
-        types_in = ",".join("?" * len(types))
-        if filtered:
-            statement = "SELECT art.art_id FROM art.art_set art JOIN sets ON sets.id = art.id {} \
-                         WHERE art.type IN ({}) AND {}".format(
-                             " ".join(self.filter_join),
-                             types_in,
-                             " AND ".join(self.filter_where))
-            params = list(types) + list(self._filter_where_params)
-        else:
-            statement = f"SELECT art.art_id FROM art.art_set art JOIN sets ON sets.id = art.id \
-                        WHERE art.type IN ({types_in})"
-            params = list(types)
-        self.gdbc.execute(statement, params)
-        ids = array('q', (row[0] for row in self.gdbc))
-
-        if len(cache) >= _RANDOM_ART_CACHE_SIZE:
-            cache.clear()
-        cache[key] = ids
-        return ids
-
-    def _pick_random_art(self, art_types):
-        """Return one random artwork row of the given types, or ``None``.
-
-        Picks with the active filter first and without it when the filter
-        leaves nothing. A candidate whose row has gone meanwhile drops the
-        candidate lists and is retried once.
-        """
-
-        if not art_types:
-            return None
-
-        # an empty filter would produce an invalid "AND" clause
-        filtered = bool(self.use_filter and self.filter_where)
-        for _attempt in range(2):
-            ids = None
-            if filtered:
-                ids = self._random_art_candidates(art_types, True)
-            if not ids:
-                ids = self._random_art_candidates(art_types, False)
-            if not ids:
-                return None
-            self.gdbc.execute(
-                "SELECT sets.id, art.source, art.root_key, art.scan_unit, \
-                        art.type, art.extension, art.relative_path, \
-                        art.archive_member \
-                 FROM art.art_set art JOIN sets ON sets.id = art.id \
-                 WHERE art.art_id = ?", (random.choice(ids),))
-            rand_art = self.gdbc.fetchone()
-            if rand_art:
-                return rand_art
-            self._random_art_cache = {}
-        return None
-
-    def _art_source_roots(self):
-        """Return configured roots for the non-MAME artwork sources.
-
-        ``get_random_art`` only resolves the additional left image, which is
-        picked from the eXoDOS/GB64 sources whose roots are held here.
-        """
-
-        nonmame = self.nonmame or {}
-        return {
-            'exodos': nonmame.get('exodos', ''),
-            'gb64': nonmame.get('gb64', ''),
-        }
-
-    def get_random_vgm_batch(self, db_path, limit=100):
-        """Return up to ``limit`` random vgmplay entries from a short-lived read-only connection.
-
-        The connection is opened only for this query and closed on every exit
-        path. No filesystem inspection is performed here; callers decide
-        which candidates are actually playable.
-        """
-
-        db_paths = _core_data_paths(db_path)
-        try:
-            db_conn = connect_sqlite_readonly(db_paths.umsa_db)
-        except sqlite3.Error as error:
-            log(f"UMSA database get_random_vgm_batch: open failed: {error}", level='warning')
-            return []
-
-        dbc = None
-        try:
-            dbc = db_conn.cursor()
-            vgmplay_row = dbc.execute(
-                "SELECT id FROM swl WHERE name = 'vgmplay'").fetchone()
-            if vgmplay_row is None:
-                log("UMSA database get_random_vgm_batch: no vgmplay software list",
-                    level='warning')
-                return []
-            rows = dbc.execute(
-                "SELECT name, gamename FROM sets \
-                 WHERE swllink_id = ? ORDER BY RANDOM() LIMIT ?",
-                (vgmplay_row[0], limit)).fetchall()
-        except sqlite3.Error as error:
-            log(f"UMSA database get_random_vgm_batch: read failed: {error}",
-                level='warning')
-            return []
-        finally:
-            if dbc is not None:
-                dbc.close()
-            db_conn.close()
-
-        return [{'name': row[0], 'gamename': row[1]} for row in rows]
-
-    def get_set_ids_for_software(self, software_id):
-        """Return all set ids for given software id"""
-
-        return self._get_game_repository().get_set_ids_for_software(software_id)
-
-    def get_series(self, software_id):
-        """Return all software from a series based on a software id
-
-        TODO software can belong to more than one series
-        """
-
-        return self._get_game_repository().get_series(software_id)
-
-    def check_series(self, software_id):
-        """Return count of series entries based on software id"""
-
-        return self._get_game_repository().check_series(software_id)
-
-    def check_compilation(self, software_id):
-        """Return if software is connected to a compilation
-
-        2 = Software is on a compilation
-        1 = Software is a compilation
-        0 = No connection found
-        """
-
-        return self._get_game_repository().check_compilation(software_id)
-
-    def make_time_nice(self, timestamp, now=None):
-        """Return hours and minutes as 1 string.
-
-        Parameters: timestamp
-        Optional: now = now-(Y-m-d H:M)
-        """
-        from .game_labels import make_time_nice as _make_time_nice
-
-        return _make_time_nice(timestamp, now=now)
-
-    def get_status_for_set(self, set_id):
-        """Return play status for a set id"""
-
-        return self._status_dict(
-            self._get_status_repository().get_status_for_set(set_id))
-
-    def _status_dict(self, i):
-        """Return the play status dict of a status row (``None`` stays ``None``)"""
-
-        if not i:
-            return None
-
-        time_played = self.make_time_nice(i[2])
-
-        status = {
-            'last_played': i[1],
-            'time_played': time_played,
-            'time_played2': i[2],
-            'play_count': i[3],
-            'options': i[4],
-            'last_nice': self.make_time_nice(i[1], now=True),
-        }
-        return status
-
-    def get_further_media(self, set_id):
-        """Return MARP and Youtube entries for a set"""
-
-        return self._get_status_repository().get_further_media(set_id)
-
-    def save_further_media(self, set_id, marp=None, youtube=None):
-        """Save MARP or Youtube entries for a set"""
-
-        self._get_status_repository().save_further_media(
-            set_id, marp=marp, youtube=youtube
-        )
-
-    def get_emulators(self, source=None, swl_name=None):
-        """Returns emulators based on source or swl_name"""
-
-        return self._get_emulator_repository().get_emulators(
-            source=source, swl_name=swl_name
-        )
-
-    def get_emulator(self, emu_id=None, emu_conn_id=None):
-        """Return information about saved emulator"""
-
-        return self._get_emulator_repository().get_emulator(
-            emu_id=emu_id, emu_conn_id=emu_conn_id
-        )
-
-    def save_emulator(self, emu_info, reconfigure, source=None, swl_name=None):
-        """Save emulator to database and connect if needed."""
-
-        return self._get_emulator_repository().save_emulator(
-            emu_info, reconfigure, source=source, swl_name=swl_name
-        )
-
-    def connect_emulator(self, emu_id, source=None, swl_name=None):
-        """Connect emulator to source or softwarelist"""
-
-        return self._get_emulator_repository().connect_emulator(
-            emu_id, source=source, swl_name=swl_name
-        )
-
-    def delete_emulator_connection(self, emu_conn_id):
-        """Delete emulator connection to softwarelist or source
-
-        Return emulator id it not used anymore
-        """
-
-        return self._get_emulator_repository().delete_emulator_connection(
-            emu_conn_id
-        )
-
-    def delete_emulator(self, emu_id):
-        """Delete emulator and all connections"""
-
-        return self._get_emulator_repository().delete_emulator(emu_id)
-
-    def load_lastgames(self):
-        """Return the persisted GUI backward-navigation history (oldest first)."""
-
-        return self._get_history_repository().load_lastgames()
-
-    def save_lastgames(self, software_list):
-        """Persist the newest 100 GUI history ids (oldest to newest)."""
-
-        self._get_history_repository().save_lastgames(software_list)
-
-    def list_filter_names(self):
-        """Return the names of all saved (database-backed) filters."""
-
-        return self._get_history_repository().list_filter_names()
-
-    def load_filter_selections(self, filter_name):
-        """Return a saved filter's selections keyed by public category label."""
-
-        return self._get_history_repository().load_filter_selections(filter_name)
-
-    def save_filter_selections(self, filter_name, filter_lists):
-        """Atomically replace all persisted selections for ``filter_name``."""
-
-        self._get_history_repository().save_filter_selections(
-            filter_name, filter_lists
-        )
+    @property
+    def software(self):
+        """Software details composed from the repositories (:class:`SoftwareDetails`)."""
+
+        return SoftwareDetails(self.games, self.status, self.dats, self.artwork)
 
     def ensure_default_filter(self):
         """Create the default filter once (first start); never raises.
 
-        Returns ``True`` when the filter was written now. An existing
-        ``default`` filter is kept; the ``status_meta`` marker prevents that
-        a filter the user deleted later is created again.
+        Returns ``True`` when the filter was written now, see
+        :func:`umsa_core.default_filter.ensure_default_filter`.
         """
 
-        try:
-            repository = self._get_history_repository()
-            if repository.get_meta(DEFAULT_FILTER_SEEDED_KEY):
-                return False
-            created = False
-            if DEFAULT_FILTER_NAME not in repository.list_filter_names():
-                # collections without a folder in the settings start inactive
-                filter_lists = resolve_default_filter(
-                    self.gdb, load_default_filter_spec(), self.nonmame)
-                repository.save_filter_selections(DEFAULT_FILTER_NAME, filter_lists)
-                created = True
-                log("UMSA database: default filter created", level='info')
-            repository.set_meta(DEFAULT_FILTER_SEEDED_KEY, "1")
-        except Exception as error:  # noqa: BLE001 - the start must go on
-            log(f"UMSA database: could not create default filter: {error}",
-                level='error')
-            return False
-        return created
-
-    def record_screensaver_display(self, set_id, software_id=None):
-        """Record one successfully displayed set in ``screensaver_history``.
-
-        One row per distinct set (``set_id``), moved to the newest position on
-        every display and pruned past the newest 100 (decision D16);
-        ``software_id`` is the context-menu handoff id stored alongside. The
-        write only touches the ``status.db`` history table inside one
-        savepoint: it never runs the legacy import, never deletes legacy
-        files and never commits an unrelated caller transaction.
-        """
-
-        self._get_history_repository().record_screensaver_display(
-            set_id, software_id
-        )
-
-    def get_screensaver_history(self, limit=None):
-        """Return the screensaver display history, newest first.
-
-        Each entry carries the persisted ``set_id`` with its ``software_id``
-        and ``displayed_at``; a ``set_id`` no longer present in ``umsa.db`` is
-        returned as stored, never substituted (decision D16).
-        """
-
-        return self._get_history_repository().list_screensaver_history(limit)
-
-    def get_import_marker(self):
-        """Return the durable legacy-import marker dict, or ``None``."""
-
-        return self._get_history_repository().get_import_marker()
+        return ensure_default_filter(self.history, self.gdb, self.nonmame)
 
     def run_legacy_import(self):
         """Run the one-time legacy import via the configured Core paths."""
 
         return _run_legacy_import(self.sdb, self.db_paths)
-
-    def write_status_after_play(self, set_id, played_seconds):
-        """Update play status for set id
-
-        Writes played seconds and play count
-        """
-
-        self._get_status_repository().write_status_after_play(
-            set_id, played_seconds
-        )
-
-    def get_latest_by_software(self, software_id):
-        """Return id of latest played set for a software id"""
-
-        sets = self.get_set_ids_for_software(software_id)
-        return self._get_status_repository().get_latest_by_set_ids(sets)
-
-    def set_filter_enabled(self, flag):
-        """Enable or disable the active filter for subsequent queries
-
-        Named mutation API for the public ``use_filter`` state, so callers do
-        not have to touch the attribute directly. The state itself stays on
-        ``DBMod``.
-        """
-
-        self.use_filter = flag
-
-    def set_order(self, order):
-        """Set the list ordering for subsequent queries
-
-        Accepts the valid order names ``name``, ``year`` and ``publisher``;
-        ``execute_statement`` validates the value against its whitelist and
-        falls back to the safe name ordering otherwise. Named mutation API for
-        the public ``order`` state, which stays on ``DBMod``.
-        """
-
-        self.order = order
-
-    def define_filter(self, filter_lists):
-        """define filter
-
-        TODO
-        - when list smaller then 50% of all do NOT IN = faster?
-        - do we need a special field for all as the lists can grow with updates?
-          or show new entries after update!
-        - make this count always visible in filter list and keep actual, is in gui:
-          simply call this more often (:
-        """
-
-        state, display = _define_filter(self.gdb, filter_lists)
-        self.filter_join = list(state.filter_join)
-        self.filter_where = list(state.filter_where)
-        self._filter_where_params = list(state.filter_where_params)
-        return display
-
-    def execute_statement(self, set_id=None, software_id=None, prevnext=None):
-        """Execute prepared statement with filter settings
-
-        TODO
-        - rework var names
-        - keep inital count when used with set_id in gui
-          so no overwrite with prevnext
-        - make number of listmenu entries settings.xml
-        - more logic: when swl.name = "gameboy" then no need for swl filter! = faster
-        """
-
-        state = GamelistFilter(
-            join=self.join,
-            where=self.where,
-            order=self.order,
-            use_filter=self.use_filter,
-            filter_join=tuple(self.filter_join),
-            filter_where=tuple(self.filter_where),
-            where_params=tuple(self._where_params),
-            filter_where_params=tuple(self._filter_where_params),
-        )
-        slist, pos, result_count = _execute_statement(
-            self.gdb, state, set_id, software_id, prevnext)
-        self.order = state.order
-        return slist, pos, result_count
-
-    def get_by_software(self, set_id):
-        """Return list of software"""
-
-        self.join, self.where, self._where_params = _software_query()
-        return self.execute_statement(set_id)
-
-    def get_software_for_source(self, set_id, source):
-        """Return list of software based on MAME source file"""
-
-        self.join, self.where, self._where_params = _source_query(source)
-        return self.execute_statement(set_id)
-
-    def get_by_cat(self, cat, set_id):
-        """Return list of software based on category"""
-
-        self.join, self.where, self._where_params = _category_query(cat)
-        return self.execute_statement(set_id)
-
-    def get_by_year(self, year, set_id):
-        """Return list of software based on year"""
-
-        self.join, self.where, self._where_params = _year_query(year)
-        return self.execute_statement(set_id)
-
-    def get_by_players(self, players, set_id):
-        """Return list of software based on number of players"""
-
-        self.join, self.where, self._where_params = _players_query(players)
-        return self.execute_statement(set_id)
-
-    def get_by_maker(self, maker, set_id):
-        """Return list of software based on maker"""
-
-        self.join, self.where, self._where_params = _maker_query(self.gdb, maker)
-        return self.execute_statement(set_id)
-
-    def get_by_swl(self, swl_name, set_id):
-        """Return list of software based on softwarelist"""
-
-        self.join, self.where, self._where_params = _swl_query(swl_name)
-        return self.execute_statement(set_id)
-
-    def get_maker(self):
-        """Return list of makers"""
-
-        return self._get_game_repository().get_maker()
-
-    def get_swl(self):
-        """Return list of softwarelists"""
-
-        return self._get_game_repository().get_swl()
-
-    def get_source(self):
-        """Return list of softwarelists"""
-
-        return self._get_game_repository().get_source()
-
-    def get_year(self):
-        """Return list of years"""
-
-        return self._get_game_repository().get_year()
-
-    def get_players(self):
-        """Return list of players"""
-
-        return self._get_game_repository().get_players()
-
-    def get_categories(self):
-        """Return list of categories"""
-
-        return self._get_game_repository().get_categories()
-
-    def get_last_played(self, order):
-        """Return the play status list ``(results, pos)``, best first
-
-        ``order`` is one of ``PLAY_STATUS_ORDERS`` (``time_played``,
-        ``last_played``, ``play_count``); any other value falls back to
-        ``time_played``. The played sets (at most 250) are summed up per
-        software.
-        """
-
-        results = []
-        software_dict = {}
-
-        if order not in PLAY_STATUS_ORDERS:
-            log(f"UMSA database get_last_played: unknown order {order!r}, "
-                f"using {PLAY_STATUS_DEFAULT}", level='warning')
-            order = PLAY_STATUS_DEFAULT
-
-        # get status for sets
-        status_rows = self._get_status_repository().get_played_sets(order)
-        # get software info for all sets in one query
-        software_by_set = self._get_game_repository().get_software_for_sets(
-            i['id'] for i in status_rows)
-        for i in status_rows:
-            software = software_by_set.get(i['id'])
-            # put in dict to summarize sets
-            if software and software['id'] in software_dict:
-                software_dict[software['id']]["play_count"] += i['play_count']
-                software_dict[software['id']]["time_played"] += i['time_played']
-                software_dict[software['id']]["last_played"] = max(software_dict[software['id']]["last_played"], i['last_played'])
-            elif software:
-                software_dict[software['id']] = {
-                    "time_played": i['time_played'],
-                    "last_played": i['last_played'],
-                    "play_count": i['play_count'],
-                    "name": software['name'],
-                    "year": software['year'],
-                    "maker": software['maker'],
-                }
-        # sort dict after value in var order and create list for return
-        ordered = sorted(software_dict.items(), key=lambda t: t[1][order])
-        for software_id, status in ordered[::-1]:
-
-            time_played = self.make_time_nice(status["time_played"])
-
-            last_nice = self.make_time_nice(status['last_played'], now=True)
-
-            if order == "time_played":
-                last = '{}x, {}'.format(
-                    status["play_count"],
-                    last_nice,
-                )
-                first = time_played
-            elif order == "play_count":
-                last = f'{time_played}, {last_nice}'
-                first = '{}x'.format(status['play_count'])
-            else:
-                last = '{}, {}x'.format(
-                    time_played,
-                    status["play_count"],
-                )
-                first = last_nice
-
-            name = "{} ({}, {})".format(status['name'], status['year'], status['maker'],)
-            results.append({'id': software_id, 'name': name, 'year': first, 'maker': last,})
-
-        return results, 0
-
-    def get_parts_for_set_id(self, set_id):
-        """Get parts for a set id
-
-        sets can have more than one media
-        like 2 floppies or 1 floppy and 1 hdd or cd-rom
-        """
-
-        return self._get_game_repository().get_parts_for_set_id(set_id)
-
-    def get_disks(self, swl_name, set_name):
-        """Return disks from a given set and softwarelist"""
-
-        return self._get_game_repository().get_disks(swl_name, set_name)
-
-    def create_cmdline(self, parts, devices, setname):
-        """create command line to start a software list item in mame"""
-        from .cmdline import create_cmdline as _create_cmdline
-
-        return _create_cmdline(parts, devices, setname)
-
-    # create commandline options for mame
-    def get_cmd_line_options(self, set_id, set_name, machine_name, swl_name):
-        """Create command line options for MAME emulator run
-
-        Based on id, name of set, and the names of machine and swl.
-        """
-
-        # get options for softwarelist
-        ## this is manually set coz some swls need special options
-        ## like a device in a slot so the machine supports hdds
-        repo = self._get_game_repository()
-        swlopt = repo.get_swl_options(swl_name)
-        # make swl_options a list
-        if swlopt[0]:
-            swl_options = swlopt[0].strip().split(' ')
-        else:
-            swl_options = None
-
-        # get id for machine
-        machine_id = repo.get_machine_id(machine_name)
-
-        # get devices supported by the machine
-        _devices = repo.get_devices_for_machine(machine_id[0])
-
-        # get all parts for the choosen set
-        _part = repo.get_parts_for_set_id(set_id)
-
-        # check if we have a requirement in sharedfeat
-        _sharedfeat = repo.get_sharedfeat_requirement(set_id)
-
-        # create cmd line
-        _cmd_options, first_device = self.create_cmdline(
-            list(_part), _devices, set_name
-        )
-
-        more_options = []
-        if _cmd_options:
-            # add additional manual swl options
-            if swl_options:
-                more_options += swl_options
-
-            # add sharedfeat
-            if _sharedfeat:
-                # security if definition for sharedfeat_requirement
-                # is not swl:set
-                if ':' in _sharedfeat[0]:
-                    _swl, _set = _sharedfeat[0].split(':')
-                else:
-                    _set = _sharedfeat[0]
-                    _swl = None
-                # when definition is ok
-                if _swl:
-                    # create new cmdline option for requirement
-                    log(f"UMSA database: get_cmd_line_options: set {_set}, swl {_swl}", level='debug')
-                    _setinfo = self.get_info_by_set_and_swl(_set, _swl)
-                    log(f"UMSA database: get_cmd_line_options: setid {_setinfo}", level='debug')
-                    _parts2 = repo.get_parts_for_set_id(_setinfo['set_id'])
-                    log(f"UMSA database: get_cmd_line_options: parts {_parts2}", level='debug')
-                    _cmdopt = self.create_cmdline(list(_parts2), _devices, _set)[0]
-                    more_options += _cmdopt
-                # else add the requirement set as option
-                # directly after machine name
-                # hopefully most of the time mame will then
-                # find the correct swl entry
-                else:
-                    more_options += [_set]
-
-            # when we know the devices also set -statename
-            cmd_options = [machine_name]+more_options+_cmd_options+[
-                '-statename', f'%g/%d_{first_device}', ]
-
-        elif swl_options:
-            cmd_options = [machine_name] + swl_options + [set_name]
-        else:
-            cmd_options = [machine_name, set_name]
-        cmd_options.extend(['-snapname', f'{swl_name}/{set_name}/%i'])
-
-        return cmd_options
-
-    def get_all_dbentries(self, cat):
-        """Return select parameters based on filter categories.
-
-        Gets a filter category.
-        Returns a list of database tables and rows.
-        """
-
-        return self._get_game_repository().get_all_dbentries(cat)
-
-    def search_single(self, my_search):
-        """search single"""
-
-        return self._get_game_repository().search_single(my_search)
-
-    def get_artwork_by_software_id(self, software_id, artwork, source_roots=None):
-        """get artwork by software id
-
-        fetch given artwork type and all machines for a software id.
-
-        Returns a two element list ``[art_path, machines]`` where ``art_path``
-        is the fully resolved location of a random matching artwork (empty
-        string when none is found) and ``machines`` is a comma separated list
-        of machine abbreviations.
-
-        This remains in ``DBMod``: it joins the attached ``art.art_set`` with the
-        game tables (``sets``/``swl``) and resolves the resulting path, so it is
-        a mixed application query rather than artwork-table CRUD.
-        """
-
-        all_machines = []
-        self.gdbc.execute(
-            "SELECT DISTINCT system_abbr FROM swl, sets \
-               WHERE sets.softwarelink_id = ? AND sets.swllink_id = swl.id",
-            (software_id,)
-        )
-        for j in self.gdbc.fetchall():
-            all_machines.append(j[0])
-
-        self.gdbc.execute(
-            "SELECT sets.name, swl.name as swl_name, \
-                   art.source, art.root_key, art.scan_unit, \
-                   art.type, art.extension, art.relative_path, \
-                   art.archive_member \
-             FROM sets, swl, art.art_set art \
-             WHERE sets.softwarelink_id = ? \
-             AND swl.id = sets.swllink_id \
-             AND art.id = sets.id \
-             AND art.type = ? \
-             ORDER BY RANDOM() LIMIT 1",
-            (software_id, artwork)
-        )
-        snap_info = self.gdbc.fetchone()
-
-        art_path = ''
-        if snap_info:
-            art = dict(snap_info)
-            art_path = resolve_artwork_path(art, art, source_roots or {})
-
-        return [art_path, ', '.join(all_machines)]
-
-    def get_searchresults(self, my_search):
-        """get search results
-
-        TODO:
-        - single word search: split by " ": v.gamename IN ('test', 'wrum')
-
-             - remove s.name, problem with showing gamename when s.name is selected
-             - use filters or present option to use filters
-
-        LATER - show button for next/prev page
-              - save last 10 search terms and make as a popup for search button incl new search
-        """
-
-        return self._get_game_repository().get_searchresults(my_search)
-
-    _ART_COLUMNS = ("id, source, root_key, scan_unit, type, extension, "
-                    "relative_path, archive_member")
-
-    def _artwork_rows_for_ids(self, set_ids, art_type):
-        """Return the ``art_set`` rows of ``art_type`` for the given set ids."""
-
-        ids = sorted(set(set_ids))
-        if not ids:
-            return []
-        placeholders = ",".join("?" * len(ids))
-        # "+type" keeps SQLite on the id index: the type index would walk
-        # every row of a big artwork type
-        self.gdbc.execute(
-            f"SELECT {self._ART_COLUMNS} FROM art.art_set \
-             WHERE id IN ({placeholders}) AND +type = ?",
-            (*ids, art_type),
-        )
-        return [dict(row) for row in self.gdbc.fetchall()]
-
-    def _family_artwork(self, sets, art_type):
-        """Return ``{key: [art rows]}`` for sets with clone/parent fallback.
-
-        ``sets`` holds ``(key, set id, set name, cloneof_id)`` tuples. The
-        rows of a key are ordered: the set itself, its parent, the other
-        clones of the family (by name); within each step own artwork comes
-        first. Every row carries ``set_name``, the set the artwork belongs
-        to. umsa.db keeps clones in the software list and software of their
-        parent and has no clones of clones, so the family is the parent and
-        all its clones. Families are only looked up for sets without own
-        artwork of that type.
-        """
-
-        def source_rank(row):
-            return 0 if row["source"] == "own_artwork" else 1
-
-        own = {}
-        for row in self._artwork_rows_for_ids([s[1] for s in sets], art_type):
-            own.setdefault(row["id"], []).append(row)
-
-        result = {}
-        missing = []
-        for key, set_id, set_name, cloneof_id in sets:
-            rows = sorted(own.get(set_id, []), key=source_rank)
-            if rows:
-                result[key] = [dict(row, set_name=set_name) for row in rows]
-            else:
-                missing.append((key, set_id, cloneof_id))
-        if not missing:
-            return result
-
-        heads = sorted({cloneof_id or set_id for _key, set_id, cloneof_id in missing})
-        placeholders = ",".join("?" * len(heads))
-        self.gdbc.execute(
-            f"SELECT id, name, cloneof_id FROM sets \
-             WHERE id IN ({placeholders}) OR cloneof_id IN ({placeholders})",
-            (*heads, *heads),
-        )
-        members = {}
-        names = {}
-        for member_id, member_name, member_parent in self.gdbc.fetchall():
-            names[member_id] = member_name
-            members.setdefault(member_parent or member_id, []).append(member_id)
-
-        art = {}
-        for row in self._artwork_rows_for_ids(names, art_type):
-            art.setdefault(row["id"], []).append(row)
-
-        for key, set_id, cloneof_id in missing:
-            head = cloneof_id or set_id
-            family = [m for m in members.get(head, []) if m != set_id]
-            ordered = sorted(
-                family, key=lambda m: (0 if m == head else 1, names[m]))
-            rows = [
-                dict(row, set_name=names[member])
-                for member in ordered
-                for row in sorted(art.get(member, []), key=source_rank)
-            ]
-            if rows:
-                result[key] = rows
-        return result
-
-    def get_machine_cabinets(self, machine_names):
-        """Return ``{machine set name: art row}`` of scanned cabinets.
-
-        Looks up the ``cabinets`` artwork of the MAME sets named in
-        ``machine_names``: the machine itself, else its parent, else another
-        clone of the family; own artwork wins over progettosnaps on each
-        step. ``set_name`` of a row names the set the picture belongs to.
-        Machines without a scanned cabinet are missing from the result, so
-        callers fall back to the fixed progettosnaps path. Never raises.
-        """
-
-        names = sorted({name for name in machine_names if name})
-        if not names:
-            return {}
-        placeholders = ",".join("?" * len(names))
-        try:
-            self.gdbc.execute(
-                f"SELECT sets.name, sets.id, sets.cloneof_id \
-                 FROM sets JOIN swl ON swl.id = sets.swllink_id \
-                 WHERE swl.name = 'mame' AND sets.name IN ({placeholders})",
-                names,
-            )
-            sets = [(row[0], row[1], row[0], row[2]) for row in self.gdbc.fetchall()]
-            family = self._family_artwork(sets, "cabinets")
-        except sqlite3.Error as error:
-            log(f"UMSA database get_machine_cabinets: {error}", level='warning')
-            return {}
-        return {name: rows[0] for name, rows in family.items()}
-
-    def get_set_artwork(self, set_id, art_type, source_roots=None):
-        """Return the resolved path of an artwork of a set, ``''`` if none.
-
-        Uses the clone/parent fallback of ``_family_artwork``; rows whose
-        source root no longer matches the configuration are skipped. Never
-        raises.
-        """
-
-        try:
-            self.gdbc.execute(
-                "SELECT sets.name, sets.cloneof_id, swl.name \
-                 FROM sets JOIN swl ON swl.id = sets.swllink_id WHERE sets.id = ?",
-                (set_id,),
-            )
-            row = self.gdbc.fetchone()
-            if row is None:
-                return ''
-            set_name, cloneof_id, swl_name = row[0], row[1], row[2]
-            family = self._family_artwork(
-                [(set_id, set_id, set_name, cloneof_id)], art_type)
-        except sqlite3.Error as error:
-            log(f"UMSA database get_set_artwork: {error}", level='warning')
-            return ''
-        for art in family.get(set_id, []):
-            path = resolve_artwork_path(
-                art, {"name": art["set_name"], "swl_name": swl_name}, source_roots or {})
-            if path:
-                return path
-        return ''
-
-    def get_machine_name(self, machine_id):
-        """Get name of machine from id"""
-
-        return self._get_game_repository().get_machine_name(machine_id)
-
-    def count_source(self, source):
-        """Count all source files in MAME"""
-
-        return self._get_game_repository().count_source(source)
-
-    def count_machines_for_swl(self, swl_name):
-        """Count all machines for 1 software list"""
-
-        return self._get_game_repository().count_machines_for_swl(swl_name)
-
-    def get_machines(self, swl_name, machine=None):
-        "Get original and compatible machines for 1 software list"
-
-        return self._get_game_repository().get_machines(swl_name, machine)
-
-    def get_set_name(self, set_id):
-        """Returns set name from set id
-
-        TODO: Only used by run_emulator, diff_emu: search for rom file in filesystem
-        """
-
-        return self._get_game_repository().get_set_name(set_id)
-
-    def get_best_machine_for_set(self, swl_name, detail, swl_machine_id,
-                                 machines=None):
-        """Determine which machine to take for MAME emulation
-
-        ``machines`` is the machine list of the software list
-        (``get_machines(swl_name)[0]``); callers that ask for many sets of
-        one software list pass it so it is read only once.
-
-        TODO
-        - rework: no more list, use dict from get_machines !!!
-        - but machine_id into return
-        """
-
-        # get originals, compatible machines
-        if machines is None:
-            machines = self.get_machines(swl_name)[0]
-
-        # no machine found
-        if len(machines) == 0:
-            return None
-        # only 1 machine
-        if len(machines) == 1:
-            return machines[0]
-        # only 1 original
-        if (machines[0]['status'] == "original" and
-                machines[1]['status'] == "compatible"
-           ):
-            return machines[0]
-
-        best_machine = None
-        # check if swl_machine is in machines
-        for machine in machines:
-            if machine['id'] == swl_machine_id:
-                best_machine = machine
-
-        # no hit until now, set first machine
-        if not best_machine:
-            best_machine = machines[0]
-        # exception for famicom_flop
-        # TODO famicom should be disconnected in mame source
-        if swl_name == "famicom_flop":
-            best_machine = machines[1]
-
-        # get country from detail
-        for country_sorted in sorted(COUNTRIES.keys()):
-            for country in COUNTRIES[country_sorted]:
-                if country in detail.lower():
-                    # check gamename of machines for country from detail
-                    # first try actual best
-                    for country2 in COUNTRIES[country_sorted]:
-                        if country2 in best_machine['fullname'].lower():
-                            return best_machine
-                    # now check all machines
-                    for machine in machines:
-                        for country2 in COUNTRIES[country_sorted]:
-                            if country2 in machine['fullname'].lower():
-                                best_machine = machine
-                                return best_machine
-        return best_machine
-
-    def get_all_for_software(self, software_id):
-        """get all infos for software
-
-        get all sets nicely sorted (last played, prefered history, year)
-        includes a best machine to use for swl set
-
-        all_sets.append is used instead of .extend
-        so we have all_sets[software_with_same_name][sets] = {infos}
-        and not all_sets[[software1],[software2]]
-
-        TODO:
-        - better document this function
-        - have lists for each software with same name order by year
-          connect at the end and add flag so gui can mark the other software with the same name
-          also make search for software with same name a setting
-        - include preferred country (select it or make it first in list?)
-        - maybe dont order select by year, done later,
-          order by name so usa, jap... are sorted correct
-        """
-
-        time1 = time.time()
-
-        pos_machine = 0
-        pos_set = 0
-        all_sets = []
-
-        # every umsa.db read below goes through the game repository; this
-        # method only composes their results with the status/dat/artwork data
-        repo = self._get_game_repository()
-
-        # get all sets for software id
-        all_sets.append(repo.get_sets_for_software(software_id))
-
-        # check if we have other software by this name
-        # get software name
-        software_name = repo.get_software_name(software_id)
-        # get all software ids for software name
-        for other_id in repo.get_software_ids_for_name(software_name):
-            if software_id == other_id:  # is the original
-                continue
-            all_sets.append(repo.get_sets_for_software(other_id))
-
-        # play status of all sets in one query
-        status_rows = self._get_status_repository().get_status_for_sets(
-            machine['id'] for diff_software in all_sets
-            for machine in diff_software)
-        # machine list per software list and name per system, read once each
-        swl_machines = {}
-        machine_names = {}
-
-        diff_machines = {}
-        set_ids = []
-        # set id -> driver source whose WIP is shown as "WIP Driver"
-        set_drivers = {}
-        system_sources = {}
-        count = 1
-        for diff_software in all_sets:
-            for machine in diff_software:
-
-                set_ids.append(str(machine['id']))
-                resulting_machine = ''
-                # get last_played
-                last_played = self._status_dict(status_rows.get(machine['id']))
-
-                if machine['system_id'] == 270257: # mame
-                    # resulting_machine is the parent
-                    if machine['cloneof_id']:
-                        resulting_machine = machine['cloneof_id']
-                    else:
-                        resulting_machine = machine['id']
-                    # resulting_machine = machine['category'] use category
-                    best_machine = None
-                    machine_name = 'mame'
-                    if machine['category_flag']: # ismachine
-                        machine_label = machine['category']
-                    else:
-                        # TODO handhelds are not arcade, but a game not a machine
-                        machine_label = 'Arcade'
-                    set_drivers[machine['id']] = machine['source']
-                else: # swl
-                    # diff machine is swl machine
-                    # TODO: to test used machine name from swl
-                    resulting_machine = str(machine['system_id'])
-                    # get best machine
-                    if machine['swl'] not in swl_machines:
-                        swl_machines[machine['swl']] = (
-                            repo.get_machines(machine['swl'])[0])
-                    best_machine = self.get_best_machine_for_set(
-                        machine['swl'], machine['detail'], machine['system_id'],
-                        machines=swl_machines[machine['swl']])
-                    if best_machine:
-                        machine_name = best_machine['setname']
-                        machine_label = best_machine['label2']
-                    else:
-                        if machine['system_id'] not in machine_names:
-                            machine_names[machine['system_id']] = (
-                                repo.get_machine_name(machine['system_id']))
-                        machine_name, machine_label = (
-                            machine_names[machine['system_id']])
-                    # driver of the machine the set runs on, else of the
-                    # default system of the software list
-                    driver = best_machine.get('source') if best_machine else None
-                    if not driver and machine['system_id']:
-                        if machine['system_id'] not in system_sources:
-                            system_sources[machine['system_id']] = (
-                                repo.get_set_source(machine['system_id']))
-                        driver = system_sources[machine['system_id']]
-                    set_drivers[machine['id']] = driver
-
-                # create key in diff_machines
-                if resulting_machine not in diff_machines:
-                    diff_machines[resulting_machine] = {
-                        'id'      : count,
-                        'year'    : machine['year'],
-                        'setlist' : []
-                    }
-                    count += 1
-                # remember earliest year for later sort
-                else:
-                    diff_machines[resulting_machine]['year'] = min(diff_machines[resulting_machine]['year'], machine['year'])
-
-                # TODO: what is really needed?
-                #  swl machine is not needed?
-                #  make last_played 3 entries here?
-                diff_machines[resulting_machine]['setlist'].append({
-                    'id': machine['id'],
-                    'name': machine['name'],
-                    'gamename': machine['gamename'],
-                    'detail': machine['detail'],
-                    'source': machine['source'],
-                    'year': machine['year'],
-                    'publisher': machine['maker'],
-                    'swl_name': machine['swl'],
-                    'swl_machine_id': machine['system_id'],
-                    'machine_name': machine_name,
-                    'machine_label': machine_label,
-                    'display_type': machine['display_type'],
-                    'display_rotation': machine['display_rotation'],
-                    'category': machine['category'],
-                    'nplayers': machine['nplayers'],
-                    'clone': machine['cloneof_id'],
-                    'is_machine': machine['category_flag'],
-                    'last_played': last_played,
-                })
-
-        # create list to return
-        return_list = []
-        # sort by year
-        for i in sorted(diff_machines.items(), key=lambda t: t[1]['year']):
-            return_list.append(i[1]['setlist'])
-        # get absolut latest played
-        # TODO search for pref. country when not last played
-        latest_set_id = self.get_latest_by_software(software_id)
-        # find latest in return_list
-        if latest_set_id:
-            for count1, i in enumerate(return_list):
-                for count2, j in enumerate(i):
-                    if j['id'] == latest_set_id:
-                        pos_machine = count1
-                        pos_set = count2
-                        break
-        all_dat = self.get_dat_for_sets(set_ids)
-        self._add_driver_wip(all_dat, set_drivers)
-        all_art = self.get_artwork_for_sets(set_ids)
-        time2 = time.time()
-        log(f"UMSA database: get_all_for_software: time = {(time2-time1)*1000.0:.0f}ms", level='debug')
-
-        return return_list, pos_machine, pos_set, all_dat, all_art
-
-    def _add_driver_wip(self, all_dat, set_drivers):
-        """Add the ``WIP Driver`` text of each set's driver to ``all_dat``.
-
-        ``set_drivers`` maps a set id to its driver source (``sets.source``,
-        e.g. ``snk/lasso.cpp``); the DATs name a driver by its file name and
-        only use the path for ambiguous names, so both are tried.
-        """
-
-        keys = {set_id: driver_lookup_keys(src)
-                for set_id, src in set_drivers.items()}
-        wanted = {key for set_keys in keys.values() for key in set_keys}
-        if not wanted:
-            return
-        try:
-            wip = self._get_dat_repository().get_driver_wip(wanted)
-        except sqlite3.OperationalError as exc:
-            # dat.db from before the driver column: no driver WIP until rescan
-            log(f"UMSA database: driver WIP unavailable: {exc}", level='debug')
-            return
-        for set_id, set_keys in keys.items():
-            for key in set_keys:
-                if key in wip:
-                    all_dat.setdefault(set_id, {})[DRIVER_WIP] = wip[key]
-                    break
-
-    def get_info_by_set_and_swl(self, setname, swlname):
-        """get info by set and swl"""
-
-        return self._get_game_repository().get_info_by_set_and_swl(setname, swlname)
-
-    def get_set_info_by_id(self, set_id):
-        """get info by set id"""
-
-        return self._get_game_repository().get_set_info_by_id(set_id)

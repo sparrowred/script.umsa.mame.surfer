@@ -7,7 +7,7 @@ this module only drives the dialogs and the skin controls.
 import xbmc
 import xbmcgui
 from umsa_core import FILTER_CATEGORIES
-from umsa_core.database import build_filter_lists
+from umsa_core.gamelist_filter import build_filter_lists
 
 from . import strings as S
 from .constants import (
@@ -84,7 +84,7 @@ def close_filterlist(gui, no_update=None):
     # update filter
     if not no_update:
         gui.getControl(LABEL_STATUS).setLabel(
-            tr(S.FILTERED_ITEMS, gui.ggdb.define_filter(gui.filter_lists))
+            tr(S.FILTERED_ITEMS, gui.ggdb.gamelist.define_filter(gui.filter_lists))
         )
     gui.setFocus(gui.getControl(gui.main_focus))
 
@@ -97,15 +97,15 @@ def filter_category(gui):
 
     # save/load filter
     if cat in (FILTER_KEY_LOAD, FILTER_KEY_SAVE):
-        files = gui.ggdb.list_filter_names()
+        files = gui.ggdb.history.list_filter_names()
 
         if cat == FILTER_KEY_LOAD:
             ret = gui.dialog.select(tr(S.FILTER_LOAD), files)
             if ret == -1:
                 return
-            gui.filter_lists = gui.ggdb.load_filter_selections(files[ret])
+            gui.filter_lists = gui.ggdb.history.load_filter_selections(files[ret])
             gui.getControl(LABEL_STATUS).setLabel(
-                tr(S.FILTERED_ITEMS, gui.ggdb.define_filter(gui.filter_lists))
+                tr(S.FILTERED_ITEMS, gui.ggdb.gamelist.define_filter(gui.filter_lists))
             )
             gui.act_filter = files[ret]
             gui.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, gui.act_filter))
@@ -128,7 +128,7 @@ def filter_category(gui):
                 filter_filename = files[ret]
 
             # save filters
-            gui.ggdb.save_filter_selections(filter_filename, gui.filter_lists)
+            gui.ggdb.history.save_filter_selections(filter_filename, gui.filter_lists)
             gui.act_filter = filter_filename
             gui.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, gui.act_filter))
             show_start_category(gui)
@@ -219,7 +219,7 @@ def set_filter_content(gui, cat, update=None, focus_lists=True):
         )
 
     # partition entries into active and inactive lists
-    lists = build_filter_lists(gui.filter_lists, cat, gui.ggdb)
+    lists = build_filter_lists(gui.filter_lists, cat, gui.ggdb.games)
     active = [
         xbmcgui.ListItem(f"{entry['name']} ({entry['count']})", entry['id'])
         for entry in lists['active']

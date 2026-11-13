@@ -579,7 +579,7 @@ class Emulation:
             if info:
                 self.vgm_player._notify_vgm_stopped()
 
-    def play_random_vgm_thread(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
+    def play_random_vgm_thread(self, textinfo=None, db_path=None, sleep=None):
         """Play random vgm until ordered to stop playing."""
         self.vgm_player.begin_vgm_playback()
         if not self._start_vgm_server():
@@ -594,13 +594,13 @@ class Emulation:
 
         try:
             self.vgm_player.play_random_vgm_thread(
-                self.emurun, ggdb, textinfo, db_path, sleep,
+                self.emurun, textinfo, db_path, sleep,
                 find_roms_func=lambda emurun, rom_paths: self.find_roms(),
                 run_func=run_func)
         finally:
             self._close_vgm_sockets()
 
-    def play_random_vgm(self, ggdb=None, textinfo=None, db_path=None, sleep=None):
+    def play_random_vgm(self, textinfo=None, db_path=None, sleep=None):
         """Start random vgm playback in a thread.
 
         The socket server lifecycle stays with ``play_random_vgm_thread``,
@@ -611,7 +611,7 @@ class Emulation:
         self._vgm_stop.clear()
         self.vgm_player.begin_vgm_playback()
         self.rvgm_thread = Thread(target=self.play_random_vgm_thread,
-            args=(ggdb, textinfo, db_path, sleep))
+            args=(textinfo, db_path, sleep))
         self.rvgm_thread.start()
 
     def play_vgm(self, vgm, sec2run=90, sleep=None, intro=False, info=None, plan=None):

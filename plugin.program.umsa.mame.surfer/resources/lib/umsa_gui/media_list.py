@@ -7,7 +7,7 @@ them over to ``popup_gamelist``.
 from json import loads
 
 import xbmc
-from umsa_core.database import parse_recommended_games
+from umsa_core.game_repository import parse_recommended_games
 
 from . import strings as S
 from .constants import ENTRY_SEARCH, KIND_MEDIA, SEARCH_MARP, SEARCH_YOUTUBE
@@ -57,7 +57,7 @@ def choose_media(gui):
                      }
                     )
     # get youtube videos
-    media = gui.ggdb.get_further_media(gui.actset['id'])
+    media = gui.ggdb.status.get_further_media(gui.actset['id'])
     if media and media['youtube']:
         yt_list = [{'name': tr(S.MEDIA_YOUTUBE), 'id': YOUTUBE_SEARCH_ID,
                     'year': '', 'maker': ''}]
@@ -107,5 +107,5 @@ def show_rec(gui):
             if 'Rec' in gui.all_dat[i]:
                 text = gui.all_dat[i]['Rec']
                 break
-    rec_list, pos = parse_recommended_games(text, gui.ggdb)
+    rec_list, pos = parse_recommended_games(text, gui.ggdb.games)
     gui.popup_gamelist(rec_list, tr(S.RECOMMENDED), pos=pos)

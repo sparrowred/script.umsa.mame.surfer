@@ -20,7 +20,7 @@ from .strings import tr
 def get_diff_emulator(gui):
     """Get different emulator"""
 
-    emus = gui.ggdb.get_emulators()
+    emus = gui.ggdb.emulators.get_emulators()
     if emus:
         emu_names = [tr(S.EMU_CONFIGURE_NEW)]
         for i in emus:
@@ -32,10 +32,10 @@ def get_diff_emulator(gui):
             gui.configure_emulator()
         else:
             if gui.actset['swl_name'] == "mame":
-                gui.ggdb.connect_emulator(
+                gui.ggdb.emulators.connect_emulator(
                     emus[ret - 1]['id'], source=gui.actset['source'])
             else:
-                gui.ggdb.connect_emulator(
+                gui.ggdb.emulators.connect_emulator(
                     emus[ret - 1]['id'], swl_name=gui.actset['swl_name'])
             gui.run_emulator(emus[ret - 1])
     else:
@@ -156,9 +156,9 @@ def configure_emulator(gui, emu_info=None, reconfigure=False):
     emu_info['mode'] = emu_info['mode'] if emu_info['mode'] in (0, 1, 2) else 0
     # save to db
     if gui.actset['swl_name'] == "mame":
-        gui.ggdb.save_emulator(emu_info, reconfigure, source=gui.actset['source'])
+        gui.ggdb.emulators.save_emulator(emu_info, reconfigure, source=gui.actset['source'])
     else:
-        gui.ggdb.save_emulator(emu_info, reconfigure, swl_name=gui.actset['swl_name'])
+        gui.ggdb.emulators.save_emulator(emu_info, reconfigure, swl_name=gui.actset['swl_name'])
     # run
     if not reconfigure:
         gui.run_emulator(emu_info)

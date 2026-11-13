@@ -1,15 +1,14 @@
 """Explicit-state gamelist filter and query composition.
 
-This module holds the query *engine* of the frontend gamelist: the filter
-definition behind :meth:`umsa_core.database.DBMod.define_filter`, the
-per-selector query state built by the ``DBMod.get_by_*`` family, and the
-list fetch/windowing behind :meth:`umsa_core.database.DBMod.execute_statement`.
+This module holds the query *engine* of the frontend gamelist (the filter
+definition :func:`define_filter`, the per-selector query state of the
+``*_query`` functions and the list fetch/windowing of
+:func:`execute_statement`) and its state holder :class:`Gamelist`.
 
-Unlike the historical implementation, nothing here reads mutable ``DBMod``
-attributes. Every entry point receives the caller-owned SQLite connection and
-an explicit :class:`GamelistFilter` state value. ``DBMod`` stays the public
-compatibility facade and the public state holder; it builds the state per call
-and copies the resulting filter clauses back into its own attributes.
+The engine functions read no mutable state: each one receives the
+caller-owned SQLite connection and an explicit :class:`GamelistFilter` state
+value. :class:`Gamelist` keeps the active filter, the list order and the
+selector of the last list; ``DBMod`` owns one as ``DBMod.gamelist``.
 
 All values that originate from outside the module (category/year/player/swl/
 source/maker names, filter id lists, software names, art types, id lists) are
@@ -75,7 +74,7 @@ def _placeholders(values) -> str:
 class GamelistFilter:
     """Explicit filter/query state for one gamelist statement.
 
-    Mirrors the historical public ``DBMod`` attributes:
+    Snapshot of the :class:`Gamelist` state:
 
     - ``join``/``where``: the per-selector state set by the ``get_by_*``
       family (empty for the complete list); ``where_params`` binds its values.
@@ -204,8 +203,8 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
     a plain dict: query results carry ``id``/``name``/``year``/``maker`` and the
     ``prev``/``next`` sentinels are plain dictionaries too, so no
     ``sqlite3.Row`` escapes this function. When ``state.order`` is not a known
-    order name it is reset in place to the safe fallback so the facade can
-    mirror the historical reset.
+    order name it is reset in place to the safe fallback so :class:`Gamelist`
+    can take the reset over.
     """
 
     if prevnext not in (None, '', 'prev', 'next'):
@@ -491,3 +490,175 @@ def maker_query(connection: sqlite3.Connection, maker):
         where = 'maker.name = ?'
         params = [maker]
     return join, where, params
+
+
+class Gamelist:
+    """Filter, order and selector state of the game lists.
+
+    ``get_connection`` returns the current ``umsa.db`` connection
+    (``sqlite3.Row`` rows); it is asked on every call because ``DBMod.open_db``
+    replaces the connection after a database update. The connection is never
+    closed or committed here.
+
+    State:
+
+    - ``use_filter``: whether the active filter is applied
+      (:meth:`set_filter_enabled`).
+    - ``order``: ``name``, ``year`` or ``publisher`` (:meth:`set_order`).
+    - ``filter_join``/``filter_where``/``filter_where_params``: the clauses of
+      the active filter (:meth:`define_filter`).
+    - ``join``/``where``/``where_params``: the selector of the last list, set
+      by the ``get_by_*`` family and reused by :meth:`execute_statement` for
+      its Prev/Next pages.
+    """
+
+    def __init__(self, get_connection):
+        self._get_connection = get_connection
+        self.use_filter = True
+        self.order = 'name'
+        self.join = ''
+        self.where = ''
+        self.where_params = []
+        self.filter_join = []
+        self.filter_where = []
+        self.filter_where_params = []
+
+    def set_filter_enabled(self, flag):
+        """Enable or disable the active filter for subsequent queries."""
+
+        self.use_filter = flag
+
+    def set_order(self, order):
+        """Set the list ordering for subsequent queries.
+
+        Accepts ``name``, ``year`` and ``publisher``;
+        :meth:`execute_statement` falls back to the name ordering for any
+        other value.
+        """
+
+        self.order = order
+
+    def define_filter(self, filter_lists):
+        """Make ``filter_lists`` the active filter; returns its count label.
+
+        TODO
+        - when list smaller then 50% of all do NOT IN = faster?
+        - do we need a special field for all as the lists can grow with updates?
+          or show new entries after update!
+        - make this count always visible in filter list and keep actual, is in gui:
+          simply call this more often (:
+        """
+
+        state, display = define_filter(self._get_connection(), filter_lists)
+        self.filter_join = list(state.filter_join)
+        self.filter_where = list(state.filter_where)
+        self.filter_where_params = list(state.filter_where_params)
+        return display
+
+    def execute_statement(self, set_id=None, software_id=None, prevnext=None):
+        """Run the list query of the current selector, filter and order.
+
+        TODO
+        - rework var names
+        - keep inital count when used with set_id in gui
+          so no overwrite with prevnext
+        - make number of listmenu entries settings.xml
+        - more logic: when swl.name = "gameboy" then no need for swl filter! = faster
+        """
+
+        state = GamelistFilter(
+            join=self.join,
+            where=self.where,
+            order=self.order,
+            use_filter=self.use_filter,
+            filter_join=tuple(self.filter_join),
+            filter_where=tuple(self.filter_where),
+            where_params=tuple(self.where_params),
+            filter_where_params=tuple(self.filter_where_params),
+        )
+        slist, pos, result_count = execute_statement(
+            self._get_connection(), state, set_id, software_id, prevnext)
+        self.order = state.order
+        return slist, pos, result_count
+
+    def get_by_software(self, set_id):
+        """Return list of software"""
+
+        self.join, self.where, self.where_params = software_query()
+        return self.execute_statement(set_id)
+
+    def get_software_for_source(self, set_id, source):
+        """Return list of software based on MAME source file"""
+
+        self.join, self.where, self.where_params = source_query(source)
+        return self.execute_statement(set_id)
+
+    def get_by_cat(self, cat, set_id):
+        """Return list of software based on category"""
+
+        self.join, self.where, self.where_params = category_query(cat)
+        return self.execute_statement(set_id)
+
+    def get_by_year(self, year, set_id):
+        """Return list of software based on year"""
+
+        self.join, self.where, self.where_params = year_query(year)
+        return self.execute_statement(set_id)
+
+    def get_by_players(self, players, set_id):
+        """Return list of software based on number of players"""
+
+        self.join, self.where, self.where_params = players_query(players)
+        return self.execute_statement(set_id)
+
+    def get_by_maker(self, maker, set_id):
+        """Return list of software based on maker"""
+
+        self.join, self.where, self.where_params = maker_query(
+            self._get_connection(), maker)
+        return self.execute_statement(set_id)
+
+    def get_by_swl(self, swl_name, set_id):
+        """Return list of software based on softwarelist"""
+
+        self.join, self.where, self.where_params = swl_query(swl_name)
+        return self.execute_statement(set_id)
+
+    def get_random_id(self):
+        """Return the id of a random software of the active filter."""
+
+        where = ''
+        where_params = []
+        if self.filter_join and self.filter_where:
+            where = "WHERE sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
+                " ".join(self.filter_join), " AND ".join(self.filter_where)
+            )
+            where_params = list(self.filter_where_params)
+
+        cursor = self._get_connection().cursor()
+        try:
+            cursor.execute(
+                f"SELECT DISTINCT software.id \
+                  FROM sets JOIN software ON software.id = sets.softwarelink_id \
+                  {where} ORDER BY RANDOM() LIMIT 1", where_params)
+            return cursor.fetchone()[0]
+        finally:
+            cursor.close()
+
+
+def build_filter_lists(filter_lists, category, games):
+    """Partition a filter category's database entries into active/inactive.
+
+    ``games`` is the game repository (``DBMod.games``). ``active`` holds the
+    entries whose id is in ``filter_lists[category]``, ``inactive`` the rest
+    (database order preserved). Each entry is a dict
+    ``{'id': str, 'name', 'count'}``. Unknown categories yield empty lists.
+    """
+
+    active_ids = set(filter_lists.get(category, []))
+    active = []
+    inactive = []
+    for entry in (games.get_all_dbentries(category) or []):
+        item = {'id': str(entry['id']), 'name': entry['name'], 'count': entry['count']}
+        (active if item['id'] in active_ids else inactive).append(item)
+    return {'active': active, 'inactive': inactive}

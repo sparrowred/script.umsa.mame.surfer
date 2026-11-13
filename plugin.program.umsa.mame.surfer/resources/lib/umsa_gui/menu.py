@@ -51,7 +51,7 @@ def build_sublist_menu(gui, select):
     # series
     last_val = gui.last[gui.lastptr] if gui.last else None
     xbmc.log(f"UMSA gui: build_sublist_menu: last={gui.last}, lastptr={gui.lastptr}, last_val={last_val}")
-    series = gui.ggdb.check_series(last_val) if last_val is not None else 0
+    series = gui.ggdb.games.check_series(last_val) if last_val is not None else 0
     xbmc.log(f"UMSA gui: build_sublist_menu: series={series}")
     if series:
         list_items.append(xbmcgui.ListItem(tr(S.MENU_SERIES, series), str(M_SERIES)))
@@ -76,7 +76,7 @@ def build_sublist_menu(gui, select):
 
     # source
     if gui.actset['swl_name'] == 'mame':
-        count_source = gui.ggdb.count_source(gui.actset['source'])
+        count_source = gui.ggdb.games.count_source(gui.actset['source'])
         if count_source > 1:
             list_items.append(xbmcgui.ListItem(
                 tr(S.MENU_SOURCE, gui.actset['source'][:-4], count_source),
@@ -102,7 +102,7 @@ def build_main_menu(gui, select=None):
     position = 0
     list_items = []
     # check series
-    series = gui.ggdb.check_series(gui.last[gui.lastptr])
+    series = gui.ggdb.games.check_series(gui.last[gui.lastptr])
     # set series indicator
     if series:
         gui.getControl(SERIES_LABEL).setVisible(True)
@@ -128,7 +128,7 @@ def build_main_menu(gui, select=None):
     # mame machines and different emulators
     count_machines = 0
     if gui.actset['swl_name'] != 'mame':
-        count_machines = gui.ggdb.count_machines_for_swl(gui.actset['swl_name'])
+        count_machines = gui.ggdb.games.count_machines_for_swl(gui.actset['swl_name'])
     if count_machines > 1:
         list_items.append(
             xbmcgui.ListItem(tr(S.MENU_EMULATOR_COUNT, count_machines), str(M_MACHINE)))
@@ -141,7 +141,7 @@ def build_main_menu(gui, select=None):
     else:
         list_items.append(xbmcgui.ListItem(tr(S.SEARCH), str(M_SEARCH_NEW)))
     # filter
-    if gui.ggdb.use_filter:
+    if gui.ggdb.gamelist.use_filter:
         list_items.append(xbmcgui.ListItem(
             tr(S.MENU_FILTER_NAME, gui.act_filter), str(M_FILTER)))
     else:

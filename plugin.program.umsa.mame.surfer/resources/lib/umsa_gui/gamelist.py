@@ -179,7 +179,7 @@ def update_gamelist(gui, item):
         gui.setFocus(gui.getControl(SOFTWARE_BUTTON))
         return
 
-    if gui.ggdb.use_filter:
+    if gui.ggdb.gamelist.use_filter:
         use_filter = [tr(S.LIST_FILTER_ON), tr(S.LIST_FILTER_OFF)]
     else:
         use_filter = [tr(S.LIST_FILTER_OFF), tr(S.LIST_FILTER_ON)]
@@ -283,7 +283,7 @@ def gamelist_move(gui, pos=None, force=False):
         return
     # get snap, machines
     xbmc.log(f"UMSA gui: gamelist_move: pos {pos}: db fetch snap, machines for {gamelist_id}")
-    snap = gui.ggdb.get_artwork_by_software_id(
+    snap = gui.ggdb.art_queries.get_artwork_by_software_id(
         gamelist_id, 'snap', gui.artwork_source_roots())
     # set info to gamelist item
     if snap[0]:
@@ -296,10 +296,10 @@ def gamelist_move(gui, pos=None, force=False):
 def gamelist_switch_filter(gui):
     """Switch filter in gamelist"""
 
-    if gui.ggdb.use_filter:
-        gui.ggdb.set_filter_enabled(False)
+    if gui.ggdb.gamelist.use_filter:
+        gui.ggdb.gamelist.set_filter_enabled(False)
     else:
-        gui.ggdb.set_filter_enabled(True)
+        gui.ggdb.gamelist.set_filter_enabled(True)
 
     content = int(gui.getControl(GAME_LIST_LABEL_ID).getLabel())
     gui.setFocus(gui.getControl(GAME_LIST_OPTIONS))
@@ -314,19 +314,19 @@ def show_fulllist(gui, what, label):
     """
 
     if what == M_MAKER:
-        my_list = gui.ggdb.get_maker()
+        my_list = gui.ggdb.games.get_maker()
     elif what == M_SWL:
-        my_list = gui.ggdb.get_swl()
+        my_list = gui.ggdb.games.get_swl()
     elif what == M_SOURCE:
         my_list = []
-        for i in gui.ggdb.get_source():
+        for i in gui.ggdb.games.get_source():
             my_list.append({'id': "source", 'name': i['source']})
     elif what == M_YEAR:
-        my_list = gui.ggdb.get_year()
+        my_list = gui.ggdb.games.get_year()
     elif what == M_PLAYERS:
-        my_list = gui.ggdb.get_players()
+        my_list = gui.ggdb.games.get_players()
     elif what == M_CAT:
-        my_list = gui.ggdb.get_categories()
+        my_list = gui.ggdb.games.get_categories()
     else:
         xbmc.log(
             f"UMSA gui: show_fulllist: no select list for menu code {what}",

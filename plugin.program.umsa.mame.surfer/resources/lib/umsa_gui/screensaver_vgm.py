@@ -113,7 +113,7 @@ def start_random_vgm(gui):
     if gui.emulation.playvgm or gui.emulation.playrandomvgm:
         return False
     show_vgm_info(gui, tr(S.VGM_RANDOM_STARTING))
-    gui.emulation.play_random_vgm(gui.ggdb, None, gui.settings_folder, xbmc.sleep)
+    gui.emulation.play_random_vgm(None, gui.settings_folder, xbmc.sleep)
     return True
 
 

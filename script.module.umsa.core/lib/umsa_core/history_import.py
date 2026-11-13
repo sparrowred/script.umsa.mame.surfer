@@ -12,7 +12,7 @@ Only two source families are recognized:
   :meth:`CoreDataPaths.filter_file` validation.
 
 Nothing else is ever read or deleted. The GUI startup path calls
-:func:`run_legacy_import` through the ``DBMod`` facade; the explicit
+:func:`run_legacy_import` through ``DBMod.run_legacy_import``; the explicit
 ``retry_import`` command uses :func:`retry_import`. The module never imports
 Kodi and never opens a connection - it receives the caller-owned ``status.db``
 connection.
