@@ -45,11 +45,13 @@ class PlaybackPlan:
     header_based: bool         # True if header was primary driver
     fallback_used: bool        # True if audio fallback needed
     header: VGMHeader          # Source header for logging
+    fade_out: bool = True      # Playback is cut inside the music: fade out
 
 
 # Constants
 MAX_PLAYBACK_SECONDS = 180           # Default ceiling (setting vgm_max_duration, 20-300 s)
 HEADER_REJECTION_FALLBACK = 120      # Seconds for invalid headers
+FADE_OUT_SECONDS = 2.0               # Fade-out of a playback that is cut
 LOOP_ONLY_INTRO_THRESHOLD = 0.5     # Seconds - fixed, not configurable
 SANITY_MAX_DURATION = 600          # 10 minutes max total duration
 SANITY_MAX_SAMPLE_RATE = 100000
@@ -234,15 +236,18 @@ def calculate_playback_plan(header: VGMHeader, max_seconds: int = MAX_PLAYBACK_S
         )
     
     if not header.has_loop:
-        # Non-looping: play actual duration + 2s margin
-        duration = min(header.total_seconds + 2.0, max_seconds)
+        # Non-looping: play actual duration + 2s margin. The track ends on
+        # its own, only a capped one is cut and needs the fade-out.
+        natural = header.total_seconds + 2.0
+        duration = min(natural, max_seconds)
         return PlaybackPlan(
             seconds_to_run=duration,
             loop_repetitions=0,
             reason=f"No loop -> {duration:.1f}s (header: {header.total_seconds:.1f}s + 2s margin)",
             header_based=True,
             fallback_used=False,
-            header=header
+            header=header,
+            fade_out=natural > max_seconds,
         )
     
     if header.loop_only:

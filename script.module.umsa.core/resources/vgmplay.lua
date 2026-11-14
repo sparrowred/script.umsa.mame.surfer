@@ -22,24 +22,30 @@ local LOG_MAX_TOTAL_BYTES = 65536
 --
 local FINGERPRINT_SECONDS = 0.10  -- ~100ms fingerprint window
 --
--- Start-of-VGM silence detection configuration
+-- Silence detection configuration
 --
--- Armed at t=0 and permanently disarmed by the first audible sample
--- (rms >= SILENCE_THRESHOLD). Only a VGM that never becomes audible is
--- terminated; mid-track and end-of-track silence are ignored on purpose.
+-- Active for the whole playback: SILENCE_SECONDS of unbroken silence end the
+-- VGM, at the start as well as after the music. Silence is a callback RMS
+-- below SILENCE_THRESHOLD or a flat buffer: after some tracks the mixer
+-- keeps handing out one constant non-zero value, which is inaudible but far
+-- above the threshold. Flat means the samples of every channel are equal -
+-- a held square tone has a constant RMS too, but not constant samples.
 local SILENCE_THRESHOLD = 0.001  -- RMS below this counts as silence
-local SILENCE_SECONDS = 2.0      -- sustained silence required to exit
+local SILENCE_SECONDS = 3.0      -- sustained silence required to exit
+local SILENCE_FLAT_EPS = 1e-6    -- max - min of a channel at or below this: flat
 local DIAG_SILENCE_LOG = true    -- SILENCE_START / SILENCE_END diagnostics
 --
 -- Dynamic loudness leveling configuration
 --
 local LEVEL_INITIAL_GAIN_DB = -2.0 -- immediate attenuation applied at t=0
 local LEVEL_TARGET_DB    = -22.0  -- configurable target loudness (dBFS)
-local LEVEL_MAX_GAIN_DB  = 1.0   -- configurable maximum positive gain
-local LEVEL_HEADROOM_DB  = -1.0   -- peak/headroom safety limit
-local LEVEL_NOISE_FLOOR  = -40.0  -- don't boost below noise floor
+local LEVEL_MAX_GAIN_DB  = 12.0  -- configurable maximum positive gain
+local LEVEL_HEADROOM_DB  = -1.0   -- sample peak limit for positive gain
+local LEVEL_NOISE_FLOOR  = -48.0  -- windows at or below this are not measured
 local LEVEL_MIN_GAIN_DB  = -24.0 -- runaway floor for negative gain
-local LEVEL_RAMP_DB_PER_ADJ = 1.0 -- max change per adjustment
+local LEVEL_RAMP_DB_PER_ADJ = 1.0 -- max cut per adjustment
+local LEVEL_RAMP_UP_DB_PER_ADJ = 0.5 -- max boost per adjustment (slower: a
+                                  -- quiet intro may be followed by a loud part)
 local LEVEL_START_DELAY  = 0.5    -- start adjusting after ~0.5s of valid measurements
 local LEVEL_REEVAL_INT   = 0.5    -- re-evaluate every ~0.5s
 local LEVEL_ROLL_SEC     = 1.5    -- rolling window ~1-2s for decisions
@@ -50,11 +56,15 @@ local LEVEL_ROLL_SEC     = 1.5    -- rolling window ~1-2s for decisions
 -- Active leveling is frozen automatically: not before LEVEL_LOCK_MIN_SEC,
 -- as soon as the gain has stayed within LEVEL_LOCK_DITHER_DB of a stable
 -- anchor for LEVEL_LOCK_STABLE_SEC, and always by LEVEL_LOCK_MAX_SEC. After
--- the lock the gain never changes again; RMS measurement continues.
+-- the lock the gain never rises again; RMS measurement continues. It is
+-- still cut when the output level exceeds the target by more than
+-- LEVEL_LOCK_GUARD_DB or a later sample peak breaks the headroom (quiet
+-- intro, loud main part).
 local LEVEL_LOCK_MIN_SEC    = 10.0 -- no freeze before 10s
 local LEVEL_LOCK_MAX_SEC    = 15.0 -- hard ceiling: freeze no later than 15s
 local LEVEL_LOCK_STABLE_SEC = 3.0  -- gain must be settled for this long
 local LEVEL_LOCK_DITHER_DB  = 2.0  -- +/- dither counts as settled
+local LEVEL_LOCK_GUARD_DB   = 4.0  -- locked: cut once this far above the target
 
 
 --
@@ -66,6 +76,18 @@ local LEVEL_LOCK_DITHER_DB  = 2.0  -- +/- dither counts as settled
 -- checks its limit on a non-skipped frame after the same callback has run.
 -- For short runs the trigger falls back to half of the run (see init below).
 local PREEXIT_MARGIN = 1.0
+
+--
+-- Fade-out configuration
+--
+-- Python sets VGMPLAY_FADE_SECONDS for a playback that -seconds_to_run cuts
+-- inside the music (looping tracks, capped tracks, intro VGMs); a track that
+-- runs to its own end gets none. The master volume then falls linearly in dB
+-- by FADE_FLOOR_DB over the last seconds and is muted at the limit. A socket
+-- exit (stop, skip) ends at once, without fade.
+local FADE_FLOOR_DB = -40.0      -- attenuation reached at the end of the fade
+local FADE_MAX_SECONDS = 10.0    -- longer requests are ignored
+local FADE_MUTE_DB = -96.0       -- lowest sound.volume
 
 -- Maximum bytes of unparsed socket input to keep before discarding.
 local RX_MAX_BYTES = 4096
@@ -103,6 +125,7 @@ local diag_last_rms = 0
 local total_energy_sum = 0      -- Sum of (rms^2) across all fingerprint windows
 local total_energy_samples = 0  -- Total fingerprint samples (sum of fingerprint_samples per window)
 local peak_energy = 0           -- Peak RMS observed in any fingerprint window
+local peak_sample = 0           -- Largest absolute sample seen (leveling headroom)
 local fingerprint_count = 0     -- Number of fingerprint windows completed
 
 --
@@ -117,11 +140,17 @@ local level_manual_override = false
 local level_baseline_vol = nil
 
 -- Leveling cutoff state (see LEVEL_LOCK_* config): once level_locked is set
--- the gain is frozen for the rest of the run. The dither anchor is the gain
--- at which the stability window started.
+-- the gain only goes down for the rest of the run. The dither anchor is the
+-- gain at which the stability window started.
 local level_locked = false
 local level_anchor_gain = nil
 local level_anchor_time = 0
+
+-- Fade-out state (see the fade-out configuration): planned once during
+-- initialisation, fade_base_vol is the volume the fade started from.
+local fade_len = 0          -- seconds, 0 = no fade
+local fade_start_at = 0     -- emulated time the fade begins
+local fade_base_vol = nil   -- set when the fade has begun
 
 
 
@@ -204,25 +233,25 @@ local function compute_recent_rms_db()
 end
 
 local function update_leveling()
-    -- No gain change may follow the final statistics sequence
-    if VGMPLAY_FINAL_LOGS_SENT or level_manual_override then
+    -- No gain change may follow the final statistics sequence or work
+    -- against the fade-out
+    if VGMPLAY_FINAL_LOGS_SENT or level_manual_override or fade_base_vol then
         return
     end
     local now = emu.time()
     -- Freeze the leveled gain once converged: hard ceiling LEVEL_LOCK_MAX_SEC,
     -- otherwise when the gain has stayed within LEVEL_LOCK_DITHER_DB of its
     -- anchor for LEVEL_LOCK_STABLE_SEC after LEVEL_LOCK_MIN_SEC. Once locked
-    -- no further adjustment is ever made; RMS measurement continues.
+    -- the gain is never raised again (see the cut-only branch below); RMS
+    -- measurement continues.
     if level_locked then
-        return
-    end
-    if now >= LEVEL_LOCK_MAX_SEC then
+        -- nothing to decide here
+    elseif now >= LEVEL_LOCK_MAX_SEC then
         level_locked = true
         _dbg_log_level(string.format(
             "LEVEL_LOCKED: t=%.3f reason=max gain=%.2f", now, level_current_gain_db))
         return
-    end
-    if now >= LEVEL_LOCK_MIN_SEC then
+    elseif now >= LEVEL_LOCK_MIN_SEC then
         if level_anchor_gain == nil then
             level_anchor_gain = level_current_gain_db
             level_anchor_time = now
@@ -272,42 +301,56 @@ local function update_leveling()
     -- Using the raw measurement instead would leave the loop open and walk
     -- the gain in one direction until it hit a limit.
     local effective_db = level_baseline_vol + level_current_gain_db + rms_db
-    local delta_db = LEVEL_TARGET_DB - effective_db
 
-    local step = 0
-    if delta_db > LEVEL_RAMP_DB_PER_ADJ then
-        step = LEVEL_RAMP_DB_PER_ADJ
-    elseif delta_db < -LEVEL_RAMP_DB_PER_ADJ then
-        step = -LEVEL_RAMP_DB_PER_ADJ
-    else
-        step = delta_db
-    end
-    if math.abs(step) < 1e-6 then
-        level_last_adj_sec = now
-        return
-    end
-
-    local proposed = level_current_gain_db + step
-    if proposed > LEVEL_MAX_GAIN_DB then
-        proposed = LEVEL_MAX_GAIN_DB
-    end
-    -- peak/headroom safety: baseline + gain + observed peak <= headroom
-    if peak_energy > 0 then
-        local gain_max_by_peak = LEVEL_HEADROOM_DB - linear_to_db(peak_energy)
+    -- Highest gain allowed: the configured maximum and the sample peak
+    -- (baseline + gain + peak <= headroom). The peak only limits a boost: a
+    -- source that clips without any gain is not cut for it, so the limit
+    -- never falls below 0 dB.
+    local ceiling = LEVEL_MAX_GAIN_DB
+    if peak_sample > 0 then
+        local by_peak = LEVEL_HEADROOM_DB - linear_to_db(peak_sample)
             - level_baseline_vol
-        if proposed > gain_max_by_peak then
-            proposed = gain_max_by_peak
+        if by_peak < 0 then
+            by_peak = 0
+        end
+        if by_peak < ceiling then
+            ceiling = by_peak
         end
     end
+
+    local wanted
+    if level_locked then
+        -- cut only: the frozen gain stays unless the output is clearly too loud
+        local excess = effective_db - (LEVEL_TARGET_DB + LEVEL_LOCK_GUARD_DB)
+        wanted = level_current_gain_db
+        if excess > 0 then
+            wanted = wanted - excess
+        end
+    else
+        wanted = level_current_gain_db + (LEVEL_TARGET_DB - effective_db)
+    end
+    -- a gain above the ceiling comes down too (later peak, also when locked)
+    if wanted > ceiling then
+        wanted = ceiling
+    end
     -- runaway floor
-    if proposed < LEVEL_MIN_GAIN_DB then
-        proposed = LEVEL_MIN_GAIN_DB
+    if wanted < LEVEL_MIN_GAIN_DB then
+        wanted = LEVEL_MIN_GAIN_DB
     end
 
-    local old_gain = level_current_gain_db
-    if math.abs(proposed - old_gain) > 1e-9 then
-        level_current_gain_db = proposed
-        apply_gain(level_current_gain_db)
+    local step = wanted - level_current_gain_db
+    if step > LEVEL_RAMP_UP_DB_PER_ADJ then
+        step = LEVEL_RAMP_UP_DB_PER_ADJ
+    elseif step < -LEVEL_RAMP_DB_PER_ADJ then
+        step = -LEVEL_RAMP_DB_PER_ADJ
+    end
+    if level_locked and step > 0 then
+        step = 0
+    end
+
+    if math.abs(step) > 1e-6 then
+        local old_gain = level_current_gain_db
+        apply_gain(old_gain + step)
         _dbg_log_level(string.format(
             "LEVEL_ADJ: t=%.3f rms_db=%.2f eff_db=%.2f gain %.2f->%.2f",
             now, rms_db, effective_db, old_gain, level_current_gain_db))
@@ -527,8 +570,9 @@ if level_baseline_vol == nil then
     level_baseline_vol = 0
 end
 log("INFO", string.format(
-    "LEVEL_BASELINE: start_volume_db=%.2f target_db=%.1f max_gain_db=%.1f ramp_db=%.1f",
-    level_baseline_vol, LEVEL_TARGET_DB, LEVEL_MAX_GAIN_DB, LEVEL_RAMP_DB_PER_ADJ
+    "LEVEL_BASELINE: start_volume_db=%.2f target_db=%.1f max_gain_db=%.1f ramp_db=%.1f ramp_up_db=%.1f",
+    level_baseline_vol, LEVEL_TARGET_DB, LEVEL_MAX_GAIN_DB, LEVEL_RAMP_DB_PER_ADJ,
+    LEVEL_RAMP_UP_DB_PER_ADJ
 ))
 
 --
@@ -567,6 +611,71 @@ log("DEBUG", string.format(
     "PRE_EXIT_PLAN: seconds_to_run=%d now=%.3f trigger=%.3f margin=%.2f",
     preexit_seconds, emu.time(), preexit_at, PREEXIT_MARGIN
 ))
+
+--
+-- Fade-out plan (see the fade-out configuration)
+--
+-- Needs MAME's run limit and sound.volume (MAME >= 0.278). The fade never
+-- takes more than half of the run.
+--
+local function plan_fade_out()
+    local configured = os.getenv("VGMPLAY_FADE_SECONDS")
+    if configured == nil or configured == "" then
+        return
+    end
+    local seconds = tonumber(configured)
+    if seconds == nil or seconds <= 0 or seconds > FADE_MAX_SECONDS then
+        log("WARN", "FADE_OUT: invalid VGMPLAY_FADE_SECONDS: " .. configured)
+        return
+    end
+    if preexit_seconds <= 0 then
+        log("DEBUG", "FADE_OUT: no seconds_to_run limit, fade-out disabled")
+        return
+    end
+    local readable = pcall(function()
+        return manager.machine.sound.volume + 0
+    end)
+    if not readable then
+        log("DEBUG", "FADE_OUT: no sound.volume, fade-out disabled")
+        return
+    end
+    fade_len = math.min(seconds, preexit_seconds * 0.5)
+    fade_start_at = preexit_seconds - fade_len
+    log("DEBUG", string.format(
+        "FADE_OUT_PLAN: start=%.3f len=%.2f floor_db=%.1f",
+        fade_start_at, fade_len, FADE_FLOOR_DB))
+end
+
+plan_fade_out()
+
+-- One step of the fade, called from the periodic callback (once per frame).
+local function update_fade_out(now)
+    if fade_len <= 0 or now < fade_start_at then
+        return
+    end
+    if fade_base_vol == nil then
+        local ok = pcall(function()
+            fade_base_vol = manager.machine.sound.volume + 0
+        end)
+        if not ok or fade_base_vol == nil then
+            fade_len = 0
+            return
+        end
+        log("DEBUG", string.format(
+            "FADE_OUT_START: t=%.3f volume_db=%.2f", now, fade_base_vol))
+    end
+    local progress = (now - fade_start_at) / fade_len
+    local volume = FADE_MUTE_DB
+    if progress < 1 then
+        volume = fade_base_vol + FADE_FLOOR_DB * progress
+        if volume < FADE_MUTE_DB then
+            volume = FADE_MUTE_DB
+        end
+    end
+    pcall(function()
+        manager.machine.sound.volume = volume
+    end)
+end
 
 --
 -- Final statistics, exactly once per playback.
@@ -764,6 +873,10 @@ emu.register_periodic(function()
     -- limit only after the periodic callbacks of this same frame). It never
     -- closes the socket or touches `exiting`/the machine - it only writes
     -- the final log frames, and VGMPLAY_FINAL_LOGS_SENT keeps it to one run.
+    if not exiting then
+        update_fade_out(emu.time())
+    end
+
     if not VGMPLAY_FINAL_LOGS_SENT and preexit_at > 0 then
         local now = emu.time()
         if now >= preexit_at then
@@ -786,19 +899,44 @@ local fingerprint_start = nil
 local fingerprint_sum = 0
 local fingerprint_samples = 0
 
--- Silence detection stays disabled after the first audible sample.
 local silence_start = nil
-local silence_audio_seen = false
+local fingerprint_flat = true   -- every callback of the current window was flat
 
+-- Returns the RMS over all channels and whether the buffer is flat (every
+-- channel holds one constant value).
 local function calculate_callback_rms(channels)
     local sum = 0
     local count = 0
+    local flat = true
 
     for _, buffer in pairs(channels) do
+        local lo = math.huge
+        local hi = -math.huge
         for i = 1, #buffer do
             local v = buffer[i]
             sum = sum + v * v
             count = count + 1
+            if v < lo then
+                lo = v
+            end
+            if v > hi then
+                hi = v
+            end
+        end
+        if hi - lo > SILENCE_FLAT_EPS then
+            flat = false
+        end
+        if hi < 0 then
+            hi = -hi
+        end
+        if lo < 0 then
+            lo = -lo
+        end
+        if lo > hi then
+            hi = lo
+        end
+        if hi > peak_sample and hi ~= math.huge then
+            peak_sample = hi
         end
     end
 
@@ -806,34 +944,29 @@ local function calculate_callback_rms(channels)
         return nil
     end
 
-    return math.sqrt(sum / count)
+    return math.sqrt(sum / count), flat
 end
 
-local function update_silence_detection(rms, now)
+local function update_silence_detection(rms, flat, now)
     --
-    -- Start-of-VGM silence detection: armed at t=0, permanently
-    -- disarmed by the first audible sample. Only a VGM that never
-    -- becomes audible reaches the exit below; once music has been
-    -- heard, silence at any later point is ignored on purpose.
+    -- SILENCE_SECONDS of unbroken silence (see the configuration above) end
+    -- the VGM; any audible callback in between starts the count again.
     --
-    if rms >= SILENCE_THRESHOLD then
+    if rms >= SILENCE_THRESHOLD and not flat then
         if silence_start and DIAG_SILENCE_LOG and now - silence_start > 0.2 then
             log("DEBUG", string.format(
                 "SILENCE_END: t=%.3f after %.2fs (not silent long enough)",
                 now, now - silence_start))
         end
         silence_start = nil
-        silence_audio_seen = true
-    elseif not silence_audio_seen then
-        if not silence_start then
-            silence_start = now
-            if DIAG_SILENCE_LOG then
-                log("DEBUG", string.format(
-                    "SILENCE_START: t=%.3f rms=%.6f", now, rms))
-            end
-        elseif now - silence_start >= SILENCE_SECONDS then
-            return now - silence_start
+    elseif not silence_start then
+        silence_start = now
+        if DIAG_SILENCE_LOG then
+            log("DEBUG", string.format(
+                "SILENCE_START: t=%.3f rms=%.6f flat=%s", now, rms, tostring(flat)))
         end
+    elseif now - silence_start >= SILENCE_SECONDS then
+        return now - silence_start
     end
 
     return nil
@@ -870,6 +1003,11 @@ local function update_audio_statistics(energy)
 end
 
 local function update_level_window(energy, now)
+    -- Silence and the noise floor are not measured: a pause or a faint intro
+    -- must not pull the rolling level down and trigger a boost.
+    if linear_to_db(energy) <= LEVEL_NOISE_FLOOR then
+        return
+    end
     table.insert(level_win_energy_list, energy)
     table.insert(level_win_time_list, now)
     level_total_valid_sec = level_total_valid_sec + FINGERPRINT_SECONDS
@@ -896,7 +1034,7 @@ emu.register_sound_update(function(samples)
         return
     end
 
-    local rms = calculate_callback_rms(channels)
+    local rms, flat = calculate_callback_rms(channels)
     if rms == nil then
         return
     end
@@ -905,12 +1043,16 @@ emu.register_sound_update(function(samples)
 
     local now = emu.time()
 
-    local silence_duration = update_silence_detection(rms, now)
+    local silence_duration = update_silence_detection(rms, flat, now)
     if silence_duration then
         exit_now(string.format(
             "VGM SILENCE DETECTED: %.2f seconds",
             silence_duration))
         return
+    end
+
+    if not flat then
+        fingerprint_flat = false
     end
 
     local fingerprint_complete = accumulate_fingerprint(rms, now)
@@ -920,13 +1062,17 @@ emu.register_sound_update(function(samples)
 
         update_audio_statistics(energy)
 
-        update_level_window(energy, now)
+        -- a frozen buffer is no music: keep it out of the leveling
+        if not fingerprint_flat then
+            update_level_window(energy, now)
+        end
 
         update_leveling()
 
         fingerprint_start = now
         fingerprint_sum = 0
         fingerprint_samples = 0
+        fingerprint_flat = true
     end
 end)
 

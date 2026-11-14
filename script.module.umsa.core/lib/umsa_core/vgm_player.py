@@ -16,6 +16,7 @@ from zipfile import BadZipFile, ZipFile
 from umsa_core import log
 from umsa_core.game_repository import random_vgm_batch
 from umsa_core.vgm_header import (
+    FADE_OUT_SECONDS,
     MAX_PLAYBACK_SECONDS,
     format_vgm_status,
     format_vgm_title,
@@ -83,14 +84,19 @@ class VgmPlayer:
     def vgm_stopped_callback(self, value):
         self._vgm_stopped_callback = value
 
-    def _vgm_process_env(self, vgm_port_env):
-        """Pass the port captured for this listener only to the MAME process."""
+    def _vgm_process_env(self, vgm_port_env, fade_seconds=None):
+        """Environment of the MAME process: the port captured for this
+        listener and the fade-out length for vgmplay.lua (none: no fade)."""
         env = os.environ.copy()
         port = _parse_vgmplay_port(vgm_port_env)
         if port is None:
             env.pop('VGMPLAY_PORT', None)
         else:
             env['VGMPLAY_PORT'] = str(port)
+        if fade_seconds:
+            env['VGMPLAY_FADE_SECONDS'] = f'{fade_seconds:g}'
+        else:
+            env.pop('VGMPLAY_FADE_SECONDS', None)
         return env
 
     def _notify_vgm_info(self, message):
@@ -193,6 +199,13 @@ class VgmPlayer:
             plan.seconds_to_run if plan else sec2run,
             self.max_vgm_duration,
         )
+        # A playback that ends inside the music is faded out; only a track
+        # without loop that runs to its own end is not (plan.fade_out).
+        fade_out = (
+            plan is None
+            or actual_sec < plan.seconds_to_run
+            or plan.fade_out
+        )
         self._vgm_title = title or info
         self._planned_seconds = int(actual_sec)
         self._level_db = None
@@ -206,7 +219,8 @@ class VgmPlayer:
             'emu_exe': self.vgmplay_exe or self.mame_exe,
             'emulation_start': 0,
             'working_dir': self.mame_dir,
-            'env': self._vgm_process_env(vgm_port_env),
+            'env': self._vgm_process_env(
+                vgm_port_env, FADE_OUT_SECONDS if fade_out else None),
         })
         return vgm_args, emurun['env']
 
