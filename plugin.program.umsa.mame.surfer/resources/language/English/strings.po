@@ -289,6 +289,10 @@ msgctxt "#32380"
 msgid "{0} similar results for {1}"
 msgstr ""
 
+msgctxt "#32381"
+msgid "Series: {0} ({1})"
+msgstr ""
+
 msgctxt "#32400"
 msgid "Filter: {0}"
 msgstr ""

@@ -299,7 +299,8 @@ class GameRepository:
         Returns ``None`` when the software has no series at all. The current
         N+1 query pattern and the first-series-wins behaviour (a software in
         several series is resolved against the first one only) are preserved
-        verbatim — optimisation is a separate change.
+        verbatim — optimisation is a separate change. The entries come from
+        :meth:`get_series_entries`.
         """
         cursor = self._conn.cursor()
         try:
@@ -309,9 +310,20 @@ class GameRepository:
                 "FROM series_seq WHERE software_id = ?", (software_id,)
             )
             series_ids = cursor.fetchall()
-            if not series_ids:
-                return None
+        finally:
+            cursor.close()
+        if not series_ids:
+            return None
+        # simply use first series
+        return self.get_series_entries(series_ids[0]['series_id'])
 
+    def get_series_entries(self, series_id):
+        """Return the software entries (``id``, ``name``, ``year``, ``maker``) of a series.
+
+        Ordered by ``seqno``, then year; ``[]`` for an unknown series id.
+        """
+        cursor = self._conn.cursor()
+        try:
             # get all entries for the series
             all_series = []
             cursor.execute(
@@ -320,7 +332,7 @@ class GameRepository:
                 "WHERE series_id = ? AND software_id = software.id "
                 "AND software.year_id = year.id "
                 "ORDER BY seqno, year.name",
-                (series_ids[0]['series_id'],),  # simply use first series
+                (series_id,),
             )
             for i in cursor.fetchall():
                 cursor.execute(

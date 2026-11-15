@@ -85,7 +85,9 @@ def ask_search_term():
 def list_items(rows):
     """Game-list entries for ``rows`` (``name``, ``id``, optional ``year``/``maker``).
 
-    label2 carries the id the click and move handlers dispatch on.
+    label2 carries the id the click and move handlers dispatch on. A row
+    with ``set_id`` (search results) carries it as the list item property
+    ``set_id``: the set a click selects.
     """
 
     items = []
@@ -96,6 +98,9 @@ def list_items(rows):
         item = xbmcgui.ListItem(row['name'], str(row['id']))
         if 'year' in row:
             item.setInfo('video', {'Writer': row['year'], 'Studio': row['maker']})
+        if row.get('set_id') is not None:
+            # the set a click selects (search results)
+            item.setProperty('set_id', str(row['set_id']))
         items.append(item)
     return items
 
@@ -201,7 +206,8 @@ def update_gamelist(ctx, item, focus=True):
 
     # a new search (or a repeated one without a term) asks first: a cancelled
     # keyboard leaves the shown list alone. The new term replaces the stored
-    # one (and the shown list) only when it fills a list: more than one hit.
+    # one (and the shown list) only when it fills a list: more than one row or
+    # one series row.
     new_term = None
     if item == M_SEARCH_NEW or (item == M_SEARCH and not ctx.listing.searchold):
         new_term = ask_search_term() if focus else None
@@ -268,12 +274,18 @@ def update_gamelist(ctx, item, focus=True):
         return
 
     # one software result = select (a new search term with one hit leaves the
-    # shown list and the stored term alone)
-    if focus and len(results) == 1 and item not in (M_MACHINE, M_ALLEMUS):
+    # shown list and the stored term alone); a single series row
+    # (``series::<id>``) is no software: it fills a list
+    if (focus and len(results) == 1 and item not in (M_MACHINE, M_ALLEMUS)
+            and '::' not in str(results[0]['id'])):
         ctx.services.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_ONE_HIT),
             xbmcgui.NOTIFICATION_INFO, 2000, False)
         # TODO: check if this id is the one already shown
-        software_selector.remember_and_select(ctx.selector, results[0]['id'])
+        if results[0].get('set_id') is not None:
+            software_selector.remember_and_select(
+                ctx.selector, results[0]['id'], set_id=results[0]['set_id'])
+        else:
+            software_selector.remember_and_select(ctx.selector, results[0]['id'])
         ctx.view.setFocus(ctx.view.getControl(SOFTWARE_BUTTON))
         return
 

@@ -27,6 +27,7 @@ from .constants import (
     ACTION_START_MAME,
     ENTRY_ACTION,
     ENTRY_SEARCH,
+    ENTRY_SERIES,
     GAME_LIST,
     KIND_MACHINES,
     KIND_MEDIA,
@@ -87,12 +88,15 @@ def gamelist_click(ctx):
     """Reacts on click in gamelist"""
 
     what = ""
-    list_id = ctx.view.getControl(GAME_LIST).getSelectedItem().getLabel2()
+    selected = ctx.view.getControl(GAME_LIST).getSelectedItem()
+    list_id = selected.getLabel2()
     if "::" in list_id:
         what, list_id = list_id.split("::")
     if list_id == "0":
         return
-    select_label = ctx.view.getControl(GAME_LIST).getSelectedItem().getLabel()
+    select_label = selected.getLabel()
+    # the set a click selects (search results); read before the list changes
+    set_id = selected.getProperty('set_id')
     kind = ctx.listing.gamelist_kind
 
     xbmc.log(f"UMSA gui: gamelist_click: what {what}, list_id {list_id}, kind {kind}, select_label {select_label}")
@@ -124,6 +128,12 @@ def gamelist_click(ctx):
                 ctx.services.ggdb.gamelist, SELECT_QUERIES[ctx.listing.gamelist_select])
             my_list, pos, count = query(list_id, ctx.software.actset['id'])
         gamelist_workflows.popup_gamelist(ctx.gamelist, my_list, f"{select_label} ({count})", pos)
+        return
+    # series row of the search list: the series list replaces it
+    if what == ENTRY_SERIES:
+        entries = ctx.services.ggdb.games.get_series_entries(int(list_id))
+        if entries:
+            gamelist_workflows.popup_gamelist(ctx.gamelist, entries, tr(S.LIST_SERIES))
         return
 
     # close window
@@ -223,7 +233,11 @@ def gamelist_click(ctx):
     else:
         xbmc.log(f"UMSA gui: gamelist_click: software id={list_id}")
         software_id = int(list_id)
-        software_selector.remember_and_select(ctx.selector, software_id)
+        if set_id:
+            software_selector.remember_and_select(
+                ctx.selector, software_id, set_id=int(set_id))
+        else:
+            software_selector.remember_and_select(ctx.selector, software_id)
 
 
 def open_manual(ctx, path):

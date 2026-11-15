@@ -107,8 +107,12 @@ def _vgm_title(ctx, vgm_name):
         return vgm_name
 
 
-def select_software(ctx, software_id):
+def select_software(ctx, software_id, set_id=None):
     """Get all machines and sets for a software and fill skin.
+
+    ``set_id`` (search result) selects that set instead of the latest played
+    one; a requested ``vgmplay`` set that ``vgm_show_machine_list`` hides
+    falls back to the first visible set.
 
     Returns ``True`` when the software was displayed and ``False`` when
     the display failed, so history-adding callers can avoid phantom
@@ -127,12 +131,17 @@ def select_software(ctx, software_id):
 
     ctx.view.getControl(LABEL_STATUS).setLabel(tr(S.LOADING_SOFTWARE))
 
-    # get infos
+    # get infos (without a set the call keeps its historical shape)
+    if set_id is None:
+        details = ctx.services.ggdb.software.get_all_for_software(software_id)
+    else:
+        details = ctx.services.ggdb.software.get_all_for_software(
+            software_id, set_id=set_id)
     (all_info,
      pos_machine,
      pos_set,
      ctx.software.all_dat,
-     ctx.software.all_art) = ctx.services.ggdb.software.get_all_for_software(software_id)
+     ctx.software.all_art) = details
 
     # error if no info
     if len(all_info) == 0:
@@ -375,30 +384,46 @@ def save_lastgames(ctx):
         ctx.services.ggdb.history.save_lastgames(ctx.history.last)
 
 
-def remember_and_select(ctx, software_id):
+def _select(ctx, software_id, set_id):
+    """``select_software`` with the set only when one is requested."""
+
+    if set_id is None:
+        return select_software(ctx, software_id)
+    return select_software(ctx, software_id, set_id)
+
+
+def remember_and_select(ctx, software_id, set_id=None):
     """Insert a display event, select it, and persist only on success.
 
     A failed display (empty `select_software`) must not leave a phantom
     entry: the in-memory insert is rolled back and nothing is persisted.
     Pointer semantics match the previous insert-and-advance callers.
+
+    ``set_id`` (search result) selects that set. A software that is shown
+    already is reloaded only for another set; the history stays as it is.
     """
 
     # no identical entries next to each other in the history
     if ctx.history.last and 0 <= ctx.history.lastptr < len(ctx.history.last):
         if str(ctx.history.last[ctx.history.lastptr]) == str(software_id):
+            actset = ctx.software.actset
+            if set_id is not None and (not actset or actset.get('id') != set_id):
+                xbmc.log(f"UMSA gui: remember_and_select: {software_id} shown, "
+                         f"moving to set {set_id}")
+                return select_software(ctx, software_id, set_id)
             xbmc.log(f"UMSA gui: remember_and_select: {software_id} already shown")
             return True
         if (ctx.history.lastptr + 1 < len(ctx.history.last)
                 and str(ctx.history.last[ctx.history.lastptr + 1]) == str(software_id)):
             ctx.history.lastptr += 1
-            if not select_software(ctx, ctx.history.last[ctx.history.lastptr]):
+            if not _select(ctx, ctx.history.last[ctx.history.lastptr], set_id):
                 ctx.history.lastptr -= 1
                 return False
             return True
 
     ctx.history.lastptr += 1
     ctx.history.last.insert(ctx.history.lastptr, software_id)
-    if not select_software(ctx, software_id):
+    if not _select(ctx, software_id, set_id):
         del ctx.history.last[ctx.history.lastptr]
         ctx.history.lastptr -= 1
         return False

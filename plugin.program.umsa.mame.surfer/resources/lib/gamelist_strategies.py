@@ -16,6 +16,7 @@ from umsa_gui.constants import (
     ACTION_START_KODI,
     ACTION_START_MAME,
     ENTRY_ACTION,
+    ENTRY_SERIES,
     M_ALL,
     M_ALLEMUS,
     M_CAT,
@@ -212,6 +213,31 @@ def recommended(ctx):
     return EARLY_RETURN
 
 
+def _search_rows(found_rows):
+    """List rows of a search: one row per series with several hits, then the sets."""
+
+    members = {}
+    for row in found_rows:
+        if row['series_id'] is not None:
+            members.setdefault(row['series_id'], []).append(row)
+    grouped = {series_id for series_id, rows in members.items() if len(rows) > 1}
+
+    series_rows, set_rows = [], []
+    for row in found_rows:
+        if row['series_id'] in grouped:
+            if row is members[row['series_id']][0]:
+                series_rows.append({
+                    'id': f"{ENTRY_SERIES}::{row['series_id']}",
+                    'name': tr(S.LIST_SERIES_ROW, row['series_name'],
+                               len(members[row['series_id']])),
+                    'year': '', 'maker': ''})
+            continue
+        set_rows.append({'id': row['id'], 'name': row['set_name'],
+                         'year': row['year'], 'maker': row['maker'],
+                         'set_id': row['set_id']})
+    return series_rows + set_rows
+
+
 def search(ctx):
     found = ctx.db.gamelist.search(ctx.searchold)
     if found.fuzzy:
@@ -220,7 +246,7 @@ def search(ctx):
         gl_label = tr(S.LIST_SEARCH_RESULTS, found.count, ctx.searchold)
     gl_options = (OPTION_NEW_SEARCH,)
 
-    return found.rows, 0, gl_label, gl_options
+    return _search_rows(found.rows), 0, gl_label, gl_options
 
 
 GAMELIST_STRATEGIES = {

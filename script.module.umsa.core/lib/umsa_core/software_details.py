@@ -230,11 +230,15 @@ class SoftwareDetails:
 
         return results, 0
 
-    def get_all_for_software(self, software_id):
+    def get_all_for_software(self, software_id, set_id=None):
         """get all infos for software
 
         get all sets nicely sorted (last played, prefered history, year)
         includes a best machine to use for swl set
+
+        ``pos_machine``/``pos_set`` point to ``set_id`` when it is given and
+        one of the sets (search result), else to the latest played set, else
+        to the first one. An unknown ``set_id`` changes nothing.
 
         all_sets.append is used instead of .extend
         so we have all_sets[software_with_same_name][sets] = {infos}
@@ -391,6 +395,13 @@ class SoftwareDetails:
                         pos_machine = count1
                         pos_set = count2
                         break
+        # a requested set (search result) wins over the latest played one
+        if set_id is not None:
+            for count1, i in enumerate(return_list):
+                for count2, j in enumerate(i):
+                    if j['id'] == set_id:
+                        pos_machine = count1
+                        pos_set = count2
         all_dat = self._dats.get_dat_for_sets(set_ids)
         add_driver_wip(self._dats, all_dat, set_drivers)
         all_art = self._artwork.get_artwork_for_sets(set_ids)
