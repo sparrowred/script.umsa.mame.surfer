@@ -829,7 +829,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         # ACTION listmode submenu
         elif self.selected_control_id == LISTMODE_MENU:
             if action.getId() in ACTION_MOVEMENT_RIGHT+ACTION_ENTER:
-                gamelist_workflows.update_gamelist(self.ctx.gamelist,
+                gamelist_workflows.open_listmode_gamelist(self.ctx.gamelist,
                     int(self.getControl(LISTMODE_MENU).getSelectedItem().getLabel2())
                 )
             elif action.getId() in ACTION_MOVEMENT_LEFT:

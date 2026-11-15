@@ -376,6 +376,22 @@ def preview_listmode_gamelist(ctx):
     update_gamelist(ctx, menu_item, focus=False)
 
 
+def open_listmode_gamelist(ctx, menu_item):
+    """Move from the list-mode submenu into the list of ``menu_item``.
+
+    A list the game list already shows (loaded by the preview or opened
+    before) only gets the focus and keeps its position. A list with fewer
+    than two entries is loaded as usual: a single hit is selected, an empty
+    result is reported.
+    """
+
+    if (ctx.listing.listmode_shown == menu_item
+            and ctx.view.getControl(GAME_LIST).size() > 1):
+        ctx.view.setFocus(ctx.view.getControl(GAME_LIST))
+        return
+    update_gamelist(ctx, menu_item)
+
+
 def gamelist_move(ctx, pos=None, force=False):
     """Load snap and machines for a gamelist entry.
 
