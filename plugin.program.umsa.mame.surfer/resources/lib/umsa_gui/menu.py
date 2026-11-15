@@ -1,8 +1,10 @@
 """Main menu and list-mode submenu of the UMSA frontend.
 
 Both menus are pure Kodi list construction: they read the current selection
-state from the ``UMSA`` instance and fill the skin controls.
+state from their context and fill the skin controls.
 """
+
+from dataclasses import dataclass
 
 import xbmc
 import xbmcgui
@@ -36,7 +38,19 @@ from .constants import (
 from .strings import tr
 
 
-def build_sublist_menu(gui, select):
+@dataclass
+class MenuCtx:
+    """What the menus read: selection, history, search and filter name."""
+
+    view: object = None
+    services: object = None
+    software: object = None
+    history: object = None
+    listing: object = None
+    filters: object = None
+
+
+def build_sublist_menu(ctx, select):
     """Build the sublist menu for the listmode."""
 
     if select in SUBMENU_ORDER:
@@ -49,9 +63,9 @@ def build_sublist_menu(gui, select):
     list_items.append(xbmcgui.ListItem(tr(S.MENU_SHOW_ALL), str(M_ALL)))
 
     # series
-    last_val = gui.last[gui.lastptr] if gui.last else None
-    xbmc.log(f"UMSA gui: build_sublist_menu: last={gui.last}, lastptr={gui.lastptr}, last_val={last_val}")
-    series = gui.ggdb.games.check_series(last_val) if last_val is not None else 0
+    last_val = ctx.history.last[ctx.history.lastptr] if ctx.history.last else None
+    xbmc.log(f"UMSA gui: build_sublist_menu: last={ctx.history.last}, lastptr={ctx.history.lastptr}, last_val={last_val}")
+    series = ctx.services.ggdb.games.check_series(last_val) if last_val is not None else 0
     xbmc.log(f"UMSA gui: build_sublist_menu: series={series}")
     if series:
         list_items.append(xbmcgui.ListItem(tr(S.MENU_SERIES, series), str(M_SERIES)))
@@ -62,8 +76,8 @@ def build_sublist_menu(gui, select):
     list_items.append(xbmcgui.ListItem(tr(S.MENU_CATEGORY), str(M_CAT)))
 
     rec = False
-    for i in gui.all_dat:
-        if 'Rec' in gui.all_dat[i]:
+    for i in ctx.software.all_dat:
+        if 'Rec' in ctx.software.all_dat[i]:
             rec = True
             break
     if rec:
@@ -75,39 +89,39 @@ def build_sublist_menu(gui, select):
     list_items.append(xbmcgui.ListItem(tr(S.MENU_PLAYERS), str(M_PLAYERS)))
 
     # source
-    if gui.actset['swl_name'] == 'mame':
-        count_source = gui.ggdb.games.count_source(gui.actset['source'])
+    if ctx.software.actset['swl_name'] == 'mame':
+        count_source = ctx.services.ggdb.games.count_source(ctx.software.actset['source'])
         if count_source > 1:
             list_items.append(xbmcgui.ListItem(
-                tr(S.MENU_SOURCE, gui.actset['source'][:-4], count_source),
+                tr(S.MENU_SOURCE, ctx.software.actset['source'][:-4], count_source),
                 str(M_SOURCE)))
         else:
-            xbmc.log(f"UMSA gui: build_sublist_menu: only 1 source: {gui.actset['source']}")
+            xbmc.log(f"UMSA gui: build_sublist_menu: only 1 source: {ctx.software.actset['source']}")
     # swl
     else:
         list_items.append(xbmcgui.ListItem(
-            tr(S.MENU_SOFTWARELIST, gui.actset['swl_name']), str(M_SWL)))
+            tr(S.MENU_SOFTWARELIST, ctx.software.actset['swl_name']), str(M_SWL)))
 
     list_items.append(xbmcgui.ListItem(tr(S.MENU_SAVER_SESSION), str(M_LSSAVER)))
     list_items.append(xbmcgui.ListItem(tr(S.MENU_PLAY_STATUS), str(M_PLAYSTAT)))
 
-    gui.getControl(LISTMODE_MENU).reset()
-    gui.getControl(LISTMODE_MENU).addItems(list_items)
-    gui.getControl(LISTMODE_MENU).selectItem(position)
+    ctx.view.getControl(LISTMODE_MENU).reset()
+    ctx.view.getControl(LISTMODE_MENU).addItems(list_items)
+    ctx.view.getControl(LISTMODE_MENU).selectItem(position)
 
 
-def build_main_menu(gui, select=None):
+def build_main_menu(ctx, select=None):
     """Shows the context menu."""
 
     position = 0
     list_items = []
     # check series
-    series = gui.ggdb.games.check_series(gui.last[gui.lastptr])
+    series = ctx.services.ggdb.games.check_series(ctx.history.last[ctx.history.lastptr])
     # set series indicator
     if series:
-        gui.getControl(SERIES_LABEL).setVisible(True)
+        ctx.view.getControl(SERIES_LABEL).setVisible(True)
     else:
-        gui.getControl(SERIES_LABEL).setVisible(False)
+        ctx.view.getControl(SERIES_LABEL).setVisible(False)
     # change list with select parameter
     if select == M_SOURCE:
         list_items.append(xbmcgui.ListItem(tr(S.MENU_SHOW_SOURCE), str(M_SOURCE)))
@@ -120,36 +134,36 @@ def build_main_menu(gui, select=None):
     if select == M_MACHINE:
         position = 2
     # media
-    if gui.vidman == (0, 0):
+    if ctx.software.vidman == (0, 0):
         list_items.append(xbmcgui.ListItem(tr(S.MENU_MEDIA), str(M_MEDIA)))
     else:
         list_items.append(xbmcgui.ListItem(
-            tr(S.MENU_MEDIA_COUNT, gui.vidman[0], gui.vidman[1]), str(M_MEDIA)))
+            tr(S.MENU_MEDIA_COUNT, ctx.software.vidman[0], ctx.software.vidman[1]), str(M_MEDIA)))
     # mame machines and different emulators
     count_machines = 0
-    if gui.actset['swl_name'] != 'mame':
-        count_machines = gui.ggdb.games.count_machines_for_swl(gui.actset['swl_name'])
+    if ctx.software.actset['swl_name'] != 'mame':
+        count_machines = ctx.services.ggdb.games.count_machines_for_swl(ctx.software.actset['swl_name'])
     if count_machines > 1:
         list_items.append(
             xbmcgui.ListItem(tr(S.MENU_EMULATOR_COUNT, count_machines), str(M_MACHINE)))
     else:
         list_items.append(xbmcgui.ListItem(tr(S.MENU_EMULATOR), str(M_MACHINE)))
     # search
-    if gui.searchold:
+    if ctx.listing.searchold:
         list_items.append(xbmcgui.ListItem(
-            tr(S.MENU_SEARCH_TERM, gui.searchold), str(M_SEARCH_NEW)))
+            tr(S.MENU_SEARCH_TERM, ctx.listing.searchold), str(M_SEARCH_NEW)))
     else:
         list_items.append(xbmcgui.ListItem(tr(S.SEARCH), str(M_SEARCH_NEW)))
     # filter
-    if gui.ggdb.gamelist.use_filter:
+    if ctx.services.ggdb.gamelist.use_filter:
         list_items.append(xbmcgui.ListItem(
-            tr(S.MENU_FILTER_NAME, gui.act_filter), str(M_FILTER)))
+            tr(S.MENU_FILTER_NAME, ctx.filters.act_filter), str(M_FILTER)))
     else:
         list_items.append(xbmcgui.ListItem(tr(S.MENU_FILTER_OFF), str(M_FILTER)))
     list_items.append(xbmcgui.ListItem(tr(S.SCREENSAVER), str(M_SSAVER)))
     list_items.append(xbmcgui.ListItem(tr(S.MENU_UPDATE), str(M_UPD)))
     list_items.append(xbmcgui.ListItem(tr(S.MENU_SETTINGS), str(M_ASETTINGS)))
     list_items.append(xbmcgui.ListItem(tr(S.MENU_EXIT), str(M_EXIT)))
-    gui.getControl(MAIN_MENU).reset()
-    gui.getControl(MAIN_MENU).addItems(list_items)
-    gui.getControl(MAIN_MENU).selectItem(position)
+    ctx.view.getControl(MAIN_MENU).reset()
+    ctx.view.getControl(MAIN_MENU).addItems(list_items)
+    ctx.view.getControl(MAIN_MENU).selectItem(position)

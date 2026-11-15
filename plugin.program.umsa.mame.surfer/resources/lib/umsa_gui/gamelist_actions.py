@@ -6,6 +6,7 @@ emulators, plays media, changes the machine of a set or selects a new software.
 
 import os
 import zipfile
+from dataclasses import dataclass
 from json import dumps
 
 import xbmc
@@ -14,9 +15,9 @@ from umsa_core import ProcessRunner, calculate_playback_plan, log, parse_vgm_hea
 from umsa_core.emulation import format_vgm_title
 from umsa_core.game_labels import split_gamename
 from umsa_core.support import marp_search
-from umsa_core.vgm_header import MAX_PLAYBACK_SECONDS
 
-from . import optional_plugins
+from . import artwork_presenter, emulator_setup, optional_plugins, software_selector
+from . import gamelist as gamelist_workflows
 from . import strings as S
 from .constants import (
     ACTION_CHOOSE_EMULATOR,
@@ -63,17 +64,36 @@ SELECT_QUERIES = {
 }
 
 
-def gamelist_click(gui):
+@dataclass
+class GamelistActionsCtx:
+    """What a click or a context action on a game list entry needs."""
+
+    view: object = None
+    services: object = None
+    software: object = None
+    listing: object = None
+    settings: object = None
+    # window callbacks: start the emulator, close the add-on
+    run_emulator: object = None
+    exit: object = None
+    # contexts of the modules an entry leads to
+    emulator: object = None
+    gamelist: object = None
+    artwork: object = None
+    selector: object = None
+
+
+def gamelist_click(ctx):
     """Reacts on click in gamelist"""
 
     what = ""
-    list_id = gui.getControl(GAME_LIST).getSelectedItem().getLabel2()
+    list_id = ctx.view.getControl(GAME_LIST).getSelectedItem().getLabel2()
     if "::" in list_id:
         what, list_id = list_id.split("::")
     if list_id == "0":
         return
-    select_label = gui.getControl(GAME_LIST).getSelectedItem().getLabel()
-    kind = gui.gamelist_kind
+    select_label = ctx.view.getControl(GAME_LIST).getSelectedItem().getLabel()
+    kind = ctx.listing.gamelist_kind
 
     xbmc.log(f"UMSA gui: gamelist_click: what {what}, list_id {list_id}, kind {kind}, select_label {select_label}")
 
@@ -81,11 +101,11 @@ def gamelist_click(gui):
     if list_id in ('prev', 'next'):
         # get prev/next results
         if list_id == 'prev':
-            sid = int(gui.getControl(GAME_LIST).getListItem(1).getLabel2())
+            sid = int(ctx.view.getControl(GAME_LIST).getListItem(1).getLabel2())
         else:
-            size = gui.getControl(GAME_LIST).size()
-            sid = int(gui.getControl(GAME_LIST).getListItem(size - 2).getLabel2())
-        gamelist, pos, _result_count = gui.ggdb.gamelist.execute_statement(
+            size = ctx.view.getControl(GAME_LIST).size()
+            sid = int(ctx.view.getControl(GAME_LIST).getListItem(size - 2).getLabel2())
+        gamelist, pos, _result_count = ctx.services.ggdb.gamelist.execute_statement(
             software_id=sid, prevnext=list_id)
         # create list
         list_items = []
@@ -96,123 +116,123 @@ def gamelist_click(gui):
                 )
             list_items.append(list_item)
         # show
-        gui.getControl(GAME_LIST).reset()
-        gui.getControl(GAME_LIST).addItems(list_items)
-        gui.getControl(GAME_LIST).selectItem(pos)
-        gui.setFocus(gui.getControl(GAME_LIST))
+        ctx.view.getControl(GAME_LIST).reset()
+        ctx.view.getControl(GAME_LIST).addItems(list_items)
+        ctx.view.getControl(GAME_LIST).selectItem(pos)
+        ctx.view.setFocus(ctx.view.getControl(GAME_LIST))
         return
     if kind == KIND_SELECT:
         if list_id == 'source':
-            my_list, pos, count = gui.ggdb.gamelist.get_software_for_source(
-                gui.actset['id'], select_label)
+            my_list, pos, count = ctx.services.ggdb.gamelist.get_software_for_source(
+                ctx.software.actset['id'], select_label)
         else:
             query = getattr(
-                gui.ggdb.gamelist, SELECT_QUERIES[gui.gamelist_select])
-            my_list, pos, count = query(list_id, gui.actset['id'])
-        gui.popup_gamelist(my_list, f"{select_label} ({count})", pos)
+                ctx.services.ggdb.gamelist, SELECT_QUERIES[ctx.listing.gamelist_select])
+            my_list, pos, count = query(list_id, ctx.software.actset['id'])
+        gamelist_workflows.popup_gamelist(ctx.gamelist, my_list, f"{select_label} ({count})", pos)
         return
 
     # close window
-    gui.enter = True
-    gui.setFocus(gui.getControl(gui.main_focus))
+    ctx.listing.enter = True
+    ctx.view.setFocus(ctx.view.getControl(ctx.listing.main_focus))
 
     # action rows of the machine list: choose emulator for source/swl or
     # start with MAME, Kodi RetroPlayer or an eXoDOS shell launcher
     if kind == KIND_MACHINES and what == ENTRY_ACTION:
         if list_id == ACTION_CHOOSE_EMULATOR:
-            gui.get_diff_emulator()
+            emulator_setup.get_diff_emulator(ctx.emulator)
         else:
-            gui.run_emulator(dict(ACTION_EMULATORS[list_id]))
+            ctx.run_emulator(dict(ACTION_EMULATORS[list_id]))
     # emulator run
     elif what == "emu_conn":
-        gui.run_emulator(gui.ggdb.emulators.get_emulator(emu_conn_id=list_id))
+        ctx.run_emulator(ctx.services.ggdb.emulators.get_emulator(emu_conn_id=list_id))
     # change/delete emulator
     elif what == "emu":
-        if (gui.dialog.yesno(
+        if (ctx.services.dialog.yesno(
                 tr(S.EMU_TITLE, select_label), tr(S.EMU_WHAT_TO_DO),
                 nolabel=tr(S.EMU_RECONFIGURE), yeslabel=tr(S.EMU_DELETE))
            ):
-            if (gui.dialog.yesno(
+            if (ctx.services.dialog.yesno(
                     tr(S.EMU_DELETE_TITLE), tr(S.EMU_DELETE_CONFIRM, select_label))
                ):
-                gui.ggdb.emulators.delete_emulator(list_id)
-                gui.update_gamelist(M_ALLEMUS)
+                ctx.services.ggdb.emulators.delete_emulator(list_id)
+                gamelist_workflows.update_gamelist(ctx.gamelist, M_ALLEMUS)
         else:
-            gui.configure_emulator(
-                emu_info=gui.ggdb.emulators.get_emulator(emu_id=list_id), reconfigure=True)
+            emulator_setup.configure_emulator(ctx.emulator,
+                emu_info=ctx.services.ggdb.emulators.get_emulator(emu_id=list_id), reconfigure=True)
     # set machine for swl
     elif kind == KIND_MACHINES:
-        gui.setFocus(gui.getControl(gui.main_focus))
-        gui.enter = True
+        ctx.view.setFocus(ctx.view.getControl(ctx.listing.main_focus))
+        ctx.listing.enter = True
         # get info from db
-        machine_name, machine_label = gui.ggdb.games.get_machine_name(list_id)
+        machine_name, machine_label = ctx.services.ggdb.games.get_machine_name(list_id)
         # save machine for set in self.info
-        gui.actset['machine_name'] = machine_name
-        gui.actset['machine_label'] = machine_label
+        ctx.software.actset['machine_name'] = machine_name
+        ctx.software.actset['machine_label'] = machine_label
         # scanned cabinet of the new machine (own artwork first)
-        gui.machine_cabinets.update(gui.ggdb.art_queries.get_machine_cabinets([machine_name]))
+        ctx.software.machine_cabinets.update(ctx.services.ggdb.art_queries.get_machine_cabinets([machine_name]))
         # set new image and machine label
-        gui.getControl(SYSTEM_WRAPLIST).getSelectedItem().setArt(
-            {'icon': gui.get_machine_pic(gui.actset)})
-        gui.getControl(SET_LIST).getSelectedItem().setProperty(
+        ctx.view.getControl(SYSTEM_WRAPLIST).getSelectedItem().setArt(
+            {'icon': artwork_presenter.get_machine_pic(ctx.artwork, ctx.software.actset)})
+        ctx.view.getControl(SET_LIST).getSelectedItem().setProperty(
             'Machine', machine_label)
     # play media
     elif kind == KIND_MEDIA:
         # video
         if list_id[-3:] == 'mp4':
             list_item = xbmcgui.ListItem(select_label)
-            gui.player.play(list_id, listitem=list_item, windowed=True)
+            ctx.services.player.play(list_id, listitem=list_item, windowed=True)
         # pdf viewer
         elif list_id[-3:] == 'pdf':
-            open_manual(gui, list_id)
+            open_manual(ctx, list_id)
         # marp
         elif list_id[-3:] == 'zip':
-            gui.marp_replayer(dl_file=list_id, set_name=what)
+            emulator_setup.marp_replayer(ctx.emulator, dl_file=list_id, set_name=what)
         # vgm
         elif what == "vgm":
-            vgm_zipfile = gui.emulation.find_roms('vgmplay', list_id)
+            vgm_zipfile = ctx.services.emulation.find_roms('vgmplay', list_id)
             xbmc.log(f"UMSA gui: get vgmfile - {vgm_zipfile}")
             vgm_tracklist = zipfile.ZipFile(vgm_zipfile).namelist()
             select = vgm_tracklist.copy()
             if select:
-                which_track = gui.dialog.select(tr(S.SELECT_VGM_TRACK), select)
+                which_track = ctx.services.dialog.select(tr(S.SELECT_VGM_TRACK), select)
                 if which_track > -1:
                     track = vgm_tracklist[which_track]
                     header = parse_vgm_header(vgm_zipfile, track, logger=log)
                     plan = calculate_playback_plan(
                         header,
-                        max_seconds=getattr(gui, 'vgm_max_duration', MAX_PLAYBACK_SECONDS))
+                        max_seconds=ctx.settings.vgm_max_duration)
                     # Core turns the title into "<title> -MM:ss (<dB> dB)"
-                    title = format_vgm_title(track, gui.actset['gamename'])
-                    gui.emulation.play_vgm(
+                    title = format_vgm_title(track, ctx.software.actset['gamename'])
+                    ctx.services.emulation.play_vgm(
                         f'{list_id}:{which_track+1:03d}',
                         info=title, plan=plan)
         # youtube
         elif what == "yt":
-            gui.player.play(
+            ctx.services.player.play(
                 f"plugin://plugin.video.youtube/play/?video_id={list_id}",
                 windowed=True)
         # search marp, youtube
         elif what == ENTRY_SEARCH and list_id == SEARCH_YOUTUBE:
             yt_search_url = "plugin://plugin.video.youtube/kodion/search/query/?category_label=REPLACE&incognito=True&q=REPLACE&type=video"
-            yt_search_str = f"{split_gamename(gui.actset['gamename'])[0]} {gui.actset['machine_name']}".replace(' ', '%20')
-            gui.exit()
+            yt_search_str = f"{split_gamename(ctx.software.actset['gamename'])[0]} {ctx.software.actset['machine_name']}".replace(' ', '%20')
+            ctx.exit()
             xbmc.executebuiltin(f"ActivateWindow(Videos,{yt_search_url.replace('REPLACE',yt_search_str)},return)")
 
         elif what == ENTRY_SEARCH and list_id == SEARCH_MARP:
-            if gui.actset['swl_name'] == "mame":
-                gui.ggdb.status.save_further_media(
-                    gui.actset['id'], marp=dumps(
-                        marp_search(short_name=gui.actset['name'])))
-            gui.update_gamelist(M_MEDIA)
+            if ctx.software.actset['swl_name'] == "mame":
+                ctx.services.ggdb.status.save_further_media(
+                    ctx.software.actset['id'], marp=dumps(
+                        marp_search(short_name=ctx.software.actset['name'])))
+            gamelist_workflows.update_gamelist(ctx.gamelist, M_MEDIA)
     # select new software
     else:
         xbmc.log(f"UMSA gui: gamelist_click: software id={list_id}")
         software_id = int(list_id)
-        gui._remember_and_select(software_id)
+        software_selector.remember_and_select(ctx.selector, software_id)
 
 
-def open_manual(gui, path):
+def open_manual(ctx, path):
     """Open a PDF manual.
 
     The Kodi PDF reader add-on is used when it is installed, else the
@@ -222,12 +242,12 @@ def open_manual(gui, path):
 
     if optional_plugins.KODIPDF:
         # the reader takes over the display
-        gui.exit()
+        ctx.exit()
         optional_plugins.play_pdf(path, compress=True, is_image_plugin=False)
         return
-    viewer = getattr(gui, 'pdfviewer', '')
+    viewer = ctx.settings.pdfviewer
     if not viewer:
-        gui.dialog.notification(
+        ctx.services.dialog.notification(
             tr(S.MANUAL_TITLE), tr(S.MANUAL_NO_VIEWER),
             xbmcgui.NOTIFICATION_ERROR, 5000)
         return
@@ -239,42 +259,42 @@ def open_manual(gui, path):
         log(
             f'UMSA gui: could not start PDF viewer {viewer!r}: {error}',
             level='error')
-        gui.dialog.notification(
+        ctx.services.dialog.notification(
             tr(S.MANUAL_TITLE), tr(S.MANUAL_VIEWER_FAILED, viewer),
             xbmcgui.NOTIFICATION_ERROR, 5000)
         return
     # keeps the process owned; a second manual replaces it
-    gui.manual_viewer = runner
+    ctx.services.manual_viewer = runner
 
 
-def gamelist_context(gui):
+def gamelist_context(ctx):
     """Reacts on context in gamelist"""
 
     what = ""
-    list_id = gui.getControl(GAME_LIST).getSelectedItem().getLabel2()
+    list_id = ctx.view.getControl(GAME_LIST).getSelectedItem().getLabel2()
     if "::" in list_id:
         what, list_id = list_id.split("::")
-    label = gui.getControl(GAME_LIST).getSelectedItem().getLabel()
+    label = ctx.view.getControl(GAME_LIST).getSelectedItem().getLabel()
 
     xbmc.log(f"UMSA gui: gamelist_context: what {what}, list_id {list_id}, label {label}")
 
     # reconfigure/remove connection
     if what == "emu_conn":
-        if gui.dialog.yesno(
+        if ctx.services.dialog.yesno(
                 tr(S.EMU_TITLE, label), tr(S.EMU_WHAT_TO_DO),
                 nolabel=tr(S.EMU_RECONFIGURE), yeslabel=tr(S.EMU_REMOVE)):
-            last_emu_id = gui.ggdb.emulators.delete_emulator_connection(list_id)
-            if last_emu_id and gui.dialog.yesno(
+            last_emu_id = ctx.services.ggdb.emulators.delete_emulator_connection(list_id)
+            if last_emu_id and ctx.services.dialog.yesno(
                     tr(S.EMU_DELETE_TITLE),
                     tr(S.EMU_DELETE_LAST_CONNECTION, label)):
-                gui.ggdb.emulators.delete_emulator(last_emu_id)
-            gui.update_gamelist(M_MACHINE)
+                ctx.services.ggdb.emulators.delete_emulator(last_emu_id)
+            gamelist_workflows.update_gamelist(ctx.gamelist, M_MACHINE)
         else:
             xbmc.log("UMSA gui: reconfigure emulator")
             xbmc.log(f"UMSA gui: {list_id}")
-            xbmc.log(f'UMSA gui: {dict(gui.ggdb.emulators.get_emulator(emu_conn_id=list_id))}')
-            gui.configure_emulator(
-                emu_info=gui.ggdb.emulators.get_emulator(emu_conn_id=list_id), reconfigure=True)
+            xbmc.log(f'UMSA gui: {dict(ctx.services.ggdb.emulators.get_emulator(emu_conn_id=list_id))}')
+            emulator_setup.configure_emulator(ctx.emulator,
+                emu_info=ctx.services.ggdb.emulators.get_emulator(emu_conn_id=list_id), reconfigure=True)
     # switch filter
     else:
-        gui.gamelist_switch_filter()
+        gamelist_workflows.gamelist_switch_filter(ctx.gamelist)

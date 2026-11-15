@@ -5,6 +5,7 @@ path resolution) and fills the skin controls that show it.
 """
 
 import os
+from dataclasses import dataclass
 
 import xbmc
 import xbmcgui
@@ -16,6 +17,7 @@ from umsa_core import (
     resolve_artwork_path,
 )
 
+from . import menu
 from . import strings as S
 from .constants import (
     IMAGE_BIG_LIST,
@@ -33,6 +35,18 @@ from .paths import SKIN_MEDIA_FOLDER
 from .strings import tr
 
 _TEXTLIST_RANK = {name: rank for rank, name in enumerate(TEXTLIST_ORDER)}
+
+
+@dataclass
+class ArtworkCtx:
+    """Artwork and DAT texts of the shown software."""
+
+    view: object = None
+    services: object = None
+    software: object = None
+    settings: object = None
+    # context of the main menu (rebuilt after the artwork changed)
+    menu: object = None
 
 
 def textlist_sort_key(category):
@@ -73,20 +87,20 @@ def create_gui_element_from_snap(set_info, image, art_type='unset'):
     return list_item
 
 
-def get_machine_pic(gui, use_set):
+def get_machine_pic(ctx, use_set):
     """Return the machine artwork path for the current game set.
 
-    Scanned cabinets (``gui.machine_cabinets``) win; without an artwork scan
-    the fixed progettosnaps path (``gui.cab_path``) is used.
+    Scanned cabinets (``ctx.software.machine_cabinets``) win; without an artwork
+    scan the fixed progettosnaps path (``ctx.settings.cab_path``) is used.
     """
 
     return get_machine_artwork_path(
-        use_set, gui.cab_path, SKIN_MEDIA_FOLDER,
-        cabinets=getattr(gui, 'machine_cabinets', None),
-        source_roots=gui.artwork_source_roots())
+        use_set, ctx.settings.cab_path, SKIN_MEDIA_FOLDER,
+        cabinets=ctx.software.machine_cabinets,
+        source_roots=ctx.settings.artwork_source_roots())
 
 
-def search_snaps(gui, set_info):
+def search_snaps(ctx, set_info):
     """Search files in MAME snapshot directory
 
     Returns list of Kodi ListItems
@@ -95,21 +109,21 @@ def search_snaps(gui, set_info):
     return [
         create_gui_element_from_snap(set_info, snap_path)
         for snap_path in find_local_snapshots(
-            gui.emulation.snapshot_directory, set_info)
+            ctx.services.emulation.snapshot_directory, set_info)
     ]
 
 
-def create_artworklist(gui):
+def create_artworklist(ctx):
     """Create left and right artwork list, side product is play count and time played"""
 
-    gui.played = {
+    ctx.software.played = {
         'count': 0,
         'played': 0
     }
     vid = 0
     man = 0
 
-    for machine in gui.info:
+    for machine in ctx.software.info:
         for set_info in machine:
 
             set_info['right_pics'] = []
@@ -117,18 +131,18 @@ def create_artworklist(gui):
 
             # sum up lp
             if set_info['last_played']:
-                gui.played['count'] += set_info['last_played']['play_count']
-                gui.played['played'] += set_info['last_played']['time_played2']
+                ctx.software.played['count'] += set_info['last_played']['play_count']
+                ctx.software.played['played'] += set_info['last_played']['time_played2']
 
             # mame snaps
-            set_info['localsnaps'] = gui.search_snaps(set_info)
+            set_info['localsnaps'] = search_snaps(ctx, set_info)
 
             # progettosnaps
-            if set_info['id'] not in gui.all_art:
+            if set_info['id'] not in ctx.software.all_art:
                 continue
-            for art in gui.all_art[set_info['id']]:
+            for art in ctx.software.all_art[set_info['id']]:
 
-                source_roots = gui.artwork_source_roots()
+                source_roots = ctx.settings.artwork_source_roots()
                 filename = resolve_artwork_path(art, set_info, source_roots)
 
                 art_category = categorize_art_type(art['type'])
@@ -153,13 +167,13 @@ def create_artworklist(gui):
                 else:
                     xbmc.log(f"UMSA gui: create_artworklist: cant identify artwork type = {art}")
 
-    gui.vidman = (vid, man)
-    minutes = divmod(gui.played['played'], 60)[0]
+    ctx.software.vidman = (vid, man)
+    minutes = divmod(ctx.software.played['played'], 60)[0]
     hours, minutes = divmod(minutes, 60)
-    gui.played['played'] = f'{hours}:{minutes:02d}'
+    ctx.software.played['played'] = f'{hours}:{minutes:02d}'
 
 
-def show_artwork(gui, howmuch='all'):
+def show_artwork(ctx, howmuch='all'):
     """Show artwork
 
     TODO
@@ -171,14 +185,14 @@ def show_artwork(gui, howmuch='all'):
     llist = []
 
     if howmuch == 'set':
-        rlist = gui.actset['right_pics']
-        llist = gui.actset['left_pics'] + gui.actset['localsnaps']
+        rlist = ctx.software.actset['right_pics']
+        llist = ctx.software.actset['left_pics'] + ctx.software.actset['localsnaps']
     elif howmuch == 'machine':
-        for i in gui.info[gui.getControl(SYSTEM_WRAPLIST).getSelectedPosition()]:
+        for i in ctx.software.info[ctx.view.getControl(SYSTEM_WRAPLIST).getSelectedPosition()]:
             rlist += i['right_pics']
             llist += i['left_pics'] + i['localsnaps']
     else:  # all
-        for j in gui.info:
+        for j in ctx.software.info:
             for i in j:
                 rlist += i['right_pics']
                 llist += i['left_pics'] + i['localsnaps']
@@ -194,14 +208,14 @@ def show_artwork(gui, howmuch='all'):
                 i.getProperty('detail'), count, len(rlist)))
             list_items.append(i)
             count += 1
-        gui.getControl(IMAGE_BIG_LIST).reset()
-        gui.getControl(IMAGE_BIG_LIST).addItems(list_items)
+        ctx.view.getControl(IMAGE_BIG_LIST).reset()
+        ctx.view.getControl(IMAGE_BIG_LIST).addItems(list_items)
 
     else:
         list_item = xbmcgui.ListItem()
         list_item.setProperty('NotEnabled', '1')
-        gui.getControl(IMAGE_BIG_LIST).reset()
-        gui.getControl(IMAGE_BIG_LIST).addItem(list_item)
+        ctx.view.getControl(IMAGE_BIG_LIST).reset()
+        ctx.view.getControl(IMAGE_BIG_LIST).addItem(list_item)
 
     # fill pic left
     if len(llist) > 0:
@@ -220,37 +234,37 @@ def show_artwork(gui, howmuch='all'):
             )
             list_items.append(i)
             count += 1
-        gui.getControl(IMAGE_LIST).reset()
-        gui.getControl(IMAGE_LIST).addItems(list_items)
+        ctx.view.getControl(IMAGE_LIST).reset()
+        ctx.view.getControl(IMAGE_LIST).addItems(list_items)
 
     else:
         list_item = xbmcgui.ListItem()
         list_item.setProperty('NotEnabled', '1')
-        gui.getControl(IMAGE_LIST).reset()
-        gui.getControl(IMAGE_LIST).addItem(list_item)
+        ctx.view.getControl(IMAGE_LIST).reset()
+        ctx.view.getControl(IMAGE_LIST).addItem(list_item)
 
     # show infos from datfiles only when changed
-    if gui.oldset == (gui.actset['swl_name'], gui.actset['name']):
+    if ctx.software.oldset == (ctx.software.actset['swl_name'], ctx.software.actset['name']):
         return
 
     # check play status
     # TODO check if all, system or set
     # TODO also show series and compilation status
     stattext = ''
-    if gui.played['count'] > 0:
-        if gui.actset['last_played']:
-            played_text = tr(S.PLAYED_AGO, gui.actset['last_played']['last_nice'])
+    if ctx.software.played['count'] > 0:
+        if ctx.software.actset['last_played']:
+            played_text = tr(S.PLAYED_AGO, ctx.software.actset['last_played']['last_nice'])
         else:
             played_text = tr(S.PLAYED_NEVER)
         stattext = (
-            f"{played_text}, {gui.played['played']}h, "
-            f"{gui.played['count']}x[CR]"
+            f"{played_text}, {ctx.software.played['played']}h, "
+            f"{ctx.software.played['count']}x[CR]"
         )
 
     list_items = []
     count = 0
-    if gui.actset['id'] in gui.all_dat:
-        set_dat = gui.all_dat[gui.actset['id']]
+    if ctx.software.actset['id'] in ctx.software.all_dat:
+        set_dat = ctx.software.all_dat[ctx.software.actset['id']]
         for k in sorted(set_dat, key=textlist_sort_key):
             moretext = ''
             if k in TEXTLIST_HIDDEN:
@@ -271,17 +285,17 @@ def show_artwork(gui, howmuch='all'):
         list_item.setProperty('text', stattext)
         list_items.append(list_item)
 
-    gui.getControl(TEXTLIST).reset()
-    gui.getControl(TEXTLIST).addItems(list_items)
+    ctx.view.getControl(TEXTLIST).reset()
+    ctx.view.getControl(TEXTLIST).addItems(list_items)
 
     # shadow pointer
     if count > 1:
-        gui.getControl(SHADOW_DAT).setVisible(True)
+        ctx.view.getControl(SHADOW_DAT).setVisible(True)
     else:
-        gui.getControl(SHADOW_DAT).setVisible(False)
+        ctx.view.getControl(SHADOW_DAT).setVisible(False)
 
     # remember actual swl and set
-    gui.oldset = (gui.actset['swl_name'], gui.actset['name'])
+    ctx.software.oldset = (ctx.software.actset['swl_name'], ctx.software.actset['name'])
     # refresh main menu
-    gui.build_main_menu()
+    menu.build_main_menu(ctx.menu)
     xbmc.log("UMSA gui: show_artwork: pics, dats done")

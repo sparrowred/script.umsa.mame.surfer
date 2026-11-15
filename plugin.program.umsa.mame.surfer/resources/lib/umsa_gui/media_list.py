@@ -4,11 +4,13 @@ Both lists end up in the game list control, so they build the entries and hand
 them over to ``popup_gamelist``.
 """
 
+from dataclasses import dataclass
 from json import loads
 
 import xbmc
 from umsa_core.game_repository import parse_recommended_games
 
+from . import gamelist as gamelist_workflows
 from . import strings as S
 from .constants import ENTRY_SEARCH, KIND_MEDIA, SEARCH_MARP, SEARCH_YOUTUBE
 from .strings import tr
@@ -18,7 +20,17 @@ YOUTUBE_SEARCH_ID = f"{ENTRY_SEARCH}::{SEARCH_YOUTUBE}"
 MARP_SEARCH_ID = f"{ENTRY_SEARCH}::{SEARCH_MARP}"
 
 
-def choose_media(gui):
+@dataclass
+class MediaCtx:
+    """Media and recommended games of the shown software."""
+
+    services: object = None
+    software: object = None
+    # context of the game list the entries are shown in
+    gamelist: object = None
+
+
+def choose_media(ctx):
     """Dialog to choose media for playing."""
 
     # labels in list
@@ -27,18 +39,18 @@ def choose_media(gui):
     manual = [{'name': tr(S.MEDIA_MANUALS), 'id': '0', 'year': '', 'maker': ''}]
     vgm = [{'name': tr(S.MEDIA_MUSIC), 'id': '0', 'year': '', 'maker': ''}]
 
-    xbmc.log(f"UMSA gui: choose media - {gui.vgms}", xbmc.LOGDEBUG)
-    if gui.vgms:
+    xbmc.log(f"UMSA gui: choose media - {ctx.software.vgms}", xbmc.LOGDEBUG)
+    if ctx.software.vgms:
         # show the title, keep the short set name as id for playback
-        vgm_titles = getattr(gui, 'vgm_titles', None) or {}
+        vgm_titles = ctx.software.vgm_titles or {}
         titled = sorted(
-            ((vgm_titles.get(vgmitem) or vgmitem, vgmitem) for vgmitem in gui.vgms),
+            ((vgm_titles.get(vgmitem) or vgmitem, vgmitem) for vgmitem in ctx.software.vgms),
             key=lambda entry: entry[0].lower())
         for title, vgmitem in titled:
             vgm.append({'name': title, 'id': "vgm::" + vgmitem, 'year': '', 'maker': ''})
     xbmc.log(f"UMSA gui: choose media - vgmlist {vgm}", xbmc.LOGDEBUG)
     # get media
-    for j in gui.info:
+    for j in ctx.software.info:
         for i in j:
             if 'video' in i:
                 video.append(
@@ -57,7 +69,7 @@ def choose_media(gui):
                      }
                     )
     # get youtube videos
-    media = gui.ggdb.status.get_further_media(gui.actset['id'])
+    media = ctx.services.ggdb.status.get_further_media(ctx.software.actset['id'])
     if media and media['youtube']:
         yt_list = [{'name': tr(S.MEDIA_YOUTUBE), 'id': YOUTUBE_SEARCH_ID,
                     'year': '', 'maker': ''}]
@@ -92,20 +104,20 @@ def choose_media(gui):
     media_list.extend(yt_list)
     media_list.extend(marp_list)
 
-    gui.popup_gamelist(media_list, tr(S.CHOOSE_MEDIA), pos=pos, kind=KIND_MEDIA)
+    gamelist_workflows.popup_gamelist(ctx.gamelist, media_list, tr(S.CHOOSE_MEDIA), pos=pos, kind=KIND_MEDIA)
 
 
-def show_rec(gui, focus=True):
+def show_rec(ctx, focus=True):
     """Shows recommended section from mameinfo.dat in gamelist"""
 
     text = ''
-    if (gui.actset['id'] in gui.all_dat
-            and 'Rec' in gui.all_dat[gui.actset['id']]):
-        text = gui.all_dat[gui.actset['id']]['Rec']
+    if (ctx.software.actset['id'] in ctx.software.all_dat
+            and 'Rec' in ctx.software.all_dat[ctx.software.actset['id']]):
+        text = ctx.software.all_dat[ctx.software.actset['id']]['Rec']
     else:
-        for i in gui.all_dat:
-            if 'Rec' in gui.all_dat[i]:
-                text = gui.all_dat[i]['Rec']
+        for i in ctx.software.all_dat:
+            if 'Rec' in ctx.software.all_dat[i]:
+                text = ctx.software.all_dat[i]['Rec']
                 break
-    rec_list, pos = parse_recommended_games(text, gui.ggdb.games)
-    gui.popup_gamelist(rec_list, tr(S.RECOMMENDED), pos=pos, focus=focus)
+    rec_list, pos = parse_recommended_games(text, ctx.services.ggdb.games)
+    gamelist_workflows.popup_gamelist(ctx.gamelist, rec_list, tr(S.RECOMMENDED), pos=pos, focus=focus)

@@ -14,6 +14,7 @@ import xbmc
 import xbmcgui
 from gamelist_strategies import EARLY_RETURN, GAMELIST_STRATEGIES
 
+from . import media_list, menu, software_selector
 from . import strings as S
 from .constants import (
     GAME_LIST,
@@ -71,7 +72,27 @@ def option_label(key):
 
 
 @dataclass
+class GamelistUiCtx:
+    """Game list control, its state and what a list entry needs."""
+
+    view: object = None
+    services: object = None
+    listing: object = None
+    software: object = None
+    history: object = None
+    settings: object = None
+    # deferred reload of the selected entry (GamelistSettle)
+    settle: object = None
+    # contexts of the modules the game list calls
+    menu: object = None
+    media: object = None
+    selector: object = None
+
+
+@dataclass
 class GamelistCtx:
+    """What a gamelist strategy (``gamelist_strategies``) works with."""
+
     db: object = None
     actset: object = None
     last: object = None
@@ -121,7 +142,7 @@ class GamelistSettle:
         xbmc.executebuiltin('Action(noop)')
 
 
-def update_gamelist(gui, item, focus=True):
+def update_gamelist(ctx, item, focus=True):
     """Update gamelist
 
     ``focus=False`` is the preview of the list-mode submenu: the list is
@@ -133,99 +154,100 @@ def update_gamelist(gui, item, focus=True):
     results, pos = [], 0
 
     xbmc.log(f"UMSA gui: update_gamelist: item = {item}")
-    gui.getControl(GAME_LIST_LABEL_ID).setLabel(str(item))
-    gui.getControl(GAME_LIST).reset()
+    ctx.view.getControl(GAME_LIST_LABEL_ID).setLabel(str(item))
+    ctx.view.getControl(GAME_LIST).reset()
 
     # without list popup
     if item == M_MEDIA:
-        gui.choose_media()
+        media_list.choose_media(ctx.media)
         return
 
     # show loading status (popup title and status line)
-    gui.getControl(GAME_LIST_LABEL).setLabel(tr(S.LOADING))
-    gui.getControl(LABEL_STATUS).setLabel(tr(S.LOADING))
+    ctx.view.getControl(GAME_LIST_LABEL).setLabel(tr(S.LOADING))
+    ctx.view.getControl(LABEL_STATUS).setLabel(tr(S.LOADING))
     time1 = time.time()
 
     strategy = GAMELIST_STRATEGIES.get(item)
     if strategy is not None:
         gl_ctx = GamelistCtx(
-            db=gui.ggdb,
-            actset=gui.actset,
-            last=gui.last,
-            lastptr=gui.lastptr,
-            searchold=gui.searchold,
-            popup_gamelist=(gui.popup_gamelist if focus
-                            else partial(gui.popup_gamelist, focus=False)),
-            show_rec=gui.show_rec if focus else partial(gui.show_rec, focus=False),
+            db=ctx.services.ggdb,
+            actset=ctx.software.actset,
+            last=ctx.history.last,
+            lastptr=ctx.history.lastptr,
+            searchold=ctx.listing.searchold,
+            popup_gamelist=(partial(popup_gamelist, ctx) if focus
+                            else partial(popup_gamelist, ctx, focus=False)),
+            show_rec=(partial(media_list.show_rec, ctx.media) if focus
+                      else partial(media_list.show_rec, ctx.media, focus=False)),
         )
         outcome = strategy(gl_ctx)
-        gui.searchold = gl_ctx.searchold
+        ctx.listing.searchold = gl_ctx.searchold
         if outcome is EARLY_RETURN:
             # Ensure the submenu is populated for strategies that open a gamelist
             # (Series, Recommended) so that left navigation from the gamelist works.
             if focus:
-                gui.build_sublist_menu(item)
-            gui.listmode_shown = item
-            gui.getControl(LABEL_STATUS).setLabel('')
+                menu.build_sublist_menu(ctx.menu, item)
+            ctx.listing.listmode_shown = item
+            ctx.view.getControl(LABEL_STATUS).setLabel('')
             return
         results, pos, gl_label, gl_options = outcome
 
     # preview without results: empty list, no notification
     if not focus and len(results) == 0:
-        gui.getControl(LABEL_STATUS).setLabel('')
-        gui.getControl(GAME_LIST_LABEL).setLabel(gl_label if strategy is not None else '')
-        gui.getControl(GAME_LIST_OPTIONS).reset()
-        gui.getControl(GAME_LIST_SORT).reset()
-        gui.gamelist_kind = LIST_KINDS.get(item, KIND_SOFTWARE)
-        gui.gamelist_select = None
-        gui.listmode_shown = item
+        ctx.view.getControl(LABEL_STATUS).setLabel('')
+        ctx.view.getControl(GAME_LIST_LABEL).setLabel(gl_label if strategy is not None else '')
+        ctx.view.getControl(GAME_LIST_OPTIONS).reset()
+        ctx.view.getControl(GAME_LIST_SORT).reset()
+        ctx.listing.gamelist_kind = LIST_KINDS.get(item, KIND_SOFTWARE)
+        ctx.listing.gamelist_select = None
+        ctx.listing.listmode_shown = item
         return
 
     # no results = close list
     if len(results) == 0:
-        gui.getControl(LABEL_STATUS).setLabel('')
+        ctx.view.getControl(LABEL_STATUS).setLabel('')
         if item == M_SEARCH:
-            gui.searchold = None
-        gui.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_NOTHING),
+            ctx.listing.searchold = None
+        ctx.services.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_NOTHING),
             xbmcgui.NOTIFICATION_ERROR, 3000, False)
         return
 
     # one software result = select
     if focus and len(results) == 1 and item not in (M_MACHINE, M_ALLEMUS):
         if item == M_SEARCH:
-            gui.searchold = None
-        gui.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_ONE_HIT),
+            ctx.listing.searchold = None
+        ctx.services.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_ONE_HIT),
             xbmcgui.NOTIFICATION_INFO, 2000, False)
         # TODO: check if this id is the one already shown
-        gui._remember_and_select(results[0]['id'])
-        gui.setFocus(gui.getControl(SOFTWARE_BUTTON))
+        software_selector.remember_and_select(ctx.selector, results[0]['id'])
+        ctx.view.setFocus(ctx.view.getControl(SOFTWARE_BUTTON))
         return
 
-    if gui.ggdb.gamelist.use_filter:
+    if ctx.services.ggdb.gamelist.use_filter:
         use_filter = [tr(S.LIST_FILTER_ON), tr(S.LIST_FILTER_OFF)]
     else:
         use_filter = [tr(S.LIST_FILTER_OFF), tr(S.LIST_FILTER_ON)]
 
     time2 = time.time()
-    gui.getControl(LABEL_STATUS).setLabel(
+    ctx.view.getControl(LABEL_STATUS).setLabel(
         tr(S.QUERY_TOOK, f'{(time2-time1)*1000:.0f}')
     )
 
     # now show gamelist with gathered info from above
-    gui.popup_gamelist(
+    popup_gamelist(ctx,
         results, gl_label, pos=pos, sort=use_filter, options=gl_options,
         kind=LIST_KINDS.get(item, KIND_SOFTWARE), focus=focus)
-    gui.listmode_shown = item
+    ctx.listing.listmode_shown = item
     # build submenu with lists in it
     if focus:
-        gui.build_sublist_menu(item)
+        menu.build_sublist_menu(ctx.menu, item)
 
     time3 = time.time()
     xbmc.log(f'UMSA gui: update_gamelist: popup in gui: {(time3-time2)*1000:.0f}ms')
     xbmc.log(f'UMSA gui: update_gamelist: time overall: {(time3-time1)*1000:.0f}ms')
 
 
-def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None,
+def popup_gamelist(ctx, gamelist, label, pos=0, sort=None, options=None,
                    kind=KIND_SOFTWARE, select_what=None, focus=True):
     """Pop up gamelist.
 
@@ -236,9 +258,9 @@ def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None,
     """
 
     # the list no longer shows a submenu entry (update_gamelist sets it again)
-    gui.listmode_shown = None
-    gui.gamelist_kind = kind
-    gui.gamelist_select = select_what
+    ctx.listing.listmode_shown = None
+    ctx.listing.gamelist_kind = kind
+    ctx.listing.gamelist_select = select_what
 
     list_items = []
     for i in gamelist:
@@ -250,28 +272,28 @@ def popup_gamelist(gui, gamelist, label, pos=0, sort=None, options=None,
             listitem.setInfo('video', {'Writer': i['year'], 'Studio': i['maker']})
         list_items.append(listitem)
 
-    gui.getControl(GAME_LIST_LABEL).setLabel(label)
-    gui.getControl(GAME_LIST_OPTIONS).reset()
+    ctx.view.getControl(GAME_LIST_LABEL).setLabel(label)
+    ctx.view.getControl(GAME_LIST_OPTIONS).reset()
     if options:
-        gui.getControl(GAME_LIST_OPTIONS).addItems(
+        ctx.view.getControl(GAME_LIST_OPTIONS).addItems(
             [xbmcgui.ListItem(option_label(option), option) for option in options])
-    gui.getControl(GAME_LIST_SORT).reset()
+    ctx.view.getControl(GAME_LIST_SORT).reset()
     if sort:
-        gui.getControl(GAME_LIST_SORT).addItems(sort)
-    gui.getControl(GAME_LIST).reset()
-    gui.getControl(GAME_LIST).addItems(list_items)
-    gui.getControl(GAME_LIST).selectItem(pos)
+        ctx.view.getControl(GAME_LIST_SORT).addItems(sort)
+    ctx.view.getControl(GAME_LIST).reset()
+    ctx.view.getControl(GAME_LIST).addItems(list_items)
+    ctx.view.getControl(GAME_LIST).selectItem(pos)
 
     if focus:
-        gui.setFocus(gui.getControl(GAME_LIST))
+        ctx.view.setFocus(ctx.view.getControl(GAME_LIST))
     # load snap, all_machines for the entry at pos: selectItem() runs
     # asynchronously in Kodi, getSelectedItem() would still return entry 0
-    gui.gamelist_move(pos)
+    gamelist_move(ctx, pos)
     # reload once Kodi applied the selection
-    gui.schedule_gamelist_settle()
+    ctx.settle.schedule()
 
 
-def preview_listmode_gamelist(gui):
+def preview_listmode_gamelist(ctx):
     """Load the gamelist of the selected list-mode submenu entry.
 
     The focus stays in the submenu. An entry whose list is already shown is
@@ -279,19 +301,19 @@ def preview_listmode_gamelist(gui):
     nothing.
     """
 
-    item = gui.getControl(LISTMODE_MENU).getSelectedItem()
+    item = ctx.view.getControl(LISTMODE_MENU).getSelectedItem()
     if not item:
         return
     try:
         menu_item = int(item.getLabel2())
     except ValueError:
         return
-    if getattr(gui, 'listmode_shown', None) == menu_item:
+    if ctx.listing.listmode_shown == menu_item:
         return
-    update_gamelist(gui, menu_item, focus=False)
+    update_gamelist(ctx, menu_item, focus=False)
 
 
-def gamelist_move(gui, pos=None, force=False):
+def gamelist_move(ctx, pos=None, force=False):
     """Load snap and machines for a gamelist entry.
 
     ``pos`` names the entry explicitly (default: the selected one).
@@ -300,10 +322,10 @@ def gamelist_move(gui, pos=None, force=False):
     """
 
     # only software lists have a snap and machines to load
-    if gui.gamelist_kind != KIND_SOFTWARE:
-        xbmc.log(f"UMSA gui: gamelist_move: list kind {gui.gamelist_kind} = return")
+    if ctx.listing.gamelist_kind != KIND_SOFTWARE:
+        xbmc.log(f"UMSA gui: gamelist_move: list kind {ctx.listing.gamelist_kind} = return")
         return
-    control = gui.getControl(GAME_LIST)
+    control = ctx.view.getControl(GAME_LIST)
     if pos is None:
         pos = control.getSelectedPosition()
         gamelist_item = control.getSelectedItem()
@@ -331,8 +353,8 @@ def gamelist_move(gui, pos=None, force=False):
         return
     # get snap, machines
     xbmc.log(f"UMSA gui: gamelist_move: pos {pos}: db fetch snap, machines for {gamelist_id}")
-    snap = gui.ggdb.art_queries.get_artwork_by_software_id(
-        gamelist_id, 'snap', gui.artwork_source_roots())
+    snap = ctx.services.ggdb.art_queries.get_artwork_by_software_id(
+        gamelist_id, 'snap', ctx.settings.artwork_source_roots())
     # set info to gamelist item
     if snap[0]:
         gamelist_item.setArt({'icon': snap[0]})
@@ -341,20 +363,20 @@ def gamelist_move(gui, pos=None, force=False):
     xbmc.log(f"UMSA gui: gamelist_move: properties set = {gamelist_item.getProperty('text')}")
 
 
-def gamelist_switch_filter(gui):
+def gamelist_switch_filter(ctx):
     """Switch filter in gamelist"""
 
-    if gui.ggdb.gamelist.use_filter:
-        gui.ggdb.gamelist.set_filter_enabled(False)
+    if ctx.services.ggdb.gamelist.use_filter:
+        ctx.services.ggdb.gamelist.set_filter_enabled(False)
     else:
-        gui.ggdb.gamelist.set_filter_enabled(True)
+        ctx.services.ggdb.gamelist.set_filter_enabled(True)
 
-    content = int(gui.getControl(GAME_LIST_LABEL_ID).getLabel())
-    gui.setFocus(gui.getControl(GAME_LIST_OPTIONS))
-    gui.update_gamelist(content)
+    content = int(ctx.view.getControl(GAME_LIST_LABEL_ID).getLabel())
+    ctx.view.setFocus(ctx.view.getControl(GAME_LIST_OPTIONS))
+    update_gamelist(ctx, content)
 
 
-def show_fulllist(gui, what, label):
+def show_fulllist(ctx, what, label):
     """Show full list of maker, cat, year...
 
     Menu entries without such a list (Show all, Series, Recommended,
@@ -362,23 +384,23 @@ def show_fulllist(gui, what, label):
     """
 
     if what == M_MAKER:
-        my_list = gui.ggdb.games.get_maker()
+        my_list = ctx.services.ggdb.games.get_maker()
     elif what == M_SWL:
-        my_list = gui.ggdb.games.get_swl()
+        my_list = ctx.services.ggdb.games.get_swl()
     elif what == M_SOURCE:
         my_list = []
-        for i in gui.ggdb.games.get_source():
+        for i in ctx.services.ggdb.games.get_source():
             my_list.append({'id': "source", 'name': i['source']})
     elif what == M_YEAR:
-        my_list = gui.ggdb.games.get_year()
+        my_list = ctx.services.ggdb.games.get_year()
     elif what == M_PLAYERS:
-        my_list = gui.ggdb.games.get_players()
+        my_list = ctx.services.ggdb.games.get_players()
     elif what == M_CAT:
-        my_list = gui.ggdb.games.get_categories()
+        my_list = ctx.services.ggdb.games.get_categories()
     else:
         xbmc.log(
             f"UMSA gui: show_fulllist: no select list for menu code {what}",
             xbmc.LOGDEBUG)
         return
-    gui.popup_gamelist(
+    popup_gamelist(ctx,
         my_list, tr(S.LIST_SELECT, label), kind=KIND_SELECT, select_what=what)

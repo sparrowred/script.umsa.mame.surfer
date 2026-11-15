@@ -4,6 +4,8 @@ The frontend can start and stop the standalone screensaver add-on and shows
 the VGM information of the running playback.
 """
 
+from dataclasses import dataclass
+
 import xbmc
 import xbmcgui
 from umsa_core.screensaver_request import encode_request
@@ -23,6 +25,15 @@ from .strings import tr
 SCREENSAVER_ADDON_ID = "screensaver.umsa.mame.surfer"
 
 
+@dataclass
+class ScreensaverCtx:
+    """Music label, notifications, VGM playback and its settings."""
+
+    view: object = None
+    services: object = None
+    settings: object = None
+
+
 def screensaver_available():
     """True when the optional screensaver add-on is installed and enabled."""
 
@@ -31,27 +42,27 @@ def screensaver_available():
         f"System.AddonIsEnabled({SCREENSAVER_ADDON_ID})"))
 
 
-def ensure_screensaver_available(gui):
+def ensure_screensaver_available(ctx):
     """Return True if the screensaver add-on can be started, else notify."""
 
     if screensaver_available():
         return True
     xbmc.log(f"UMSA gui: screensaver add-on {SCREENSAVER_ADDON_ID} is not "
              "installed or disabled", xbmc.LOGWARNING)
-    gui.dialog.notification(
+    ctx.services.dialog.notification(
         tr(S.SCREENSAVER), tr(S.SAVER_NOT_AVAILABLE),
         xbmcgui.NOTIFICATION_WARNING, 5000)
     return False
 
 
-def get_screensaver_mode(gui):
+def get_screensaver_mode():
     """Return the active standalone screensaver mode, if any."""
 
     mode = xbmcgui.Window(SHARED_WINDOW_ID).getProperty(SCREENSAVER_MODE_PROPERTY)
     return mode or "no"
 
 
-def start_screensaver(gui, mode, art_types=None):
+def start_screensaver(ctx, mode, art_types=None):
     """Launch the standalone screensaver with a validated request token.
 
     The screensaver itself owns the manual-screensaver inhibition (Kodi's
@@ -63,41 +74,41 @@ def start_screensaver(gui, mode, art_types=None):
     is missing or disabled; then nothing is started.
     """
     token = encode_request(mode, art_types)
-    if not ensure_screensaver_available(gui):
+    if not ensure_screensaver_available(ctx):
         return False
     xbmc.executebuiltin(f"RunScript({SCREENSAVER_ADDON_ID},{token})")
     return True
 
 
-def stop_screensaver(gui):
+def stop_screensaver():
     """Close an active standalone screensaver dialog.
 
     Also clears the manual-screensaver inhibition reason when the instance
     is stopped from the GUI.
     """
-    if get_screensaver_mode(gui) != "no":
+    if get_screensaver_mode() != "no":
         xbmc.executebuiltin("Action(Close)")
     set_screensaver_manual(False)
 
 
-def show_vgm_info(gui, message):
+def show_vgm_info(ctx, message):
     """Publish VGM info to the shared window and to this window's label."""
 
-    publish_vgm_info(message, show=gui.musicinfo)
+    publish_vgm_info(message, show=ctx.settings.musicinfo)
     try:
-        control = gui.getControl(MUSIC_INFO)
+        control = ctx.view.getControl(MUSIC_INFO)
         control.setLabel(message)
         control.setVisibleCondition('True')
     except Exception as error:
         xbmc.log(f"UMSA gui: could not update VGM label: {error}", xbmc.LOGDEBUG)
 
 
-def hide_vgm_info(gui):
+def hide_vgm_info(ctx):
     """Clear the shared VGM info and restore this window's music label."""
 
     clear_vgm_info()
     try:
-        control = gui.getControl(MUSIC_INFO)
+        control = ctx.view.getControl(MUSIC_INFO)
         control.setVisibleCondition('Player.HasAudio')
         control.setLabel(
             "$INFO[MusicPlayer.Artist] - $INFO[MusicPlayer.Title] "
@@ -107,21 +118,21 @@ def hide_vgm_info(gui):
         xbmc.log(f"UMSA gui: could not reset VGM label: {error}", xbmc.LOGDEBUG)
 
 
-def start_random_vgm(gui):
+def start_random_vgm(ctx):
     """Start the random VGM playback; False when something plays already."""
 
-    if gui.emulation.playvgm or gui.emulation.playrandomvgm:
+    if ctx.services.emulation.playvgm or ctx.services.emulation.playrandomvgm:
         return False
-    show_vgm_info(gui, tr(S.VGM_RANDOM_STARTING))
+    show_vgm_info(ctx, tr(S.VGM_RANDOM_STARTING))
     # the check above is no lock: Emulation refuses a start that lost the race
     # (or while a stopped playback still ends); take the info back then
-    if gui.emulation.play_random_vgm(None, gui.settings_folder):
+    if ctx.services.emulation.play_random_vgm(None, ctx.settings.settings_folder):
         return True
-    hide_vgm_info(gui)
+    hide_vgm_info(ctx)
     return False
 
 
-def handle_vgm_action(gui, action):
+def handle_vgm_action(ctx, action):
     """Run a VGM control action requested by another add-on."""
 
     if action == 'start_random':
@@ -129,18 +140,18 @@ def handle_vgm_action(gui, action):
         if is_emulator_running():
             return
         xbmc.log("UMSA gui: VGM action from screensaver: start_random", xbmc.LOGDEBUG)
-        start_random_vgm(gui)
+        start_random_vgm(ctx)
         return
     # random playback stays active between two tracks (playvgm is off then);
     # a stop must still end it
-    if not (gui.emulation.playvgm or gui.emulation.playrandomvgm):
+    if not (ctx.services.emulation.playvgm or ctx.services.emulation.playrandomvgm):
         return
     xbmc.log(f"UMSA gui: VGM action from screensaver: {action}", xbmc.LOGDEBUG)
     if action == 'stop':
         clear_vgm_info()
         # no waiting inside a monitor callback
-        gui.emulation.stop_vgm(timeout=0)
+        ctx.services.emulation.stop_vgm(timeout=0)
     elif action == 'next':
-        gui.emulation.send_vgmaction(b'exit')
+        ctx.services.emulation.send_vgmaction(b'exit')
     elif action in ('volume_up', 'volume_down'):
-        gui.emulation.send_vgmaction(action.encode())
+        ctx.services.emulation.send_vgmaction(action.encode())

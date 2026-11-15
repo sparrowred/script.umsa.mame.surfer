@@ -5,6 +5,7 @@ dialogs and the database re-connect.
 """
 
 import os
+from dataclasses import dataclass
 
 import xbmc
 import xbmcgui
@@ -33,13 +34,26 @@ def _cancel_pressed(progress_dialog):
         return False
 
 
-def update(gui, what, core_data_paths):
+@dataclass
+class ScanCtx:
+    """Database, scans and their dialogs."""
+
+    view: object = None
+    services: object = None
+    settings: object = None
+    filters: object = None
+    listing: object = None
+    # closes the window (Kodi shutdown during a scan)
+    exit: object = None
+
+
+def update(ctx, what, core_data_paths):
     """Update UMSA database, artwork or support files
 
     For ``what == 'db'`` it returns True when the new umsa.db is open and False
     when the download failed or was cancelled. In that case the previous
     umsa.db (left untouched by the Core download) is reopened if there was one;
-    on a first start ``gui.ggdb`` stays None.
+    on a first start ``ctx.services.ggdb`` stays None.
     """
 
     settings_folder = core_data_paths.filters_dir
@@ -50,8 +64,8 @@ def update(gui, what, core_data_paths):
         progress_dialog = xbmcgui.DialogProgress()
         progress_dialog.create(tr(S.DB_UPDATING), tr(S.DB_DOWNLOADING))
         # close db before update (keep status.db open for the re-connect)
-        if gui.ggdb:
-            gui.ggdb.close_umsa_db()
+        if ctx.services.ggdb:
+            ctx.services.ggdb.close_umsa_db()
 
         def progress(percent, title, message):
             if progress_dialog.iscanceled():
@@ -75,22 +89,22 @@ def update(gui, what, core_data_paths):
         if failure:
             progress_dialog.close()
             # the old umsa.db is unchanged, reopen it
-            if gui.ggdb:
-                gui.ggdb.open_db(settings_folder)
-            gui.dialog.notification(tr(S.DB_TITLE), failure[0], failure[1], 5000)
+            if ctx.services.ggdb:
+                ctx.services.ggdb.open_db(settings_folder)
+            ctx.services.dialog.notification(tr(S.DB_TITLE), failure[0], failure[1], 5000)
             return False
 
         # re-connect to db
-        if gui.ggdb:
+        if ctx.services.ggdb:
             progress_dialog.update(100, tr(S.DB_REOPENING))
-            gui.ggdb.open_db(settings_folder)
+            ctx.services.ggdb.open_db(settings_folder)
         # first run
         else:
-            gui.ggdb = DBMod(
+            ctx.services.ggdb = DBMod(
                 settings_folder,
-                gui.nonmame,
-                gui.filter_lists,
-                gui.pref_country,
+                ctx.settings.nonmame,
+                ctx.filters.filter_lists,
+                ctx.settings.pref_country,
             )
 
         progress_dialog.close()
@@ -98,7 +112,7 @@ def update(gui, what, core_data_paths):
 
     # scan support files / eXoDOS / GameBase64 / artwork
     elif what in ('dat', 'exo', 'gb64', 'art'):
-        gui.setFocus(gui.getControl(gui.main_focus))
+        ctx.view.setFocus(ctx.view.getControl(ctx.listing.main_focus))
 
         titles = {
             'dat': S.SCAN_TITLE_DATS,
@@ -107,55 +121,55 @@ def update(gui, what, core_data_paths):
             'art': S.SCAN_TITLE_ARTWORK,
         }
         title = tr(titles[what])
-        gui.progress_dialog.create(title, tr(S.SCAN_WARM_UP))
+        ctx.services.progress_dialog.create(title, tr(S.SCAN_WARM_UP))
 
-        scans = gui.scans
+        scans = ctx.services.scans
         runs = {
-            'dat': ('dats', lambda: scans.dats(gui.datdir)),
+            'dat': ('dats', lambda: scans.dats(ctx.settings.datdir)),
             'exo': ('exodos', scans.exodos),
             'gb64': ('gb64', scans.gb64),
             'art': ('artwork', lambda: scans.artwork(
-                [gui.progettosnaps, gui.own_artwork], listdir=os.listdir)),
+                [ctx.settings.progettosnaps, ctx.settings.own_artwork], listdir=os.listdir)),
         }
         scan_name, scan = runs[what]
 
         def progress(percent, title, message):
-            gui.progress_dialog.update(percent, title, message)
+            ctx.services.progress_dialog.update(percent, title, message)
 
         try:
             scan_result = run_scan_with_progress(
                 scans.state, scan_name, scan, progress, title, xbmc.sleep,
-                wait=getattr(gui, 'abort_wait', None),
-                is_cancelled=lambda: _cancel_pressed(gui.progress_dialog))
+                wait=ctx.services.abort_wait,
+                is_cancelled=lambda: _cancel_pressed(ctx.services.progress_dialog))
         except ShutdownRequested:
             xbmc.log(f"UMSA gui: update: Kodi shuts down, {what} scan stopped", xbmc.LOGWARNING)
             try:
-                gui.progress_dialog.close()
+                ctx.services.progress_dialog.close()
             except Exception as error:  # noqa: BLE001 - a dialog failure must not block the shutdown
                 xbmc.log(
                     f'UMSA gui: could not close scan progress dialog: {error}',
                     xbmc.LOGWARNING)
-            gui.exit()
+            ctx.exit()
             return
 
         if isinstance(scan_result, dict) and scan_result.get('busy'):
-            gui.progress_dialog.close()
-            gui.dialog.notification(
+            ctx.services.progress_dialog.close()
+            ctx.services.dialog.notification(
                 tr(S.SCAN_STATUS), tr(S.SCAN_OTHER_RUNNING),
                 xbmcgui.NOTIFICATION_ERROR, 4000)
             return
 
-        cancelled = _cancel_pressed(gui.progress_dialog)
+        cancelled = _cancel_pressed(ctx.services.progress_dialog)
         # Scanner workflows now write directly to the authoritative source databases
         # (artwork.db, dat.db). No post-scan synchronization copy is needed.
         try:
-            gui.progress_dialog.close()
+            ctx.services.progress_dialog.close()
         except Exception as error:
             xbmc.log(
                 f'UMSA gui: could not close scan progress dialog: {error}',
                 xbmc.LOGWARNING)
         if cancelled:
             xbmc.log(f"UMSA gui: update: {what} scan cancelled by the user", xbmc.LOGINFO)
-            gui.dialog.notification(
+            ctx.services.dialog.notification(
                 tr(S.SCAN_STATUS), tr(S.SCAN_CANCELLED),
                 xbmcgui.NOTIFICATION_INFO, 4000)

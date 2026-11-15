@@ -5,7 +5,10 @@ The package holds the GUI workflows that were extracted from the former
 entry module of the add-on: it keeps the ``UMSA`` Kodi dialog adapter and
 re-exports the names that existed before the split.
 
-Every module in this package receives the ``UMSA`` instance (or an explicit
-context) as an argument instead of importing ``UMSA`` back, so the workflows
-stay independently testable with Kodi stubs.
+A workflow module never gets the ``UMSA`` window: its functions take the
+context of the module (``MenuCtx``, ``SoftwareCtx`` ...), which holds the
+shared state blocks it needs (``state``), a few callbacks of the window and
+the contexts of the modules it calls directly. ``wiring.build_contexts``
+creates all contexts once, so the workflows stay independently testable with
+Kodi stubs.
 """

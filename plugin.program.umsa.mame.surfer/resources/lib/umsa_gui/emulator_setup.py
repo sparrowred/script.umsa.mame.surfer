@@ -1,11 +1,13 @@
 """Emulator configuration and MARP replay handling.
 
 The dialogs for a new or existing emulator and the replay download live here;
-starting the emulator itself stays in ``gui.py`` because it is the dispatcher
-between MAME, the Kodi retroplayer and the MARP replayer.
+starting the emulator itself stays in ``gui.py`` (``EmulatorSetupCtx.run_emulator``)
+because it is the dispatcher between MAME, the Kodi retroplayer and the MARP
+replayer.
 """
 
 import os
+from dataclasses import dataclass
 from random import choice, randint
 
 import xbmc
@@ -17,29 +19,41 @@ from .constants import TEXTLIST, TEXTLIST_KEY_EMU_OUTPUT, TEXTLIST_KEY_PROPERTY
 from .strings import tr
 
 
-def get_diff_emulator(gui):
+@dataclass
+class EmulatorSetupCtx:
+    """Emulator dialogs for the selected set."""
+
+    view: object = None
+    services: object = None
+    software: object = None
+    settings: object = None
+    # starts the emulator: run_emulator(emu_infos)
+    run_emulator: object = None
+
+
+def get_diff_emulator(ctx):
     """Get different emulator"""
 
-    emus = gui.ggdb.emulators.get_emulators()
+    emus = ctx.services.ggdb.emulators.get_emulators()
     if emus:
         emu_names = [tr(S.EMU_CONFIGURE_NEW)]
         for i in emus:
             emu_names.append(i['name'])
-        ret = gui.dialog.select(tr(S.EMULATORS), emu_names)
+        ret = ctx.services.dialog.select(tr(S.EMULATORS), emu_names)
         if ret == -1:
             return
         if ret == 0:
-            gui.configure_emulator()
+            configure_emulator(ctx)
         else:
-            if gui.actset['swl_name'] == "mame":
-                gui.ggdb.emulators.connect_emulator(
-                    emus[ret - 1]['id'], source=gui.actset['source'])
+            if ctx.software.actset['swl_name'] == "mame":
+                ctx.services.ggdb.emulators.connect_emulator(
+                    emus[ret - 1]['id'], source=ctx.software.actset['source'])
             else:
-                gui.ggdb.emulators.connect_emulator(
-                    emus[ret - 1]['id'], swl_name=gui.actset['swl_name'])
-            gui.run_emulator(emus[ret - 1])
+                ctx.services.ggdb.emulators.connect_emulator(
+                    emus[ret - 1]['id'], swl_name=ctx.software.actset['swl_name'])
+            ctx.run_emulator(emus[ret - 1])
     else:
-        gui.configure_emulator()
+        configure_emulator(ctx)
 
 
 # string ids of the option texts; the database stores the index
@@ -73,7 +87,7 @@ def _emulator_menu(emu_info, save_label):
     ]
 
 
-def _edit_emulator_field(gui, emu_info, field):
+def _edit_emulator_field(ctx, emu_info, field):
     """Edit one field; a cancelled dialog keeps the current value.
 
     Kodi's browse dialog returns the preset path on cancel, so a browse
@@ -81,34 +95,34 @@ def _edit_emulator_field(gui, emu_info, field):
     """
 
     if field == 0:
-        exe = gui.dialog.browse(
+        exe = ctx.services.dialog.browse(
             1, tr(S.EMU_EXECUTABLE), 'files', defaultt=emu_info['exe'])
         if exe:
             emu_info['exe'] = exe
     elif field == 1:
         default = emu_info['dir'] or os.path.dirname(emu_info['exe'])
-        work_dir = gui.dialog.browse(0, tr(S.EMU_DIRECTORY), 'files', defaultt=default)
+        work_dir = ctx.services.dialog.browse(0, tr(S.EMU_DIRECTORY), 'files', defaultt=default)
         if work_dir:
             emu_info['dir'] = work_dir
     elif field == 2:
-        ret = gui.dialog.select(
+        ret = ctx.services.dialog.select(
             tr(S.EMU_EXTRACT_PROMPT), _option_labels(EXTRACT_OPTIONS),
             preselect=emu_info['zip'])
         if ret > -1:
             emu_info['zip'] = ret
     elif field == 3:
-        ret = gui.dialog.select(
+        ret = ctx.services.dialog.select(
             tr(S.EMU_START_PROMPT), _option_labels(START_MODES),
             preselect=emu_info['mode'])
         if ret > -1:
             emu_info['mode'] = ret
     elif field == 4:
-        name = gui.dialog.input(tr(S.EMU_NAME_PROMPT), emu_info['name'])
+        name = ctx.services.dialog.input(tr(S.EMU_NAME_PROMPT), emu_info['name'])
         if name:
             emu_info['name'] = name
 
 
-def configure_emulator(gui, emu_info=None, reconfigure=False):
+def configure_emulator(ctx, emu_info=None, reconfigure=False):
     """Dialog to configure emulators.
 
     A new emulator starts with the executable (cancel ends the dialog);
@@ -118,9 +132,9 @@ def configure_emulator(gui, emu_info=None, reconfigure=False):
     """
 
     if not emu_info:
-        exe = gui.dialog.browse(1, tr(S.EMU_EXECUTABLE), 'files', defaultt='')
+        exe = ctx.services.dialog.browse(1, tr(S.EMU_EXECUTABLE), 'files', defaultt='')
         if not exe:
-            gui.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_NO_EXECUTABLE),
+            ctx.services.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_NO_EXECUTABLE),
                 xbmcgui.NOTIFICATION_ERROR, 3000, False)
             return
         emu_info = {
@@ -128,7 +142,7 @@ def configure_emulator(gui, emu_info=None, reconfigure=False):
             'exe': exe,
             'dir': os.path.dirname(exe),
             'zip': 0,
-            'mode': gui.emulation_start,
+            'mode': ctx.settings.emulation_start,
         }
     else:
         emu_info = dict(emu_info)
@@ -137,34 +151,34 @@ def configure_emulator(gui, emu_info=None, reconfigure=False):
     save_index = 5
     selected = save_index
     while True:
-        selected = gui.dialog.select(
+        selected = ctx.services.dialog.select(
             tr(S.EMU_TITLE, emu_info['name']).strip(),
             _emulator_menu(emu_info, save_label), preselect=selected)
         if selected == -1:
-            gui.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_CANCELLED),
+            ctx.services.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_CANCELLED),
                 xbmcgui.NOTIFICATION_INFO, 2500, False)
             return
         if selected == save_index:
             if emu_info['exe'] and emu_info['dir'] and emu_info['name']:
                 break
-            gui.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_INCOMPLETE),
+            ctx.services.dialog.notification(tr(S.EMU_CONFIGURE), tr(S.EMU_INCOMPLETE),
                 xbmcgui.NOTIFICATION_ERROR, 3000, False)
             continue
-        _edit_emulator_field(gui, emu_info, selected)
+        _edit_emulator_field(ctx, emu_info, selected)
     # stored option indexes stay valid even when an old entry held -1
     emu_info['zip'] = emu_info['zip'] if emu_info['zip'] in (0, 1) else 0
     emu_info['mode'] = emu_info['mode'] if emu_info['mode'] in (0, 1, 2) else 0
     # save to db
-    if gui.actset['swl_name'] == "mame":
-        gui.ggdb.emulators.save_emulator(emu_info, reconfigure, source=gui.actset['source'])
+    if ctx.software.actset['swl_name'] == "mame":
+        ctx.services.ggdb.emulators.save_emulator(emu_info, reconfigure, source=ctx.software.actset['source'])
     else:
-        gui.ggdb.emulators.save_emulator(emu_info, reconfigure, swl_name=gui.actset['swl_name'])
+        ctx.services.ggdb.emulators.save_emulator(emu_info, reconfigure, swl_name=ctx.software.actset['swl_name'])
     # run
     if not reconfigure:
-        gui.run_emulator(emu_info)
+        ctx.run_emulator(emu_info)
 
 
-def marp_replayer(gui, dl_file=None, set_name=None, random=None):
+def marp_replayer(ctx, dl_file=None, set_name=None, random=None):
     """Start MAME with a MARP Replay input file
 
     Random replay with no argument
@@ -174,7 +188,7 @@ def marp_replayer(gui, dl_file=None, set_name=None, random=None):
         rand_version = randint(178, 289)
         all_marps = marp_search(version=rand_version)
         if not all_marps:
-            gui.dialog.notification(
+            ctx.services.dialog.notification(
                 tr(S.MARP), tr(S.MARP_NO_REPLAYS, rand_version))
             return
         if random:
@@ -186,7 +200,7 @@ def marp_replayer(gui, dl_file=None, set_name=None, random=None):
             for i in all_marps:
                 marp_list.append("{}[CR] {}: {} ({}, {})".format(
                     i['gamename'], i['player'], i['rank'], i['percentage'], i['points']))
-            ret = gui.dialog.select(
+            ret = ctx.services.dialog.select(
                 tr(S.MARP_SELECT_REPLAY, rand_version), marp_list, useDetails=True)
             # select() returns -1 on cancel; index 0 is a valid choice
             if ret < 0:
@@ -194,20 +208,20 @@ def marp_replayer(gui, dl_file=None, set_name=None, random=None):
             dl_file = all_marps[ret]['download']
             set_name = all_marps[ret]['set_name']
 
-    gui.run_emulator({
+    ctx.run_emulator({
         'name': "MARP Replay", 'exe': "marp", 'set_name': set_name, 'marp_dl': dl_file})
 
 
-def add_or_update_emu_output(gui, out, err, exit_code, cmd_args):
+def add_or_update_emu_output(ctx, out, err, exit_code, cmd_args):
     """Show the emulator output in the text list of the skin."""
 
     no_emu_out = True
     try:
-        for i in range(gui.getControl(TEXTLIST).size()):
-            if (gui.getControl(TEXTLIST).getListItem(i).getProperty(TEXTLIST_KEY_PROPERTY)
+        for i in range(ctx.view.getControl(TEXTLIST).size()):
+            if (ctx.view.getControl(TEXTLIST).getListItem(i).getProperty(TEXTLIST_KEY_PROPERTY)
                     == TEXTLIST_KEY_EMU_OUTPUT):
                 no_emu_out = False
-                emu_out_item = gui.getControl(TEXTLIST).getListItem(i)
+                emu_out_item = ctx.view.getControl(TEXTLIST).getListItem(i)
                 break
     except Exception:
         return
@@ -215,7 +229,7 @@ def add_or_update_emu_output(gui, out, err, exit_code, cmd_args):
         try:
             emu_out_item = xbmcgui.ListItem()
             emu_out_item.setLabel(tr(S.EMULATOR_OUTPUT))
-            gui.getControl(TEXTLIST).addItem(emu_out_item)
+            ctx.view.getControl(TEXTLIST).addItem(emu_out_item)
         except Exception:
             return
     try:
@@ -224,19 +238,19 @@ def add_or_update_emu_output(gui, out, err, exit_code, cmd_args):
         emu_out_item.setProperty(TEXTLIST_KEY_PROPERTY, TEXTLIST_KEY_EMU_OUTPUT)
         emu_out_item.setProperty(
             'text', f'cmd: {cmd_str}\nerr {exit_code}: {err}\nout: {out}')
-        gui.getControl(TEXTLIST).selectItem(gui.getControl(TEXTLIST).size() - 1)
+        ctx.view.getControl(TEXTLIST).selectItem(ctx.view.getControl(TEXTLIST).size() - 1)
     except Exception as error:
         xbmc.log(
             f'UMSA gui: could not update emulator output: {error}',
             xbmc.LOGDEBUG)
 
 
-def notify_final_launch(gui, notif_text, emu_name, mode):
+def notify_final_launch(ctx, notif_text, emu_name, mode):
     """Tell the user that the emulator stopped."""
 
     if mode != 'no':
         try:
-            gui.emu_dialog.update(
+            ctx.services.emu_dialog.update(
                 90, f"{notif_text}\n{tr(S.RUN_SAVER_ACTIVE)}")
         except Exception as error:
             xbmc.log(
@@ -244,13 +258,13 @@ def notify_final_launch(gui, notif_text, emu_name, mode):
                 xbmc.LOGWARNING)
     else:
         try:
-            gui.emu_dialog.close()
+            ctx.services.emu_dialog.close()
         except Exception as error:
             xbmc.log(
                 f'UMSA gui: could not close emulator dialog: {error}',
                 xbmc.LOGWARNING)
         try:
-            gui.dialog.notification(tr(S.RUN_EMULATOR_STOPPED, emu_name), f'{notif_text}',
+            ctx.services.dialog.notification(tr(S.RUN_EMULATOR_STOPPED, emu_name), f'{notif_text}',
                                     xbmcgui.NOTIFICATION_INFO, 3000, False)
         except Exception as error:
             xbmc.log(

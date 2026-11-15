@@ -4,6 +4,8 @@ The filter lists are partitioned by the Core helper ``build_filter_lists``;
 this module only drives the dialogs and the skin controls.
 """
 
+from dataclasses import dataclass
+
 import xbmc
 import xbmcgui
 from umsa_core import FILTER_CATEGORIES
@@ -45,6 +47,16 @@ CATEGORY_LABELS = {
 }
 
 
+@dataclass
+class FilterCtx:
+    """Filter lists, the database they are applied to and the focus to return to."""
+
+    view: object = None
+    services: object = None
+    filters: object = None
+    listing: object = None
+
+
 def category_label(key):
     """Return the text shown for the filter category (or action) ``key``."""
 
@@ -77,43 +89,43 @@ def empty_filter_lists():
     return {key: [] for key in FILTER_CATEGORY_KEYS}
 
 
-def close_filterlist(gui, no_update=None):
+def close_filterlist(ctx, no_update=None):
     """Close filter list window"""
 
     xbmc.log("UMSA gui: close_filterlist")
     # update filter
     if not no_update:
-        gui.getControl(LABEL_STATUS).setLabel(
-            tr(S.FILTERED_ITEMS, gui.ggdb.gamelist.define_filter(gui.filter_lists))
+        ctx.view.getControl(LABEL_STATUS).setLabel(
+            tr(S.FILTERED_ITEMS, ctx.services.ggdb.gamelist.define_filter(ctx.filters.filter_lists))
         )
-    gui.setFocus(gui.getControl(gui.main_focus))
+    ctx.view.setFocus(ctx.view.getControl(ctx.listing.main_focus))
 
 
-def filter_category(gui):
+def filter_category(ctx):
     """Open filter category, load and save filters"""
 
     # get filter category and set filter content list
-    cat = gui.getControl(FILTER_CATEGORY_LIST).getSelectedItem().getLabel2()
+    cat = ctx.view.getControl(FILTER_CATEGORY_LIST).getSelectedItem().getLabel2()
 
     # save/load filter
     if cat in (FILTER_KEY_LOAD, FILTER_KEY_SAVE):
-        files = gui.ggdb.history.list_filter_names()
+        files = ctx.services.ggdb.history.list_filter_names()
 
         if cat == FILTER_KEY_LOAD:
-            ret = gui.dialog.select(tr(S.FILTER_LOAD), files)
+            ret = ctx.services.dialog.select(tr(S.FILTER_LOAD), files)
             if ret == -1:
                 return
-            gui.filter_lists = gui.ggdb.history.load_filter_selections(files[ret])
-            gui.getControl(LABEL_STATUS).setLabel(
-                tr(S.FILTERED_ITEMS, gui.ggdb.gamelist.define_filter(gui.filter_lists))
+            ctx.filters.filter_lists = ctx.services.ggdb.history.load_filter_selections(files[ret])
+            ctx.view.getControl(LABEL_STATUS).setLabel(
+                tr(S.FILTERED_ITEMS, ctx.services.ggdb.gamelist.define_filter(ctx.filters.filter_lists))
             )
-            gui.act_filter = files[ret]
-            gui.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, gui.act_filter))
-            show_start_category(gui)
+            ctx.filters.act_filter = files[ret]
+            ctx.view.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, ctx.filters.act_filter))
+            show_start_category(ctx)
 
         else:
             # the entry after the saved filters creates a new one
-            ret = gui.dialog.select(
+            ret = ctx.services.dialog.select(
                 tr(S.FILTER_SAVE), list(files) + [tr(S.FILTER_CREATE_NEW)])
             if ret == -1:
                 return
@@ -128,26 +140,26 @@ def filter_category(gui):
                 filter_filename = files[ret]
 
             # save filters
-            gui.ggdb.history.save_filter_selections(filter_filename, gui.filter_lists)
-            gui.act_filter = filter_filename
-            gui.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, gui.act_filter))
-            show_start_category(gui)
+            ctx.services.ggdb.history.save_filter_selections(filter_filename, ctx.filters.filter_lists)
+            ctx.filters.act_filter = filter_filename
+            ctx.view.getControl(FILTER_LABEL2).setLabel(tr(S.FILTER_NAME, ctx.filters.act_filter))
+            show_start_category(ctx)
 
     # or load the content lists of the chosen category and move into them
     elif cat in FILTER_CATEGORY_KEYS:
-        gui.set_filter_content(cat)
+        set_filter_content(ctx, cat)
 
 
-def show_start_category(gui):
+def show_start_category(ctx):
     """Select the Softwarelists category and show its lists (focus stays)."""
 
-    gui.getControl(FILTER_CATEGORY_LIST).selectItem(
+    ctx.view.getControl(FILTER_CATEGORY_LIST).selectItem(
         FILTER_CATEGORIES.index(FILTER_START_CATEGORY))
     # selectItem() is applied asynchronously: name the category explicitly
-    gui.set_filter_content(FILTER_START_CATEGORY, focus_lists=False)
+    set_filter_content(ctx, FILTER_START_CATEGORY, focus_lists=False)
 
 
-def show_category_content(gui, force=False):
+def show_category_content(ctx, force=False):
     """Fill the active/inactive lists for the selected filter category.
 
     The focus stays in the category list. Entries that are no category
@@ -156,18 +168,18 @@ def show_category_content(gui, force=False):
     queued up while a key was held cost nothing.
     """
 
-    item = gui.getControl(FILTER_CATEGORY_LIST).getSelectedItem()
+    item = ctx.view.getControl(FILTER_CATEGORY_LIST).getSelectedItem()
     if not item:
         return
     cat = item.getLabel2()
     if cat not in FILTER_CATEGORY_KEYS:
         return
-    if not force and gui.act_filter_category == cat:
+    if not force and ctx.filters.act_filter_category == cat:
         return
-    gui.set_filter_content(cat, focus_lists=False)
+    set_filter_content(ctx, cat, focus_lists=False)
 
 
-def filter_content(gui, which_content):
+def filter_content(ctx, which_content):
     """filter content
 
     Gets called with action on filter list
@@ -179,23 +191,23 @@ def filter_content(gui, which_content):
         contentlist = FILTER_CONTENT_LIST_INACTIVE
 
     # get actual category
-    filter_category_name = gui.act_filter_category
+    filter_category_name = ctx.filters.act_filter_category
     # get db id for actual content entry
-    filter_content_id = gui.getControl(contentlist).getSelectedItem().getLabel2()
+    filter_content_id = ctx.view.getControl(contentlist).getSelectedItem().getLabel2()
 
     # update internal list
     if which_content == 'active':
         xbmc.log(f"UMSA gui: filter_content: remove: {filter_content_id}")
-        gui.filter_lists[filter_category_name].remove(filter_content_id)
+        ctx.filters.filter_lists[filter_category_name].remove(filter_content_id)
     else:
         xbmc.log(f"UMSA gui: filter_content: append: {filter_content_id}")
-        gui.filter_lists[filter_category_name].append(filter_content_id)
+        ctx.filters.filter_lists[filter_category_name].append(filter_content_id)
 
-    # update gui
-    gui.set_filter_content(filter_category_name, update=which_content)
+    # update the lists
+    set_filter_content(ctx, filter_category_name, update=which_content)
 
 
-def set_filter_content(gui, cat, update=None, focus_lists=True):
+def set_filter_content(ctx, cat, update=None, focus_lists=True):
     """Set filter content
 
     ``focus_lists=False`` keeps the focus in the category list on the
@@ -208,18 +220,18 @@ def set_filter_content(gui, cat, update=None, focus_lists=True):
 
     # only for action in list, not for inital fill
     if update == 'active':
-        f_element = gui.getControl(FILTER_CONTENT_LIST_ACTIVE).getSelectedPosition()
+        f_element = ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE).getSelectedPosition()
         filter_content_id = int(
-            gui.getControl(FILTER_CONTENT_LIST_ACTIVE).getSelectedItem().getLabel2()
+            ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE).getSelectedItem().getLabel2()
         )
     elif update == 'inactive':
-        f_element = gui.getControl(FILTER_CONTENT_LIST_INACTIVE).getSelectedPosition()
+        f_element = ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE).getSelectedPosition()
         filter_content_id = int(
-            gui.getControl(FILTER_CONTENT_LIST_INACTIVE).getSelectedItem().getLabel2()
+            ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE).getSelectedItem().getLabel2()
         )
 
     # partition entries into active and inactive lists
-    lists = build_filter_lists(gui.filter_lists, cat, gui.ggdb.games)
+    lists = build_filter_lists(ctx.filters.filter_lists, cat, ctx.services.ggdb.games)
     active = [
         xbmcgui.ListItem(f"{entry['name']} ({entry['count']})", entry['id'])
         for entry in lists['active']
@@ -242,36 +254,36 @@ def set_filter_content(gui, cat, update=None, focus_lists=True):
                 break
 
     # reset lists and refill
-    gui.setFocus(gui.getControl(FILTER_CATEGORY_LIST))
-    gui.getControl(FILTER_CONTENT_LIST_ACTIVE).reset()
-    gui.getControl(FILTER_CONTENT_LIST_INACTIVE).reset()
-    gui.getControl(FILTER_CONTENT_LIST_ACTIVE).addItems(active)
-    gui.getControl(FILTER_CONTENT_LIST_INACTIVE).addItems(inactive)
-    gui.getControl(FILTER_LABEL).setLabel(category_label(cat))
-    gui.act_filter_category = cat
+    ctx.view.setFocus(ctx.view.getControl(FILTER_CATEGORY_LIST))
+    ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE).reset()
+    ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE).reset()
+    ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE).addItems(active)
+    ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE).addItems(inactive)
+    ctx.view.getControl(FILTER_LABEL).setLabel(category_label(cat))
+    ctx.filters.act_filter_category = cat
 
     # set selected items and focus
     if update == 'active':
         if f_element == len(active):
             f_element -= 1
-        gui.getControl(FILTER_CONTENT_LIST_ACTIVE).selectItem(f_element)
-        gui.getControl(FILTER_CONTENT_LIST_INACTIVE).selectItem(f_select)
+        ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE).selectItem(f_element)
+        ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE).selectItem(f_select)
         if len(active) > 0:
-            gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_ACTIVE))
+            ctx.view.setFocus(ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE))
         else:
-            gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_INACTIVE))
+            ctx.view.setFocus(ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE))
     elif update:
         if f_element == len(inactive):
             f_element -= 1
-        gui.getControl(FILTER_CONTENT_LIST_INACTIVE).selectItem(f_element)
-        gui.getControl(FILTER_CONTENT_LIST_ACTIVE).selectItem(f_select)
+        ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE).selectItem(f_element)
+        ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE).selectItem(f_select)
         if len(inactive) > 0:
-            gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_INACTIVE))
+            ctx.view.setFocus(ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE))
         else:
-            gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_ACTIVE))
+            ctx.view.setFocus(ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE))
     elif focus_lists:
         # switch to inactive when active is empty
         if len(active) > 0:
-            gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_ACTIVE))
+            ctx.view.setFocus(ctx.view.getControl(FILTER_CONTENT_LIST_ACTIVE))
         else:
-            gui.setFocus(gui.getControl(FILTER_CONTENT_LIST_INACTIVE))
+            ctx.view.setFocus(ctx.view.getControl(FILTER_CONTENT_LIST_INACTIVE))
