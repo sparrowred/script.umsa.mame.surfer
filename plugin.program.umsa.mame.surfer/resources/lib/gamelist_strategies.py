@@ -1,10 +1,13 @@
-"""Gamelist dispatch strategies used by UMSA.update_gamelist.
+"""Gamelist dispatch strategies used by umsa_gui.gamelist.update_gamelist.
 
-Strategies receive a minimal context object with only the data and callbacks
-they need. They return either the 4-tuple `(results, pos, gl_label, gl_options)`
-or `EARLY_RETURN` when they have fully handled the request themselves.
+`GAMELIST_STRATEGIES` is keyed by the menu codes `M_*` of
+`umsa_gui.constants`. Strategies receive a minimal context object with only
+the data and callbacks they need. They return either the 4-tuple
+`(results, pos, gl_label, gl_options)` or `EARLY_RETURN` when they have fully
+handled the request themselves.
 """
 
+import xbmc
 from umsa_gui import strings as S
 from umsa_gui.constants import (
     ACTION_CHOOSE_EMULATOR,
@@ -13,6 +16,20 @@ from umsa_gui.constants import (
     ACTION_START_KODI,
     ACTION_START_MAME,
     ENTRY_ACTION,
+    M_ALL,
+    M_ALLEMUS,
+    M_CAT,
+    M_LSSAVER,
+    M_MACHINE,
+    M_MAKER,
+    M_PLAYERS,
+    M_PLAYSTAT,
+    M_REC,
+    M_SEARCH,
+    M_SERIES,
+    M_SOURCE,
+    M_SWL,
+    M_YEAR,
     OPTION_NEW_SEARCH,
     OPTIONS_ORDER,
     OPTIONS_PLAY_STATUS,
@@ -30,8 +47,6 @@ def _action_row(action, name):
 
 
 def all_games(ctx):
-    results, pos = [], 0
-    import xbmc
     xbmc.log("UMSA gui: update_gamelist: get_by_software")
     results, pos, count = ctx.db.gamelist.get_by_software(ctx.actset['id'])
     gl_label = tr(S.LIST_COMPLETE, count)
@@ -39,9 +54,8 @@ def all_games(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def software_list(ctx):
-    results, pos = [], 0
-    import xbmc
     xbmc.log("UMSA gui: update_gamelist: get_by_swl")
     results, pos, count = ctx.db.gamelist.get_by_swl(
         ctx.actset['swl_name'],
@@ -52,8 +66,8 @@ def software_list(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def category(ctx):
-    results, pos = [], 0
     results, pos, count = ctx.db.gamelist.get_by_cat(
         ctx.actset['category'], ctx.actset['id']
     )
@@ -62,8 +76,8 @@ def category(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def year(ctx):
-    results, pos = [], 0
     results, pos, count = ctx.db.gamelist.get_by_year(
         ctx.actset['year'],
         ctx.actset['id']
@@ -73,8 +87,8 @@ def year(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def players(ctx):
-    results, pos = [], 0
     results, pos, count = ctx.db.gamelist.get_by_players(
         ctx.actset['nplayers'],
         ctx.actset['id']
@@ -84,8 +98,8 @@ def players(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def maker(ctx):
-    results, pos = [], 0
     results, pos, count = ctx.db.gamelist.get_by_maker(
         ctx.actset['publisher'],
         ctx.actset['id']
@@ -95,13 +109,14 @@ def maker(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def play_status(ctx):
-    results, pos = [], 0
     results, pos = ctx.db.software.get_last_played("time_played")
     gl_label = tr(S.LIST_PLAY_STATUS)
     gl_options = OPTIONS_PLAY_STATUS
 
     return results, pos, gl_label, gl_options
+
 
 def machine(ctx):
     results, pos = [], 0
@@ -131,6 +146,7 @@ def machine(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def all_emulators(ctx):
     results, pos = [], 0
     for i in ctx.db.emulators.get_emulators():
@@ -143,8 +159,8 @@ def all_emulators(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def source(ctx):
-    results, pos = [], 0
     results, pos, result_count = ctx.db.gamelist.get_software_for_source(
         ctx.actset['id'], ctx.actset['source']
     )
@@ -153,8 +169,8 @@ def source(ctx):
 
     return results, pos, gl_label, gl_options
 
+
 def last_saver(ctx):
-    results, pos = [], 0
     results = []
     # Use database-backed screensaver history instead of legacy file
     history = ctx.db.history.list_screensaver_history()
@@ -165,7 +181,6 @@ def last_saver(ctx):
         if set_info is None:
             # Stale history record: set no longer exists in umsa.db
             # Skip but do not delete the history record
-            import xbmc
             xbmc.log(
                 f"UMSA gui: last_saver: skipping stale history entry for set_id={set_id}",
                 xbmc.LOGWARNING
@@ -180,70 +195,44 @@ def last_saver(ctx):
         )
     gl_label = tr(S.LIST_SAVER_SESSION)
     gl_options = OPTIONS_ORDER
-    pos = 0
 
-    return results, pos, gl_label, gl_options
+    return results, 0, gl_label, gl_options
+
 
 def series(ctx):
     results = ctx.db.games.get_series(ctx.last[ctx.lastptr])
     if results and ctx.popup_gamelist:
         ctx.popup_gamelist(results, tr(S.LIST_SERIES))
-    #gui.getControl(GAME_LIST_TEXT).setText('')
     return EARLY_RETURN
 
 
 def recommended(ctx):
     if ctx.show_rec:
         ctx.show_rec()
-    #gui.getControl(GAME_LIST_TEXT).setText('')
     return EARLY_RETURN
 
 
-def search_new(ctx):
-    results, pos = [], 0
-    import xbmc
-    keyboard = xbmc.Keyboard('', tr(S.SEARCH_FOR), 0)
-    keyboard.doModal()
-    if keyboard.isConfirmed():
-        ctx.searchold = keyboard.getText()
-    else:
-        return EARLY_RETURN
-    results, pos, result_count = ctx.db.games.get_searchresults(ctx.searchold)
-    gl_label = tr(S.LIST_SEARCH_RESULTS, result_count, ctx.searchold)
-    gl_options = (OPTION_NEW_SEARCH,)
-
-    return results, pos, gl_label, gl_options
-
 def search(ctx):
-    results, pos = [], 0
-    import xbmc
-    if not getattr(ctx, 'searchold', None):
-        keyboard = xbmc.Keyboard('', tr(S.SEARCH_FOR), 0)
-        keyboard.doModal()
-        if keyboard.isConfirmed():
-            ctx.searchold = keyboard.getText()
-        else:
-            return EARLY_RETURN
     results, pos, result_count = ctx.db.games.get_searchresults(ctx.searchold)
     gl_label = tr(S.LIST_SEARCH_RESULTS, result_count, ctx.searchold)
     gl_options = (OPTION_NEW_SEARCH,)
 
     return results, pos, gl_label, gl_options
+
 
 GAMELIST_STRATEGIES = {
-    61: all_games,  # M_ALL
-    66: software_list,  # M_SWL
-    63: category,  # M_CAT
-    64: year,  # M_YEAR
-    90: players,  # M_PLAYERS
-    62: maker,  # M_MAKER
-    83: play_status,  # M_PLAYSTAT
-    21: machine,  # M_MACHINE
-    22: all_emulators,  # M_ALLEMUS
-    65: source,  # M_SOURCE
-    84: last_saver,  # M_LSSAVER
-    3: series,  # M_SERIES
-    67: recommended,  # M_REC
-    51: search_new,  # M_SEARCH_NEW
-    5: search,  # M_SEARCH
+    M_ALL: all_games,
+    M_SWL: software_list,
+    M_CAT: category,
+    M_YEAR: year,
+    M_PLAYERS: players,
+    M_MAKER: maker,
+    M_PLAYSTAT: play_status,
+    M_MACHINE: machine,
+    M_ALLEMUS: all_emulators,
+    M_SOURCE: source,
+    M_LSSAVER: last_saver,
+    M_SERIES: series,
+    M_REC: recommended,
+    M_SEARCH: search,
 }

@@ -12,14 +12,13 @@ Kodi dialog stays the single owner of the skin controls.
 import functools
 import os
 import sys
-from dataclasses import dataclass
 from random import choice, randint
 from threading import Lock, Thread
 
 import xbmc
 import xbmcgui
 from emulator_launcher import LaunchCtx, launch_emulator
-from retroplayer_cache import run_retroplayer
+from retroplayer_cache import RetroplayerCtx, run_retroplayer
 from settings_adapter import FrontendSettings, load_all_settings
 from umsa_core import set_log
 from umsa_core.database import DBMod
@@ -540,44 +539,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         elif control_id == GAME_LIST_OPTIONS:
             if item == OPTION_NEW_SEARCH:
-                keyboard = xbmc.Keyboard('', tr(S.SEARCH_FOR), 0)
-                keyboard.doModal()
-                if keyboard.isConfirmed():
-                    self.listing.searchold = keyboard.getText()
-                else:
-                    return
-                gamelist, pos, result_count = self.services.ggdb.games.get_searchresults(
-                    self.listing.searchold)
-                gl_label = tr(S.LIST_SEARCH_RESULTS, result_count, self.listing.searchold)
-                gl_options = (OPTION_NEW_SEARCH,)
-
-                # check how many results
-                if len(gamelist) == 0:
-                    self.services.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_NO_RESULTS),
-                        xbmcgui.NOTIFICATION_ERROR, 5000, False)
-                    return
-                if len(gamelist) == 1:
-                    self.listing.searchold = None
-                    software_selector.remember_and_select(self.ctx.software_selector, gamelist[0]['id'])
-                    return
-
-                # TODO no popup, but refill
-                gamelist_workflows.popup_gamelist(
-                    self.ctx.gamelist, gamelist, gl_label, pos=pos, options=gl_options)
+                gamelist_workflows.update_gamelist(self.ctx.gamelist, M_SEARCH_NEW)
 
             # options from play status
             elif item in OPTIONS_PLAY_STATUS:
-                gamelist, pos = self.services.ggdb.software.get_last_played(item)
-                self.getControl(GAME_LIST).reset()
-                gui_list = []
-                for i in gamelist:
-                    list_item = xbmcgui.ListItem(i['name'], str(i['id']))
-                    list_item.setInfo(
-                        'video', {'Writer': i['year'], 'Studio': i['maker']}
-                        )
-                    gui_list.append(list_item)
-                self.getControl(GAME_LIST).addItems(gui_list)
-                self.setFocus(self.getControl(GAME_LIST))
+                gamelist_workflows.show_play_status(self.ctx.gamelist, item)
 
             elif item in OPTIONS_ORDER:
                 self.services.ggdb.gamelist.set_order(item)
@@ -1009,9 +975,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 rom_cache=self.settings.rom_cache,
                 cache_layout=self.settings.cache_layout,
                 wait=self.services.abort_wait,
+                stop_screensaver=screensaver_vgm.stop_screensaver,
+                exit=self.exit,
             )
-            rp_ctx.stop_screensaver = screensaver_vgm.stop_screensaver
-            rp_ctx.exit = self.exit
             run_retroplayer(rp_ctx)
             return
 
@@ -1196,24 +1162,3 @@ def main():
         if not gui._close_db_after_scan:
             set_frontend_running(False)
     del gui
-
-
-@dataclass
-class RetroplayerCtx:
-    actset: object = None
-    emulation: object = None
-    ggdb: object = None
-    emu_dialog: object = None
-    dialog: object = None
-    player: object = None
-    # setting rom_cache and the cache folders (umsa_core.rom_cache)
-    rom_cache: bool = False
-    cache_layout: object = None
-    # abort-aware wait (umsa_core.abort.Wait)
-    wait: object = None
-
-    def stop_screensaver(self):
-        pass
-
-    def exit(self):
-        pass

@@ -197,10 +197,6 @@ msgctxt "#32356"
 msgid "loading..."
 msgstr ""
 
-msgctxt "#32357"
-msgid "found no results"
-msgstr ""
-
 msgctxt "#32358"
 msgid "found nothing..."
 msgstr ""

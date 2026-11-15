@@ -36,6 +36,7 @@ from .constants import (
     M_MEDIA,
     M_PLAYERS,
     M_SEARCH,
+    M_SEARCH_NEW,
     M_SOURCE,
     M_SWL,
     M_YEAR,
@@ -69,6 +70,44 @@ def option_label(key):
 
     string_id = OPTION_LABELS.get(key)
     return tr(string_id) if string_id else key
+
+
+def ask_search_term():
+    """Ask for a search term; None when the keyboard was cancelled."""
+
+    keyboard = xbmc.Keyboard('', tr(S.SEARCH_FOR), 0)
+    keyboard.doModal()
+    if not keyboard.isConfirmed():
+        return None
+    return keyboard.getText()
+
+
+def list_items(rows):
+    """Game-list entries for ``rows`` (``name``, ``id``, optional ``year``/``maker``).
+
+    label2 carries the id the click and move handlers dispatch on.
+    """
+
+    items = []
+    for row in rows:
+        if not row:
+            xbmc.log(f"UMSA gui: list_items: broken row: {row}", xbmc.LOGERROR)
+            continue
+        item = xbmcgui.ListItem(row['name'], str(row['id']))
+        if 'year' in row:
+            item.setInfo('video', {'Writer': row['year'], 'Studio': row['maker']})
+        items.append(item)
+    return items
+
+
+def show_play_status(ctx, key):
+    """Refill the game list with the play status ordered by ``key``."""
+
+    rows, _pos = ctx.services.ggdb.software.get_last_played(key)
+    control = ctx.view.getControl(GAME_LIST)
+    control.reset()
+    control.addItems(list_items(rows))
+    ctx.view.setFocus(control)
 
 
 @dataclass
@@ -142,6 +181,13 @@ class GamelistSettle:
         xbmc.executebuiltin('Action(noop)')
 
 
+def _open_list(ctx, item):
+    """Make the game list the list of the menu code ``item`` (still empty)."""
+
+    ctx.view.getControl(GAME_LIST_LABEL_ID).setLabel(str(item))
+    ctx.view.getControl(GAME_LIST).reset()
+
+
 def update_gamelist(ctx, item, focus=True):
     """Update gamelist
 
@@ -153,9 +199,19 @@ def update_gamelist(ctx, item, focus=True):
 
     results, pos = [], 0
 
+    # a new search (or a repeated one without a term) asks first: a cancelled
+    # keyboard leaves the shown list alone. The new term replaces the stored
+    # one (and the shown list) only when it fills a list: more than one hit.
+    new_term = None
+    if item == M_SEARCH_NEW or (item == M_SEARCH and not ctx.listing.searchold):
+        new_term = ask_search_term() if focus else None
+        if new_term is None:
+            return
+        item = M_SEARCH
+
     xbmc.log(f"UMSA gui: update_gamelist: item = {item}")
-    ctx.view.getControl(GAME_LIST_LABEL_ID).setLabel(str(item))
-    ctx.view.getControl(GAME_LIST).reset()
+    if new_term is None:
+        _open_list(ctx, item)
 
     # without list popup
     if item == M_MEDIA:
@@ -163,7 +219,8 @@ def update_gamelist(ctx, item, focus=True):
         return
 
     # show loading status (popup title and status line)
-    ctx.view.getControl(GAME_LIST_LABEL).setLabel(tr(S.LOADING))
+    if new_term is None:
+        ctx.view.getControl(GAME_LIST_LABEL).setLabel(tr(S.LOADING))
     ctx.view.getControl(LABEL_STATUS).setLabel(tr(S.LOADING))
     time1 = time.time()
 
@@ -174,14 +231,13 @@ def update_gamelist(ctx, item, focus=True):
             actset=ctx.software.actset,
             last=ctx.history.last,
             lastptr=ctx.history.lastptr,
-            searchold=ctx.listing.searchold,
+            searchold=new_term if new_term is not None else ctx.listing.searchold,
             popup_gamelist=(partial(popup_gamelist, ctx) if focus
                             else partial(popup_gamelist, ctx, focus=False)),
             show_rec=(partial(media_list.show_rec, ctx.media) if focus
                       else partial(media_list.show_rec, ctx.media, focus=False)),
         )
         outcome = strategy(gl_ctx)
-        ctx.listing.searchold = gl_ctx.searchold
         if outcome is EARLY_RETURN:
             # Ensure the submenu is populated for strategies that open a gamelist
             # (Series, Recommended) so that left navigation from the gamelist works.
@@ -203,25 +259,28 @@ def update_gamelist(ctx, item, focus=True):
         ctx.listing.listmode_shown = item
         return
 
-    # no results = close list
+    # no results = close list (a new search term leaves the shown list and the
+    # stored term alone; a stored term is never forgotten)
     if len(results) == 0:
         ctx.view.getControl(LABEL_STATUS).setLabel('')
-        if item == M_SEARCH:
-            ctx.listing.searchold = None
         ctx.services.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_NOTHING),
             xbmcgui.NOTIFICATION_ERROR, 3000, False)
         return
 
-    # one software result = select
+    # one software result = select (a new search term with one hit leaves the
+    # shown list and the stored term alone)
     if focus and len(results) == 1 and item not in (M_MACHINE, M_ALLEMUS):
-        if item == M_SEARCH:
-            ctx.listing.searchold = None
         ctx.services.dialog.notification(tr(S.SEARCH), tr(S.SEARCH_ONE_HIT),
             xbmcgui.NOTIFICATION_INFO, 2000, False)
         # TODO: check if this id is the one already shown
         software_selector.remember_and_select(ctx.selector, results[0]['id'])
         ctx.view.setFocus(ctx.view.getControl(SOFTWARE_BUTTON))
         return
+
+    # the new term fills the list: it is the stored term now
+    if new_term is not None:
+        ctx.listing.searchold = new_term
+        _open_list(ctx, item)
 
     if ctx.services.ggdb.gamelist.use_filter:
         use_filter = [tr(S.LIST_FILTER_ON), tr(S.LIST_FILTER_OFF)]
@@ -262,15 +321,7 @@ def popup_gamelist(ctx, gamelist, label, pos=0, sort=None, options=None,
     ctx.listing.gamelist_kind = kind
     ctx.listing.gamelist_select = select_what
 
-    list_items = []
-    for i in gamelist:
-        if not i:
-            xbmc.log(f"UMSA gui: popup_gamelist: item in gamelist {label} broken: {i}", xbmc.LOGERROR)
-            continue
-        listitem = xbmcgui.ListItem(i['name'], str(i['id']))
-        if 'year' in i:
-            listitem.setInfo('video', {'Writer': i['year'], 'Studio': i['maker']})
-        list_items.append(listitem)
+    entries = list_items(gamelist)
 
     ctx.view.getControl(GAME_LIST_LABEL).setLabel(label)
     ctx.view.getControl(GAME_LIST_OPTIONS).reset()
@@ -281,7 +332,7 @@ def popup_gamelist(ctx, gamelist, label, pos=0, sort=None, options=None,
     if sort:
         ctx.view.getControl(GAME_LIST_SORT).addItems(sort)
     ctx.view.getControl(GAME_LIST).reset()
-    ctx.view.getControl(GAME_LIST).addItems(list_items)
+    ctx.view.getControl(GAME_LIST).addItems(entries)
     ctx.view.getControl(GAME_LIST).selectItem(pos)
 
     if focus:

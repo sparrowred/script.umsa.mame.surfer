@@ -108,13 +108,7 @@ def gamelist_click(ctx):
         gamelist, pos, _result_count = ctx.services.ggdb.gamelist.execute_statement(
             software_id=sid, prevnext=list_id)
         # create list
-        list_items = []
-        for i in gamelist:
-            list_item = xbmcgui.ListItem(i['name'], str(i['id']))
-            list_item.setInfo(
-                'video', {'Writer': i['year'], 'Studio': i['maker'],}
-                )
-            list_items.append(list_item)
+        list_items = gamelist_workflows.list_items(gamelist)
         # show
         ctx.view.getControl(GAME_LIST).reset()
         ctx.view.getControl(GAME_LIST).addItems(list_items)

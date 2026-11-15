@@ -7,9 +7,14 @@ The file RetroPlayer gets follows the setting ``rom_cache``:
   ROM temp folder;
 * everything else is played from its original path, or - with the ROM cache
   switched on - from a copy in the cache (``umsa_core.rom_cache``).
+
+``RetroplayerCtx`` is the context of a RetroPlayer start: what it needs from
+the window.
 """
 
 import os
+from dataclasses import dataclass
+from typing import Any, Callable
 
 import xbmc
 import xbmcgui
@@ -23,6 +28,30 @@ from umsa_gui.strings import tr
 EMULATOR_NAME = "Retroplayer"
 # documentation file inside the Gamebase64 archives
 GB64_INFO_FILE = 'VERSION.NFO'
+
+
+@dataclass
+class RetroplayerCtx:
+    """What a RetroPlayer start needs from the window."""
+
+    # data
+    actset: dict = None
+    emulation: Any = None
+    ggdb: Any = None
+    emu_dialog: Any = None
+    dialog: Any = None
+    player: Any = None
+    # setting rom_cache and the cache folders (umsa_core.rom_cache)
+    rom_cache: bool = False
+    cache_layout: Any = None
+
+    # abort-aware wait (umsa_core.abort.Wait); None: Core's default wait
+    wait: Any = None
+
+    # callbacks
+    stop_screensaver: Callable[[], None] = lambda: None
+    # closes the add-on (RetroPlayer takes over, or Kodi shuts down)
+    exit: Callable[[], None] = lambda: None
 
 
 def needs_extraction(swl_name):
