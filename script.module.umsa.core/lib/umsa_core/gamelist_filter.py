@@ -28,6 +28,7 @@ import time
 from dataclasses import dataclass, field
 
 from .logging import log
+from .software_search import SoftwareSearch
 
 _ORDER_SQL = {
     "name": "software.name",
@@ -511,6 +512,9 @@ class Gamelist:
     - ``join``/``where``/``where_params``: the selector of the last list, set
       by the ``get_by_*`` family and reused by :meth:`execute_statement` for
       its Prev/Next pages.
+
+    :meth:`search` runs the software search (:mod:`umsa_core.software_search`)
+    with the active filter and leaves the selector alone.
     """
 
     def __init__(self, get_connection):
@@ -523,6 +527,20 @@ class Gamelist:
         self.filter_join = []
         self.filter_where = []
         self.filter_where_params = []
+        self._search = SoftwareSearch(get_connection)
+
+    def search(self, term):
+        """Search software by name (``software_search.SearchResult``).
+
+        The active filter applies while ``use_filter`` is on. The selector of
+        the last list (``join``/``where``) is left alone.
+        """
+
+        if self.use_filter:
+            return self._search.search(
+                term, tuple(self.filter_join), tuple(self.filter_where),
+                tuple(self.filter_where_params))
+        return self._search.search(term)
 
     def set_filter_enabled(self, flag):
         """Enable or disable the active filter for subsequent queries."""

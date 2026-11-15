@@ -23,9 +23,8 @@ decision Q7): the repository reads columns *by name* internally, which only a
 row connection provides. Methods whose public shape was never a row
 (``get_machine_name``'s plain tuple, the scalar counts, ``get_set_name``'s
 bare name, ``get_set_ids_for_software``'s list of ids,
-``get_software_ids_for_name``'s id list, ``get_searchresults``'s
-``(entries, pos, count)`` bundle, ``get_machines``'s list of plain dicts and
-``get_info_by_set_and_swl``'s dict) keep that shape.
+``get_software_ids_for_name``'s id list, ``get_machines``'s list of plain
+dicts and ``get_info_by_set_and_swl``'s dict) keep that shape.
 
 Row-returning behaviour that is intentionally kept *inside* Core and is
 documented as such: ``get_parts_for_set_id``, ``get_swl_options``,
@@ -454,52 +453,6 @@ class GameRepository:
                 {'id': row['id'], 'name': row[label_column], 'count': row[2]}
                 for row in cursor.fetchall()
             ]
-        finally:
-            cursor.close()
-
-    def get_searchresults(self, my_search):
-        """Return ``(entries, pos, count)`` for a substring search.
-
-        Entries are plain dicts (``id``, ``name``, ``year``, ``maker``) in
-        name order (LIMIT 100); ``count`` is the total number of distinct
-        matching software; ``pos`` is the index of the first entry whose
-        software name starts with the search term (case-insensitively), or 0
-        when no entry starts with it.
-
-        TODO:
-        - single word search: split by " ": v.gamename IN ('test', 'wrum')
-        - LATER - show button for next/prev page
-              - save last 10 search terms and make as a popup for search
-                button incl new search
-        """
-        cursor = self._conn.cursor()
-        try:
-            # count: the aggregate column is unnamed, so it is read by
-            # position here inside Core and never returned to a caller.
-            cursor.execute(
-                "SELECT COUNT(DISTINCT software.id) "
-                "FROM sets "
-                "JOIN software ON software.id = sets.softwarelink_id "
-                "WHERE sets.gamename LIKE ?", ("%"+my_search+"%",))
-            results_count = cursor.fetchone()[0]
-            # fetch
-            cursor.execute(
-                "SELECT DISTINCT software.id, software.name, year.name as year, maker.name as maker "
-                "FROM software "
-                "JOIN year ON year.id = software.year_id "
-                "JOIN maker ON maker.id = software.developer_id "
-                "JOIN sets ON sets.softwarelink_id = software.id "
-                "WHERE sets.gamename LIKE ? "
-                "ORDER BY software.name LIMIT 100", ("%"+my_search+"%",))
-            results = self._as_dicts(cursor.fetchall())
-            pos = 0
-            for count, i in enumerate(results):
-                # check if search is in beginning of s.name and set pos
-                if my_search.lower() == i['name'][:len(my_search)].lower():
-                    pos = count
-                    break
-
-            return results, pos, results_count
         finally:
             cursor.close()
 

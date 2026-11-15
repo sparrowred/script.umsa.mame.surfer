@@ -213,11 +213,14 @@ def recommended(ctx):
 
 
 def search(ctx):
-    results, pos, result_count = ctx.db.games.get_searchresults(ctx.searchold)
-    gl_label = tr(S.LIST_SEARCH_RESULTS, result_count, ctx.searchold)
+    found = ctx.db.gamelist.search(ctx.searchold)
+    if found.fuzzy:
+        gl_label = tr(S.LIST_SEARCH_SIMILAR, found.count, ctx.searchold)
+    else:
+        gl_label = tr(S.LIST_SEARCH_RESULTS, found.count, ctx.searchold)
     gl_options = (OPTION_NEW_SEARCH,)
 
-    return results, pos, gl_label, gl_options
+    return found.rows, 0, gl_label, gl_options
 
 
 GAMELIST_STRATEGIES = {

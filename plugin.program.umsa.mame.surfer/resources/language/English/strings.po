@@ -285,6 +285,10 @@ msgctxt "#32379"
 msgid "id-{0} feels funny?!?"
 msgstr ""
 
+msgctxt "#32380"
+msgid "{0} similar results for {1}"
+msgstr ""
+
 msgctxt "#32400"
 msgid "Filter: {0}"
 msgstr ""
