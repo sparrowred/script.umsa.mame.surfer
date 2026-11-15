@@ -52,17 +52,18 @@ _ORDER_KEYS = {
 PAGE_SIZE = 100
 
 
-def _page_condition(keys, values, direction):
+def _page_condition(keys, values, direction, inclusive=True):
     """Return ``(sql, params)`` for rows at or after/before ``values``.
 
     Keyset condition over the sort ``keys``: for ``next`` the rows whose key
     tuple is ``>=`` the boundary, for ``prev`` the rows ``<=`` it. Written out
     without row values so old SQLite builds work too. The boundary row itself
-    is included, so the page starts (next) or ends (prev) with it.
+    is included, so the page starts (next) or ends (prev) with it;
+    ``inclusive=False`` leaves it out (``>`` / ``<``).
     """
 
     strict = '>' if direction == 'next' else '<'
-    inclusive = strict + '='
+    inclusive = strict + '=' if inclusive else strict
     clauses, params = [], []
     for index, key in enumerate(keys):
         last = index == len(keys) - 1
@@ -202,6 +203,228 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
     return state, f"{count} ({percent}%)"
 
 
+# sort keys of the boundary row (software of the current set)
+_BOUNDARY_SELECT = (
+    "SELECT software.name, year.name, maker.name, software.id FROM software "
+    "JOIN year ON year.id = software.year_id "
+    "JOIN maker ON maker.id = software.developer_id")
+# the complete list reads software directly (one row per software, the name
+# order follows ix_software_name) instead of DISTINCT over all sets
+_COMPLETE_FROM = (
+    "FROM software JOIN year ON year.id = software.year_id "
+    "JOIN maker ON maker.id = software.developer_id")
+_COMPLETE_SELECT = (
+    "SELECT software.id, software.name, year.name as year, maker.name as maker "
+    + _COMPLETE_FROM)
+
+
+def _prev_row():
+    return {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'}
+
+
+def _next_row():
+    return {'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'}
+
+
+def _fetch_boundary(cursor, set_id, software_id):
+    """Return ``(name, year, maker, software id)`` of the current software."""
+
+    if set_id:
+        cursor.execute(
+            f"{_BOUNDARY_SELECT} JOIN sets ON software.id = sets.softwarelink_id "
+            "WHERE sets.id = ?", (set_id,))
+        return cursor.fetchone()
+    if software_id:
+        cursor.execute(f"{_BOUNDARY_SELECT} WHERE software.id = ?", (software_id,))
+        return cursor.fetchone()
+    log("UMSA database: execute_statement: no set or software id error",
+        level='debug')
+    return None
+
+
+def _order_of(state):
+    """Return ``(ORDER BY columns, sort keys)``; resets an unknown order."""
+
+    order = _ORDER_SQL.get(state.order)
+    if order is None:
+        state.order = _ORDER_FALLBACK
+        order = _ORDER_FALLBACK
+    return order, _ORDER_KEYS.get(state.order, (_ORDER_FALLBACK,))
+
+
+def _key_values(keys, boundary):
+    """Return the values of the sort ``keys`` of a boundary row."""
+
+    values = {"software.name": boundary[0], "year.name": boundary[1],
+              "maker.name": boundary[2]}
+    return [values[k] for k in keys]
+
+
+def _window_rows(window, start, total, index):
+    """Add the Prev/Next sentinels to a window of the list.
+
+    ``window`` holds the rows ``start`` … ``start + PAGE_SIZE`` of a list of
+    ``total`` rows, ``index`` is the row of the current software. Returns
+    ``(slist, pos)``.
+    """
+
+    pos = index - start
+    if start > 0:
+        window.insert(0, _prev_row())
+        pos += 1
+    if start + PAGE_SIZE < total:
+        window.append(_next_row())
+    return window, pos
+
+
+def _window_start(index, total):
+    """First row of the window: the current software is row 50 (1-based),
+    clamped to the list, never negative; a short list is shown completely."""
+
+    return max(0, min(index - (PAGE_SIZE // 2 - 1), total - PAGE_SIZE))
+
+
+def _page_rows(slist, prevnext):
+    """Turn a fetched Prev/Next page into ``(slist, pos)``.
+
+    A page holds PAGE_SIZE rows including the boundary row; the extra fetched
+    row only signals that the list goes on.
+    """
+
+    more = len(slist) > PAGE_SIZE
+    slist = slist[:PAGE_SIZE]
+    if prevnext == 'next':
+        # boundary row first, the way back is always possible
+        slist.insert(0, _prev_row())
+        if more:
+            slist.append(_next_row())
+        return slist, 1
+    # prev: fetched in descending order, boundary row last after reverse
+    slist.reverse()
+    slist.append(_next_row())
+    if more:
+        slist.insert(0, _prev_row())
+    return slist, len(slist) - 2  # the boundary row, before the next entry
+
+
+def _complete_list_clause(state, filtered):
+    """Return ``(sql, params)``: software of the complete list.
+
+    A software belongs to the list when one of its sets passes the active
+    filter (``filtered``) or, without filter, when it has a set at all.
+    """
+
+    if filtered:
+        return ("EXISTS (SELECT 1 FROM sets {} WHERE sets.softwarelink_id = "
+                "software.id AND {})".format(
+                    " ".join(state.filter_join), " AND ".join(state.filter_where)),
+                list(state.filter_where_params))
+    return "EXISTS (SELECT 1 FROM sets WHERE sets.softwarelink_id = software.id)", []
+
+
+def _fetch_dict_rows(cursor, sql, params):
+    cursor.execute(sql, params)
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def _complete_window(cursor, cond, params, order, keys, boundary):
+    """Return ``(slist, pos, total)``: the window around the current software.
+
+    One pass counts the list, the rows before the current software and
+    whether it is part of the list; two keyset queries then read only the
+    rows of the window. A software that is not in the list (or no current
+    software) starts the window at the top, like the full-list path.
+    """
+
+    index = 0
+    member = False
+    if boundary is None:
+        cursor.execute(f"SELECT COUNT(*) {_COMPLETE_FROM} WHERE {cond}", params)
+        total = cursor.fetchone()[0]
+    else:
+        values = _key_values(keys, boundary)
+        before_sql, before_params = _page_condition(keys, values, 'prev', inclusive=False)
+        cursor.execute(
+            f"SELECT COUNT(*), TOTAL({before_sql}), TOTAL(software.id = ?) "
+            f"{_COMPLETE_FROM} WHERE {cond}",
+            before_params + [boundary[3]] + params)
+        total, before, found = cursor.fetchone()
+        member = bool(found)
+        if member:
+            index = int(before)
+    if not total:
+        return [], 0, 0
+
+    start = _window_start(index, total)
+    if not member:
+        window = _fetch_dict_rows(
+            cursor, f"{_COMPLETE_SELECT} WHERE {cond} ORDER BY {order} "
+            f"LIMIT {PAGE_SIZE}", params)
+    else:
+        n_before = index - start
+        window = []
+        if n_before:
+            desc = ", ".join(f"{k} DESC" for k in keys)
+            window = _fetch_dict_rows(
+                cursor, f"{_COMPLETE_SELECT} WHERE {before_sql} AND {cond} "
+                f"ORDER BY {desc} LIMIT {n_before}", before_params + params)
+            window.reverse()
+        after_sql, after_params = _page_condition(keys, values, 'next')
+        asc = ", ".join(f"{k} ASC" for k in keys)
+        window += _fetch_dict_rows(
+            cursor, f"{_COMPLETE_SELECT} WHERE {after_sql} AND {cond} "
+            f"ORDER BY {asc} LIMIT {PAGE_SIZE - n_before}", after_params + params)
+    slist, pos = _window_rows(window, start, total, index)
+    return slist, pos, total
+
+
+def _execute_complete(connection, state, set_id, software_id, prevnext):
+    """:func:`execute_statement` for the complete list (no selector).
+
+    Reads only the shown window or page instead of every software; the
+    result has the same shape as the full-list path.
+    """
+
+    time_start = time.time()
+    order, keys = _order_of(state)
+    filtered = bool(state.use_filter and state.filter_join and state.filter_where)
+    cursor = connection.cursor()
+    try:
+        boundary = _fetch_boundary(cursor, set_id, software_id)
+        if prevnext and boundary is None:
+            log("UMSA database: execute_statement: no software name for "
+                f"{prevnext}, empty result", level='debug')
+            return [], 0, 0
+        slist, pos, result_count = [], 0, 0
+        # with an active filter that leaves nothing, retry once without it
+        for apply_filter in ((True, False) if filtered else (False,)):
+            cond, params = _complete_list_clause(state, apply_filter)
+            if prevnext:
+                page_where, page_params = _page_condition(
+                    keys, _key_values(keys, boundary), prevnext)
+                direction = "ASC" if prevnext == 'next' else "DESC"
+                page_order = ", ".join(f"{k} {direction}" for k in keys)
+                rows = _fetch_dict_rows(
+                    cursor, f"{_COMPLETE_SELECT} WHERE {page_where} AND {cond} "
+                    f"ORDER BY {page_order} LIMIT {PAGE_SIZE + 1}",
+                    page_params + params)
+                if rows:
+                    slist, pos = _page_rows(rows, prevnext)
+            else:
+                slist, pos, result_count = _complete_window(
+                    cursor, cond, params, order, keys, boundary)
+            if slist:
+                break
+            if apply_filter:
+                log("UMSA database: fetch list: no result, retry without filters",
+                    level='debug')
+    finally:
+        cursor.close()
+    log(f'UMSA database: execute_statement (complete list) '
+        f'{(time.time() - time_start) * 1000:.0f}ms', level='debug')
+    return slist, pos, result_count
+
+
 def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                       set_id=None, software_id=None, prevnext=None):
     """Compose and run one gamelist query from explicit ``state``.
@@ -212,12 +435,19 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
     ``sqlite3.Row`` escapes this function. When ``state.order`` is not a known
     order name it is reset in place to the safe fallback so :class:`Gamelist`
     can take the reset over.
+
+    The complete list (no selector) reads only the shown window
+    (:func:`_execute_complete`); lists with a selector are small enough to be
+    read completely and cut in Python.
     """
 
     if prevnext not in (None, '', 'prev', 'next'):
         log(f"UMSA database: execute_statement: invalid prevnext {prevnext!r}",
             level='debug')
         return [], 0, 0
+
+    if not state.where and not state.join:
+        return _execute_complete(connection, state, set_id, software_id, prevnext)
 
     time_start = time.time()
     result_count = 0
@@ -282,41 +512,18 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
     cursor = connection.cursor()
     try:
         # get software name (and the other sort keys for Prev/Next)
-        sname = None
-        boundary = None
-        boundary_select = "SELECT software.name, year.name, maker.name FROM software \
-                JOIN year ON year.id = software.year_id \
-                JOIN maker ON maker.id = software.developer_id"
-        if set_id:
-            cursor.execute(
-                f"{boundary_select} JOIN sets ON software.id = sets.softwarelink_id "
-                "WHERE sets.id = ?", (set_id,))
-            boundary = cursor.fetchone()
-        elif software_id:
-            cursor.execute(
-                f"{boundary_select} WHERE software.id = ?", (software_id,))
-            boundary = cursor.fetchone()
-        else:
-            log("UMSA database: execute_statement: no set or software id error",
-                level='debug')
-        if boundary is not None:
-            sname = boundary[0]
+        boundary = _fetch_boundary(cursor, set_id, software_id)
+        sname = None if boundary is None else boundary[0]
         if prevnext and sname is None:
             # Prev/Next needs the name of the current software as boundary
             log("UMSA database: execute_statement: no software name for "
                 f"{prevnext}, empty result", level='debug')
             return [], 0, 0
         # add ordering
-        order = _ORDER_SQL.get(state.order)
-        if order is None:
-            state.order = _ORDER_FALLBACK
-            order = _ORDER_FALLBACK
+        order, keys = _order_of(state)
         if prevnext:
-            keys = _ORDER_KEYS.get(state.order, (_ORDER_FALLBACK,))
-            key_values = {"software.name": boundary[0], "year.name": boundary[1],
-                          "maker.name": boundary[2]}
             page_where, page_params = _page_condition(
-                keys, [key_values[k] for k in keys], prevnext)
+                keys, _key_values(keys, boundary), prevnext)
             direction = "ASC" if prevnext == 'next' else "DESC"
             # one row more than a page tells whether another page follows
             page_order = ", ".join(f"{k} {direction}" for k in keys)
@@ -384,37 +591,11 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
             # (filtered) list the window starts at the top of the list
             index = next(
                 (i for i, row in enumerate(slist) if row['name'] == sname), 0)
-            # a window of PAGE_SIZE rows with the current software as row 50
-            # (1-based), clamped to the list: never a negative start, and a
-            # short list is shown completely
-            start = max(0, min(index - (PAGE_SIZE // 2 - 1),
-                               len(slist) - PAGE_SIZE))
-            window = slist[start:start + PAGE_SIZE]
-            pos = index - start
-            if start > 0:
-                window.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-                pos += 1
-            if start + PAGE_SIZE < len(slist):
-                window.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-            slist = window
+            start = _window_start(index, len(slist))
+            slist, pos = _window_rows(
+                slist[start:start + PAGE_SIZE], start, len(slist), index)
         else:
-            # a page holds PAGE_SIZE rows including the boundary row; the
-            # extra fetched row only signals that the list goes on
-            more = len(slist) > PAGE_SIZE
-            slist = slist[:PAGE_SIZE]
-            if prevnext == 'next':
-                # boundary row first, the way back is always possible
-                slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-                if more:
-                    slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-                pos = 1
-            else:  # prev
-                # fetched in descending order: boundary row last after reverse
-                slist.reverse()
-                slist.append({'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'})
-                if more:
-                    slist.insert(0, {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'})
-                pos = len(slist) - 2  # the boundary row, before the next entry
+            slist, pos = _page_rows(slist, prevnext)
         time_rest = time.time()
     finally:
         cursor.close()
