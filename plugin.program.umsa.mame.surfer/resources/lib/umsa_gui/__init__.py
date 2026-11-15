@@ -1,9 +1,8 @@
 """Workflow modules of the UMSA frontend.
 
 The package holds the GUI workflows that were extracted from the former
-``resources/lib/gui.py`` god class. ``resources/lib/gui.py`` stays the public
-entry module of the add-on: it keeps the ``UMSA`` Kodi dialog adapter and
-re-exports the names that existed before the split.
+``resources/lib/gui.py`` god class. ``resources/lib/gui.py`` stays the entry
+module of the add-on: it keeps the ``UMSA`` Kodi dialog adapter and ``main()``.
 
 A workflow module never gets the ``UMSA`` window: its functions take the
 context of the module (``MenuCtx``, ``SoftwareCtx`` ...), which holds the

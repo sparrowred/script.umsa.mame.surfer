@@ -1,28 +1,22 @@
 """Control IDs, action codes and menu codes of the UMSA frontend.
 
-The values are part of the contract with the Estuary skin XML and with the
-screensaver add-on. They must not change: ``gui.py`` re-exports them so the
-historic public names keep working.
+The control IDs are part of the contract with the Estuary skin XML
+(``umsa_estuary.xml``) and must not change without it. A control ID that only
+the skin uses stays here as documentation; every other constant is used by a
+frontend module (``tests/arch/test_gui_constants.py``).
 """
 
 # DAT display category of the driver WIP, defined once in Core
 from umsa_core.dat_parser import DRIVER_WIP as _DRIVER_WIP
 
-# shared with the screensaver and the Kodi adapter; defined once in Core
-from umsa_core.window_properties import EMULATOR_RUNNING_PROPERTY  # noqa: F401
-
 # Action codes
 # See guilib/Key.h
 ACTION_CANCEL_DIALOG = (9, 10, 51, 92, 110)
-ACTION_PLAYFULLSCREEN = (12, 79, 227)
 ACTION_MOVEMENT_LEFT = (1,)
 ACTION_MOVEMENT_RIGHT = (2,)
 ACTION_MOVEMENT_UP = (3,)
 ACTION_MOVEMENT_DOWN = (4,)
-ACTION_MOVEMENT = (1, 2, 3, 4, 5, 6, 159, 160)
-ACTION_INFO = (11,)
 ACTION_PLAY_NEXTITEM = (14, 112)
-ACTION_SOUND_VOLUME = (88, 89)
 ACTION_CONTEXT = (117,)
 ACTION_ENTER = (7,)
 # movement in a vertical list: up/down, page up/down, mouse wheel,
@@ -167,10 +161,6 @@ M_LSSAVER = 84
 M_ASETTINGS = 86
 M_EXIT = 9
 M_PLAYERS = 90
-
-# xbmc.sleep times in ms
-WAIT_PLAYER = 500
-WAIT_GUI = 100
 
 # order of listmode submenu for select
 SUBMENU_ORDER = {

@@ -2,7 +2,7 @@
 """UI Module for UMSA Kodi Add-on.
 
 This module is the Kodi adapter of the frontend: it owns the ``UMSA`` window
-class, the Kodi event dispatch and the public names of the add-on. The
+class and the Kodi event dispatch. The
 workflows themselves live in the ``umsa_gui`` package, one module per topic;
 they receive a context of their own (``umsa_gui.wiring``) built from the shared
 state of the window (``umsa_gui.state``) and call each other directly; the
@@ -59,81 +59,42 @@ from umsa_gui import (
 )
 from umsa_gui import strings as S
 from umsa_gui.action_backlog import ActionBacklog
-from umsa_gui.artwork_presenter import create_gui_element_from_snap
 from umsa_gui.constants import (
-    ACTION_BACKLOG_THRESHOLD,
     ACTION_CANCEL_DIALOG,
-    ACTION_CHOOSE_EMULATOR,
     ACTION_CONTEXT,
     ACTION_ENTER,
-    ACTION_INFO,
     ACTION_LIST_SCROLL,
-    ACTION_MOVEMENT,
     ACTION_MOVEMENT_DOWN,
     ACTION_MOVEMENT_LEFT,
     ACTION_MOVEMENT_RIGHT,
     ACTION_MOVEMENT_UP,
     ACTION_NOOP,
     ACTION_PLAY_NEXTITEM,
-    ACTION_PLAYFULLSCREEN,
-    ACTION_SOUND_VOLUME,
-    ACTION_START_EXODOS,
-    ACTION_START_EXODOS_ALT,
-    ACTION_START_KODI,
-    ACTION_START_MAME,
     COMPILATION_LABEL,
-    EMULATOR_RUNNING_PROPERTY,
-    ENTRY_ACTION,
-    ENTRY_SEARCH,
-    FILTER_CATEGORY_KEYS,
     FILTER_CATEGORY_LIST,
     FILTER_CONTENT_LIST_ACTIVE,
     FILTER_CONTENT_LIST_INACTIVE,
-    FILTER_KEY_LOAD,
-    FILTER_KEY_SAVE,
-    FILTER_LABEL,
     FILTER_LABEL2,
-    FILTER_LIST_BG,
     FILTER_OPTION_ALL,
     FILTER_OPTION_INVERT,
     FILTER_OPTION_NONE,
     FILTER_OPTIONS,
     GAME_LIST,
-    GAME_LIST_BG,
-    GAME_LIST_IMAGE,
-    GAME_LIST_LABEL,
     GAME_LIST_LABEL_ID,
     GAME_LIST_OPTIONS,
     GAME_LIST_SORT,
-    GAME_LIST_TEXT,
-    GAMELIST_SETTLE_DELAY,
-    GROUP_FILTER,
-    GROUP_GAME_LIST,
-    IMAGE_BIG_LIST,
-    IMAGE_LIST,
-    IMAGE_RIGHT,
-    KIND_EMULATORS,
-    KIND_MACHINES,
-    KIND_MEDIA,
-    KIND_SELECT,
-    KIND_SOFTWARE,
-    LABEL_STATUS,
     LEFT_IMAGE_HORI,
     LEFT_IMAGE_VERT,
     LISTMODE_MENU,
     M_ALL,
     M_ALLEMUS,
     M_ASETTINGS,
-    M_CAT,
     M_EXIT,
     M_FILTER,
     M_LSSAVER,
     M_MACHINE,
-    M_MAKER,
     M_MEDIA,
-    M_PLAYERS,
     M_PLAYSTAT,
-    M_REC,
     M_SEARCH,
     M_SEARCH_NEW,
     M_SERIES,
@@ -141,8 +102,6 @@ from umsa_gui.constants import (
     M_SSAVER,
     M_SWL,
     M_UPD,
-    M_YEAR,
-    MACHINE_COUNT,
     MACHINE_PLUS,
     MACHINE_SEP1,
     MACHINE_SEP2,
@@ -153,32 +112,19 @@ from umsa_gui.constants import (
     OPTION_NEW_SEARCH,
     OPTIONS_ORDER,
     OPTIONS_PLAY_STATUS,
-    SEARCH_MARP,
-    SEARCH_YOUTUBE,
     SERIES_LABEL,
     SET_LIST,
     SHADOW_DAT,
-    SHADOW_MACHINE,
-    SHADOW_SET,
     SOFTWARE_BUTTON,
-    SUBMENU_ORDER,
-    SYSTEM_BORDER,
     SYSTEM_WRAPLIST,
     TEXTLIST,
-    TEXTLIST_HIDDEN,
-    TEXTLIST_KEY_EMU_OUTPUT,
     TEXTLIST_KEY_NO_INFO,
     TEXTLIST_KEY_PROPERTY,
-    TEXTLIST_ORDER,
-    TEXTLIST_OTHER_CATEGORIES,
-    VIDEO_LABEL,
-    WAIT_GUI,
-    WAIT_PLAYER,
 )
 from umsa_gui.filter_ui import empty_filter_lists
-from umsa_gui.gamelist import GamelistCtx, GamelistSettle
-from umsa_gui.optional_plugins import KODIPDF, KODIYT, play_pdf
-from umsa_gui.paths import ADDON, ADDON_PATH, RESOURCE_LIB
+from umsa_gui.gamelist import GamelistSettle
+from umsa_gui.optional_plugins import KODIPDF, KODIYT
+from umsa_gui.paths import ADDON_PATH, RESOURCE_LIB
 from umsa_gui.request_queue import (
     REQUEST_CLOSE,
     REQUEST_OPEN_SOFTWARE,
@@ -195,146 +141,11 @@ from umsa_gui.state import (
 from umsa_gui.strings import tr
 from umsa_gui.wiring import build_contexts
 
-__addon__ = ADDON
-__cwd__ = ADDON_PATH
-__resource__ = RESOURCE_LIB
-
 PLATFORM = sys.platform
 
 # shared application data
 CORE_DATA_PATHS = get_core_data_paths(create=False)
 SETTINGS_FOLDER = CORE_DATA_PATHS.filters_dir
-
-# Public API of this module. These names existed before the workflows were
-# split into the ``umsa_gui`` package and are re-exported unchanged.
-__all__ = [
-    "ACTION_BACKLOG_THRESHOLD",
-    "ACTION_CANCEL_DIALOG",
-    "ACTION_CHOOSE_EMULATOR",
-    "ACTION_CONTEXT",
-    "ACTION_ENTER",
-    "ACTION_INFO",
-    "ACTION_LIST_SCROLL",
-    "ACTION_MOVEMENT",
-    "ACTION_MOVEMENT_DOWN",
-    "ACTION_MOVEMENT_LEFT",
-    "ACTION_MOVEMENT_RIGHT",
-    "ACTION_MOVEMENT_UP",
-    "ACTION_NOOP",
-    "ACTION_PLAYFULLSCREEN",
-    "ACTION_PLAY_NEXTITEM",
-    "ACTION_SOUND_VOLUME",
-    "ACTION_START_EXODOS",
-    "ACTION_START_EXODOS_ALT",
-    "ACTION_START_KODI",
-    "ACTION_START_MAME",
-    "COMPILATION_LABEL",
-    "CORE_DATA_PATHS",
-    "EMULATOR_RUNNING_PROPERTY",
-    "ENTRY_ACTION",
-    "ENTRY_SEARCH",
-    "FILTER_CATEGORY_KEYS",
-    "FILTER_CATEGORY_LIST",
-    "FILTER_CONTENT_LIST_ACTIVE",
-    "FILTER_CONTENT_LIST_INACTIVE",
-    "FILTER_KEY_LOAD",
-    "FILTER_KEY_SAVE",
-    "FILTER_LABEL",
-    "FILTER_LABEL2",
-    "FILTER_LIST_BG",
-    "FILTER_OPTIONS",
-    "FILTER_OPTION_ALL",
-    "FILTER_OPTION_INVERT",
-    "FILTER_OPTION_NONE",
-    "GAMELIST_SETTLE_DELAY",
-    "GAME_LIST",
-    "GAME_LIST_BG",
-    "GAME_LIST_IMAGE",
-    "GAME_LIST_LABEL",
-    "GAME_LIST_LABEL_ID",
-    "GAME_LIST_OPTIONS",
-    "GAME_LIST_SORT",
-    "GAME_LIST_TEXT",
-    "GROUP_FILTER",
-    "GROUP_GAME_LIST",
-    "IMAGE_BIG_LIST",
-    "IMAGE_LIST",
-    "IMAGE_RIGHT",
-    "KIND_EMULATORS",
-    "KIND_MACHINES",
-    "KIND_MEDIA",
-    "KIND_SELECT",
-    "KIND_SOFTWARE",
-    "KODIPDF",
-    "KODIYT",
-    "LABEL_STATUS",
-    "LEFT_IMAGE_HORI",
-    "LEFT_IMAGE_VERT",
-    "LISTMODE_MENU",
-    "MACHINE_COUNT",
-    "MACHINE_PLUS",
-    "MACHINE_SEP1",
-    "MACHINE_SEP2",
-    "MACHINE_SEP3",
-    "MAIN_MENU",
-    "MEDIA_LABEL",
-    "MUSIC_INFO",
-    "M_ALL",
-    "M_ALLEMUS",
-    "M_ASETTINGS",
-    "M_CAT",
-    "M_EXIT",
-    "M_FILTER",
-    "M_LSSAVER",
-    "M_MACHINE",
-    "M_MAKER",
-    "M_MEDIA",
-    "M_PLAYERS",
-    "M_PLAYSTAT",
-    "M_REC",
-    "M_SEARCH",
-    "M_SEARCH_NEW",
-    "M_SERIES",
-    "M_SOURCE",
-    "M_SSAVER",
-    "M_SWL",
-    "M_UPD",
-    "M_YEAR",
-    "OPTIONS_ORDER",
-    "OPTIONS_PLAY_STATUS",
-    "OPTION_NEW_SEARCH",
-    "PLATFORM",
-    "SEARCH_MARP",
-    "SEARCH_YOUTUBE",
-    "SERIES_LABEL",
-    "SETTINGS_FOLDER",
-    "SET_LIST",
-    "SHADOW_DAT",
-    "SHADOW_MACHINE",
-    "SHADOW_SET",
-    "SOFTWARE_BUTTON",
-    "SUBMENU_ORDER",
-    "SYSTEM_BORDER",
-    "SYSTEM_WRAPLIST",
-    "TEXTLIST",
-    "TEXTLIST_HIDDEN",
-    "TEXTLIST_KEY_EMU_OUTPUT",
-    "TEXTLIST_KEY_NO_INFO",
-    "TEXTLIST_KEY_PROPERTY",
-    "TEXTLIST_ORDER",
-    "TEXTLIST_OTHER_CATEGORIES",
-    "UMSA",
-    "VIDEO_LABEL",
-    "WAIT_GUI",
-    "WAIT_PLAYER",
-    "GamelistCtx",
-    "RetroplayerCtx",
-    "VgmCommandMonitor",
-    "create_gui_element_from_snap",
-    "empty_filter_lists",
-    "main",
-    "play_pdf",
-]
 
 
 class VgmCommandMonitor(xbmc.Monitor):
@@ -1163,7 +974,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
         core_settings = get_core_settings()
         # effective MAME paths (optional settings resolved) and computed values
         emu_settings = load_all_settings(
-            core_settings, __resource__, PLATFORM, home=os.path.expanduser('~')
+            core_settings, RESOURCE_LIB, PLATFORM, home=os.path.expanduser('~')
         )
 
         self.settings.apply(core_settings, emu_settings)
@@ -1376,8 +1187,7 @@ def main():
         .get(level, xbmc.LOGDEBUG)))
     # flags of a screensaver that was killed would block every later start
     clear_stale_screensaver_state()
-    path = __cwd__
-    gui = UMSA("umsa_estuary.xml", path, "default", "1080i")
+    gui = UMSA("umsa_estuary.xml", ADDON_PATH, "default", "1080i")
     if len(sys.argv) > 2 and sys.argv[1] == "select_software":
         try:
             gui.initial_software_id = int(sys.argv[2])
