@@ -23,12 +23,18 @@ cursors that are closed deterministically.
 
 from __future__ import annotations
 
+import random
 import sqlite3
 import time
+from array import array
 from dataclasses import dataclass, field
 
 from .logging import log
 from .software_search import SoftwareSearch
+
+# candidate lists kept by Gamelist.get_random_id (filtered + unfiltered,
+# a few filter variants)
+_RANDOM_ID_CACHE_SIZE = 4
 
 _ORDER_SQL = {
     "name": "software.name",
@@ -528,6 +534,9 @@ class Gamelist:
         self.filter_where = []
         self.filter_where_params = []
         self._search = SoftwareSearch(get_connection)
+        # candidate software ids of get_random_id, see _random_candidates
+        self._random_ids_token = None
+        self._random_ids_cache = {}
 
     def search(self, term):
         """Search software by name (``software_search.SearchResult``).
@@ -649,33 +658,61 @@ class Gamelist:
         The filter is applied only while ``use_filter`` is on. When it leaves
         nothing, the pick falls back to the whole database (like the
         selector-only retry of :meth:`execute_statement` and the random
-        artwork).
+        artwork). Every software has the same chance, whatever its number of
+        sets. The pick comes from a cached id list (:meth:`_random_candidates`).
         """
 
         if self.use_filter and self.filter_join and self.filter_where:
-            where = "WHERE sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
-                " ".join(self.filter_join), " AND ".join(self.filter_where)
-            )
-            software_id = self._random_software_id(where, self.filter_where_params)
-            if software_id is not None:
-                return software_id
+            ids = self._random_candidates(True)
+            if ids:
+                return random.choice(ids)
             log("UMSA database: get_random_id: filter leaves nothing, "
                 "picking unfiltered", level='debug')
-        return self._random_software_id('', [])
+        ids = self._random_candidates(False)
+        return random.choice(ids) if ids else None
 
-    def _random_software_id(self, where, where_params):
-        """Run one random pick; ``None`` when no row matches."""
+    def _random_candidates(self, filtered):
+        """Return the software ids :meth:`get_random_id` picks from.
 
-        cursor = self._get_connection().cursor()
+        The ids of one filter (or of the whole database) are read once and
+        kept, so a pick no longer sorts all software by ``RANDOM()``. umsa.db
+        is read-only, new data only comes with a new connection
+        (``DBMod.open_db``): the lists are dropped when the connection
+        changes. The filter clauses are the key, so a changed filter gets its
+        own list.
+        """
+
+        connection = self._get_connection()
+        if connection is not self._random_ids_token:
+            self._random_ids_cache = {}
+            self._random_ids_token = connection
+        cache = self._random_ids_cache
+
+        key = None
+        where, params = '', []
+        if filtered:
+            key = (tuple(self.filter_join), tuple(self.filter_where),
+                   tuple(self.filter_where_params))
+            where = "WHERE sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
+                " ".join(self.filter_join), " AND ".join(self.filter_where))
+            params = list(self.filter_where_params)
+        if key in cache:
+            return cache[key]
+
+        cursor = connection.cursor()
         try:
             cursor.execute(
-                f"SELECT DISTINCT software.id \
-                  FROM sets JOIN software ON software.id = sets.softwarelink_id \
-                  {where} ORDER BY RANDOM() LIMIT 1", list(where_params))
-            row = cursor.fetchone()
-            return None if row is None else row[0]
+                "SELECT DISTINCT sets.softwarelink_id FROM sets "
+                "JOIN software ON software.id = sets.softwarelink_id "
+                f"{where}", params)
+            ids = array('q', (row[0] for row in cursor.fetchall()))
         finally:
             cursor.close()
+
+        if len(cache) >= _RANDOM_ID_CACHE_SIZE:
+            cache.clear()
+        cache[key] = ids
+        return ids
 
 
 def build_filter_lists(filter_lists, category, games):
