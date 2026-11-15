@@ -169,7 +169,7 @@ class VgmCommandMonitor(xbmc.Monitor):
     def onNotification(self, sender, method, data):
         if sender != VGM_SENDER:
             return
-        if getattr(self.owner, '_resources_released', False):
+        if self.owner._resources_released:
             return
         if is_frontend_close_method(method):
             # the maintenance script deletes databases: release them first
@@ -202,10 +202,7 @@ def _window_handler(method):
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
-        requests = getattr(self, 'requests', None)
-        if not isinstance(requests, RequestQueue):
-            return method(self, *args, **kwargs)
-        with requests.busy():
+        with self.requests.busy():
             return method(self, *args, **kwargs)
 
     return wrapper
@@ -232,6 +229,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
     _close_db_after_scan = False
     # the scan thread left update() (set under _SCAN_LOCK)
     _scan_ended = False
+    # set once release_resources() ran (exit() or Kodi shutdown)
+    _resources_released = False
 
     def __init__(self, strXMLname, strFallbackPath, strDefaultName, forceFallback):
 
@@ -258,10 +257,8 @@ class UMSA(xbmcgui.WindowXMLDialog):
         replaced: the workflow contexts (``self.ctx``) keep references to them.
         """
 
-        self.quit = False
         # close / open-software requests of the monitor, run while idle
         self.requests = RequestQueue(self._handle_request)
-        # set once release_resources() ran (exit() or Kodi shutdown)
         self._resources_released = False
         self.selected_control_id = SOFTWARE_BUTTON # holds the old control id from skin
         self.dummy = None # needed to prevent a software jump
@@ -272,8 +269,6 @@ class UMSA(xbmcgui.WindowXMLDialog):
         self.software_backlog = ActionBacklog()
         # to assure only one thread is running
         self.scan_thread = None
-        # diff emu toggle
-        self.diff_emu = False
 
         # skin controls, as the workflows see them
         self.view = View(self)
@@ -326,10 +321,6 @@ class UMSA(xbmcgui.WindowXMLDialog):
         xbmc.log("UMSA gui: onInit: done")
         xbmc.log(f"UMSA gui: PDF Reader import: {KODIPDF}")
         xbmc.log(f"UMSA gui: Youtube import: {KODIYT}")
-
-        if self.quit:
-            self.close()
-            return
 
     def _init_controls(self):
         """Set the skin controls up; safe to repeat on every onInit."""
@@ -1121,17 +1112,12 @@ class UMSA(xbmcgui.WindowXMLDialog):
         closes them when it ends (``_run_scan``).
         """
 
-        if getattr(self, '_resources_released', False):
+        if self._resources_released:
             return
         self._resources_released = True
 
-        requests = getattr(self, 'requests', None)
-        if isinstance(requests, RequestQueue):
-            requests.close()
-
-        settle = getattr(self, 'gamelist_settle', None)
-        if settle is not None:
-            settle.cancel()
+        self.requests.close()
+        self.gamelist_settle.cancel()
 
         # random playback sits between two tracks with playvgm off; a window
         # that closed before its first init has no emulation yet
@@ -1155,7 +1141,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         scan_alive = False
         try:
-            scan_thread = getattr(self, 'scan_thread', None)
+            scan_thread = self.scan_thread
             if scan_thread and scan_thread.is_alive():
                 try:
                     scan_thread.join(timeout=5)
@@ -1166,7 +1152,7 @@ class UMSA(xbmcgui.WindowXMLDialog):
             xbmc.log(f"UMSA gui: exit: could not inspect scan thread: {exc}", xbmc.LOGERROR)
 
         with _SCAN_LOCK:
-            if scan_alive and not getattr(self, '_scan_ended', False):
+            if scan_alive and not self._scan_ended:
                 # never close the databases under a running scan
                 self._close_db_after_scan = True
                 xbmc.log(
@@ -1207,7 +1193,7 @@ def main():
                      xbmc.LOGERROR)
         # also covers windows closed without exit() (e.g. failed first start);
         # a scan that still runs clears the flag when it closed the databases
-        if not getattr(gui, '_close_db_after_scan', False):
+        if not gui._close_db_after_scan:
             set_frontend_running(False)
     del gui
 
