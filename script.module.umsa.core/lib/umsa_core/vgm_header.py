@@ -221,6 +221,17 @@ def _validate_header(h: VGMHeader) -> None:
             return
 
 
+def mame_seconds_to_run(seconds: float) -> int:
+    """Whole seconds for MAME's ``-seconds_to_run``, never below 1.
+
+    MAME takes an integer and treats ``0`` as "no limit": a plan below one
+    second (short loops) would play for ever. Rounding up never cuts the
+    plan short.
+    """
+
+    return max(1, math.ceil(seconds))
+
+
 def calculate_playback_plan(header: VGMHeader, max_seconds: int = MAX_PLAYBACK_SECONDS) -> PlaybackPlan:
     """Compute planned playback duration from validated header."""
     

@@ -2,13 +2,15 @@
 -- copyright-holders: sparrowred
 
 -- VGMPlay driver script.
--- Measures audio levels, controls playback through the socket,
--- and reports playback statistics.
+-- Measures audio levels, levels the loudness towards LEVEL_TARGET_DB, fades
+-- out a playback that -seconds_to_run cuts (VGMPLAY_FADE_SECONDS), takes
+-- commands from the control socket and reports playback statistics.
 --
 -- Playback terminates on:
 --   1. "exit" received on the control socket
---   2. configured playback duration reached
---   3. start-of-VGM silence detected
+--   2. MAME's own -seconds_to_run limit (the final frames are sent
+--      PREEXIT_MARGIN seconds before, see the pre-exit plan)
+--   3. SILENCE_SECONDS of unbroken silence, at any time of the playback
 
 local LOG_TO_STDOUT = false
 -- Maximum text bytes per message, one frame stays well below 1 KiB.
@@ -16,6 +18,10 @@ local LOG_MAX_TEXT = 480
 -- Total log bytes per session. Bounds a blocking write when Python is gone:
 -- without this the kernel buffer would fill and could stall emulation.
 local LOG_MAX_TOTAL_BYTES = 65536
+-- Part of the budget only the final sequence (RMS_STATS -> VGM_VOLUME ->
+-- EXIT_NOW, at most 3 frames of < 512 bytes) may use, so a chatty playback
+-- cannot cost the statistics of its end.
+local LOG_FINAL_RESERVE = 2048
 
 --
 -- Audio measurement configuration
@@ -33,7 +39,12 @@ local FINGERPRINT_SECONDS = 0.10  -- ~100ms fingerprint window
 local SILENCE_THRESHOLD = 0.001  -- RMS below this counts as silence
 local SILENCE_SECONDS = 3.0      -- sustained silence required to exit
 local SILENCE_FLAT_EPS = 1e-6    -- max - min of a channel at or below this: flat
-local DIAG_SILENCE_LOG = true    -- SILENCE_START / SILENCE_END diagnostics
+local DIAG_SILENCE_LOG = true    -- SILENCE diagnostics (one frame per long dip)
+-- Music with rests dips below the threshold at note rate: only a dip longer
+-- than SILENCE_DIAG_MIN_SEC is logged, once at its end, and at most
+-- SILENCE_DIAG_MAX_FRAMES times per playback. RMS_STATS counts all of them.
+local SILENCE_DIAG_MIN_SEC = 0.2
+local SILENCE_DIAG_MAX_FRAMES = 20
 --
 -- Dynamic loudness leveling configuration
 --
@@ -101,6 +112,9 @@ local socket = nil
 local log_socket_ok = false  -- socket logging enabled
 local log_bytes_sent = 0
 local log_dropped = 0
+-- defined below (after sanitize); declared here so the leveling can use it
+local log
+local silence_dips = 0  -- dips longer than SILENCE_DIAG_MIN_SEC (RMS_STATS)
 
 -- seconds_to_run pre-exit trigger, set once during initialisation below.
 local preexit_seconds = 0  -- MAME's -seconds_to_run (0 = unlimited/disabled)
@@ -172,6 +186,9 @@ local function sanitize(text, limit)
     return text
 end
 
+-- MAME builds embed Lua 5.1 to 5.4: math.log10 only exists from 5.2 and the
+-- two argument math.log(x, base) form only from 5.2 too, so fall back to the
+-- single argument division that every version accepts.
 local function log10(x)
     if math.log10 then
         return math.log10(x)
@@ -187,23 +204,15 @@ local function linear_to_db(linear)
 end
 
 local function apply_gain(new_gain_db)
+    -- level_baseline_vol is set when the script loads, before the first call
     level_current_gain_db = new_gain_db
-    if level_baseline_vol == nil then
-        level_current_gain_db = 0
-        local ok, err = pcall(function()
-            level_baseline_vol = manager.machine.sound.volume or 0
-        end)
-        if level_baseline_vol == nil then
-            level_baseline_vol = 0  -- the read raised: no sound.volume
-        end
-    end
     -- sound.volume is float dB (luaengine.cpp: set_master_gain(db_to_linear(db)));
     -- no rounding - the loop works with fractional gain and would otherwise
     -- limit-cycle around whole dB steps
     local target_vol = level_baseline_vol + level_current_gain_db
     if target_vol < -96 then target_vol = -96 end
     if target_vol > 96 then target_vol = 96 end
-    local ok, err = pcall(function()
+    pcall(function()
         manager.machine.sound.volume = target_vol
     end)
 end
@@ -248,7 +257,7 @@ local function update_leveling()
         -- nothing to decide here
     elseif now >= LEVEL_LOCK_MAX_SEC then
         level_locked = true
-        _dbg_log_level(string.format(
+        log("INFO", string.format(
             "LEVEL_LOCKED: t=%.3f reason=max gain=%.2f", now, level_current_gain_db))
         return
     elseif now >= LEVEL_LOCK_MIN_SEC then
@@ -258,7 +267,7 @@ local function update_leveling()
         elseif math.abs(level_current_gain_db - level_anchor_gain) <= LEVEL_LOCK_DITHER_DB then
             if now - level_anchor_time >= LEVEL_LOCK_STABLE_SEC then
                 level_locked = true
-                _dbg_log_level(string.format(
+                log("INFO", string.format(
                     "LEVEL_LOCKED: t=%.3f reason=stable gain=%.2f anchor=%.2f",
                     now, level_current_gain_db, level_anchor_gain))
                 return
@@ -286,13 +295,6 @@ local function update_leveling()
         level_last_adj_sec = now
         return
     end
-    if level_baseline_vol == nil then
-        level_baseline_vol = 0
-        local ok, err = pcall(function()
-            level_baseline_vol = manager.machine.sound.volume or 0
-        end)
-    end
-
     -- The samples seen by the lua hook are taken before m_master_gain is
     -- applied (sound.cpp hands the speaker buffers to the hook, master_gain
     -- is only multiplied in at the output stage), so the measurement never
@@ -351,7 +353,7 @@ local function update_leveling()
     if math.abs(step) > 1e-6 then
         local old_gain = level_current_gain_db
         apply_gain(old_gain + step)
-        _dbg_log_level(string.format(
+        log("INFO", string.format(
             "LEVEL_ADJ: t=%.3f rms_db=%.2f eff_db=%.2f gain %.2f->%.2f",
             now, rms_db, effective_db, old_gain, level_current_gain_db))
     end
@@ -359,7 +361,8 @@ local function update_leveling()
 end
 
 -- Best-effort log output; socket failures disable further socket writes.
-local function log(level, text)
+-- Only the final sequence passes `final` and may use LOG_FINAL_RESERVE.
+function log(level, text, final)
     -- keep room for the drop counter so it survives truncation
     local suffix = ""
     if log_dropped > 0 then
@@ -377,12 +380,16 @@ local function log(level, text)
         return
     end
 
-    if log_bytes_sent >= LOG_MAX_TOTAL_BYTES then
+    local frame = "LOG|" .. level .. "|" .. msg .. "\n"
+    local limit = LOG_MAX_TOTAL_BYTES
+    if not final then
+        limit = limit - LOG_FINAL_RESERVE
+    end
+    if log_bytes_sent + #frame > limit then
         log_dropped = log_dropped + 1
         return
     end
 
-    local frame = "LOG|" .. level .. "|" .. msg .. "\n"
     -- write() returns the byte count when it reports one, or nothing at all;
     -- a short count means the stream would be corrupted, so treat it as broken
     local ok, written = pcall(socket.write, socket, frame)
@@ -396,13 +403,6 @@ local function log(level, text)
 
     log_dropped = 0
     log_bytes_sent = log_bytes_sent + #frame
-end
-
--- LEVEL_ADJ diagnostics go through the same log path (socket first, stdout
--- fallback). It is global and assigned here because `log` is a local defined
--- above; a local defined earlier could not see it.
-function _dbg_log_level(text)
-    log("INFO", text)
 end
 
 --
@@ -562,7 +562,7 @@ end
 -- behind. An explicit "-volume N" on the command line overrides the cfg and
 -- keeps the start deterministic - the log line below shows what was used.
 --
-local ok, err = pcall(function()
+pcall(function()
     level_baseline_vol = manager.machine.sound.volume or 0
 end)
 if level_baseline_vol == nil then
@@ -592,7 +592,8 @@ end
 --
 -- seconds_to_run pre-exit plan (initialised once per machine)
 --
--- The limit is an integer number of emulated seconds (Python passes int()).
+-- The limit is a whole number of emulated seconds (Python passes
+-- vgm_header.mame_seconds_to_run: rounded up, at least 1).
 --   0              -> MAME has no run limit, trigger disabled
 --   N - MARGIN     -> normal case (N >= 3, e.g. 10 -> 9.0, 90 -> 89.0)
 --   N * 0.5        -> fallback when N <= MARGIN (N = 1 -> 0.5, N = 2 -> 1.0)
@@ -699,67 +700,39 @@ local function emit_final_logs(reason)
         avg_rms = math.sqrt(total_energy_sum / total_energy_samples)
     end
 
-    -- Convert to dBFS (20 * log10(rms)), handle zero safely.
-    -- MAME builds embed Lua 5.1 to 5.4: math.log10 only exists from 5.2 and
-    -- the two argument math.log(x, base) form only from 5.2 too, so fall back
-    -- to the single argument division that every version accepts.
-    local function log10(x)
-        if math.log10 then
-            return math.log10(x)
-        end
-        return math.log(x) / math.log(10)
-    end
-
-    local avg_dbfs
-    if avg_rms > 0 then
-        avg_dbfs = 20 * log10(avg_rms)
-    else
-        avg_dbfs = -math.huge  -- -inf
-    end
-
-    local peak_dbfs
-    if peak_energy > 0 then
-        peak_dbfs = 20 * log10(peak_energy)
-    else
-        peak_dbfs = -math.huge
-    end
+    -- dBFS, -inf for silence
+    local avg_dbfs = linear_to_db(avg_rms)
+    local peak_dbfs = linear_to_db(peak_energy)
 
     local avg_dbfs_str = (avg_dbfs == -math.huge) and "-inf" or string.format("%.2f", avg_dbfs)
     local peak_dbfs_str = (peak_dbfs == -math.huge) and "-inf" or string.format("%.2f", peak_dbfs)
 
-    -- Python logs header metadata separately; Lua uses placeholders here.
-    local header_modifier = 0  -- Not directly available in Lua without args
-    local header_gain = 1.0
-    local has_extra_header = false
-
     -- Final RMS_STATS closes the statistics sequence. INFO (not DEBUG) so the
     -- final sequence survives with debug logging switched off.
     log("INFO", string.format(
-        "RMS_STATS: t=%.3f fingerprint=%.3f avg_rms_so_far=%.6f peak_rms=%.6f windows=%d",
+        "RMS_STATS: t=%.3f fingerprint=%.3f avg_rms_so_far=%.6f peak_rms=%.6f windows=%d silence_dips=%d",
         now, diag_last_rms,
         total_energy_samples > 0 and math.sqrt(total_energy_sum / total_energy_samples) or 0,
         peak_energy,
-        fingerprint_count
-    ))
+        fingerprint_count,
+        silence_dips
+    ), true)
 
     log("INFO", string.format(
-        "VGM_VOLUME file=\"%s\" header_modifier=%d header_gain=%.6f avg_rms=%.6f avg_dbfs=%s peak_rms=%.6f peak_dbfs=%s samples=%d fingerprint_windows=%d has_extra_header=%s",
+        "VGM_VOLUME file=\"%s\" avg_rms=%.6f avg_dbfs=%s peak_rms=%.6f peak_dbfs=%s samples=%d fingerprint_windows=%d",
         emu.gamename(),
-        header_modifier,
-        header_gain,
         avg_rms,
         avg_dbfs_str,
         peak_energy,
         peak_dbfs_str,
         total_energy_samples,
-        fingerprint_count,
-        has_extra_header and "true" or "false"
-    ))
+        fingerprint_count
+    ), true)
 
     log("INFO", string.format(
         "EXIT_NOW: %s (t=%.3f, rms=%.6f, avg_rms=%.6f, peak_rms=%.6f)",
         reason, now, diag_last_rms, avg_rms, peak_energy
-    ))
+    ), true)
 
     -- Do not restore the baseline here: this runs before MAME's own termination
     -- and would snap the volume up during playback, fighting any fade-out.
@@ -813,13 +786,13 @@ local function handle_command(line)
         exit_now("EXIT on socket command")
     elseif line == "volume_up" then
         level_manual_override = true
-        local ok, err = pcall(function()
+        pcall(function()
             manager.machine.sound.volume = manager.machine.sound.volume+1
         end)
         log("INFO", "VGM VOLUME UP")
     elseif line == "volume_down" then
         level_manual_override = true
-        local ok, err = pcall(function()
+        pcall(function()
             manager.machine.sound.volume = manager.machine.sound.volume-1
         end)
         log("INFO", "VGM VOLUME DOWN")
@@ -900,6 +873,7 @@ local fingerprint_sum = 0
 local fingerprint_samples = 0
 
 local silence_start = nil
+local silence_flat = false      -- the dip began with a frozen (flat, non-zero) buffer
 local fingerprint_flat = true   -- every callback of the current window was flat
 
 -- Returns the RMS over all channels and whether the buffer is flat (every
@@ -923,20 +897,14 @@ local function calculate_callback_rms(channels)
                 hi = v
             end
         end
-        if hi - lo > SILENCE_FLAT_EPS then
-            flat = false
-        end
-        if hi < 0 then
-            hi = -hi
-        end
-        if lo < 0 then
-            lo = -lo
-        end
-        if lo > hi then
-            hi = lo
-        end
-        if hi > peak_sample and hi ~= math.huge then
-            peak_sample = hi
+        if #buffer > 0 then
+            if hi - lo > SILENCE_FLAT_EPS then
+                flat = false
+            end
+            local peak = math.max(math.abs(lo), math.abs(hi))
+            if peak > peak_sample then
+                peak_sample = peak
+            end
         end
     end
 
@@ -953,18 +921,21 @@ local function update_silence_detection(rms, flat, now)
     -- the VGM; any audible callback in between starts the count again.
     --
     if rms >= SILENCE_THRESHOLD and not flat then
-        if silence_start and DIAG_SILENCE_LOG and now - silence_start > 0.2 then
-            log("DEBUG", string.format(
-                "SILENCE_END: t=%.3f after %.2fs (not silent long enough)",
-                now, now - silence_start))
+        if silence_start and now - silence_start > SILENCE_DIAG_MIN_SEC then
+            silence_dips = silence_dips + 1
+            if DIAG_SILENCE_LOG and silence_dips <= SILENCE_DIAG_MAX_FRAMES then
+                log("DEBUG", string.format(
+                    "SILENCE: t=%.3f len=%.2f flat=%s",
+                    silence_start, now - silence_start, tostring(silence_flat)))
+            elseif DIAG_SILENCE_LOG and silence_dips == SILENCE_DIAG_MAX_FRAMES + 1 then
+                log("DEBUG", "SILENCE: further dips not logged")
+            end
         end
         silence_start = nil
     elseif not silence_start then
         silence_start = now
-        if DIAG_SILENCE_LOG then
-            log("DEBUG", string.format(
-                "SILENCE_START: t=%.3f rms=%.6f flat=%s", now, rms, tostring(flat)))
-        end
+        -- frozen mixer: inaudible although the RMS is above the threshold
+        silence_flat = flat and rms >= SILENCE_THRESHOLD
     elseif now - silence_start >= SILENCE_SECONDS then
         return now - silence_start
     end
@@ -1046,8 +1017,8 @@ emu.register_sound_update(function(samples)
     local silence_duration = update_silence_detection(rms, flat, now)
     if silence_duration then
         exit_now(string.format(
-            "VGM SILENCE DETECTED: %.2f seconds",
-            silence_duration))
+            "VGM SILENCE DETECTED: %.2f seconds (flat=%s)",
+            silence_duration, tostring(silence_flat)))
         return
     end
 

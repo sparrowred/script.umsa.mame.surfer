@@ -551,6 +551,41 @@ class Emulation:
             return False
         return True
 
+    def _wait_vgm_process(self, process, connected):
+        """Wait for MAME, at most ``VgmPlayer.process_timeout()`` seconds.
+
+        A MAME that does not end on its own (hangs, runs much slower than
+        real time) is ended like ``stop_vgm`` does: ``exit`` over the socket,
+        then terminate, then kill. The stop request stays unset, so a random
+        playback goes on with the next track.
+
+        Returns ``(returncode, timed_out)``; returncode is None when even
+        kill did not end the process.
+        """
+        timeout = self.vgm_player.process_timeout()
+        try:
+            return process.wait(timeout=timeout), False
+        except subprocess.TimeoutExpired:
+            pass
+        log(f'UMSA Emu: MAME vgmplay did not end within {timeout:.0f} s, stopping it',
+            level='warning')
+        steps = [('terminate', VGM_STOP_TIMEOUT), ('kill', VGM_KILL_JOIN_TIMEOUT)]
+        if connected:
+            try:
+                self.send_vgmaction(b'exit')
+            except Exception as error:
+                log(f'UMSA Emu: stop vgm - exit command failed: {error}', level='warning')
+            steps.insert(0, (None, VGM_STOP_TIMEOUT))
+        for how, wait_seconds in steps:
+            if how:
+                self._end_vgm_process(how)
+            try:
+                return process.wait(timeout=wait_seconds), True
+            except subprocess.TimeoutExpired:
+                pass
+        log('UMSA Emu: MAME vgmplay still running after kill', level='warning')
+        return None, True
+
     def play_vgm_thread(self, vgm, sec2run=90, intro=False, close_server=True,
                     plan=None, info=None, title=None):
         """Play vgm.
@@ -560,7 +595,8 @@ class Emulation:
         connected the info counts the remaining time down.
 
         Returns False when MAME ended with an error before vgmplay.lua
-        connected (broken MAME setup or script), True otherwise.
+        connected (broken MAME setup or script) or had to be stopped because
+        it did not end in time (``_wait_vgm_process``), True otherwise.
         """
         port = self.vgm_socket.bound_port
         port_str = str(port) if port is not None else None
@@ -582,8 +618,10 @@ class Emulation:
                 self.vgm_player.start_info_ticker()
             # wait until emu is finished
             if process:
-                my_rc = process.wait()
+                my_rc, timed_out = self._wait_vgm_process(process, connected)
                 log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
+                if timed_out:
+                    return False
                 if not connected and my_rc != 0 and not self._vgm_stop.is_set():
                     log(
                         f'UMSA Emu: MAME vgmplay failed before the Lua script '

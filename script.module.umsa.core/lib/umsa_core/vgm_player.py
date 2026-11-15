@@ -20,6 +20,7 @@ from umsa_core.vgm_header import (
     MAX_PLAYBACK_SECONDS,
     format_vgm_status,
     format_vgm_title,
+    mame_seconds_to_run,
 )
 from umsa_core.vgm_socket import _parse_vgmplay_port, parse_lua_level_db
 
@@ -28,6 +29,10 @@ VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
 # Music info countdown: refresh interval and bounded join on stop
 VGM_INFO_TICK_SECONDS = 1.0
 VGM_INFO_TICKER_JOIN_TIMEOUT = 1.5
+# Longest wait for MAME after the Lua connect: -seconds_to_run counts emulated
+# time, so a slow machine may take longer; beyond this the track is stopped
+VGM_WAIT_FACTOR = 1.5
+VGM_WAIT_MARGIN_SECONDS = 30.0
 
 
 class VgmPlayer:
@@ -116,6 +121,11 @@ class VgmPlayer:
         level_db = parse_lua_level_db(text)
         if level_db is not None:
             self._level_db = level_db
+
+    def process_timeout(self):
+        """Seconds to wait for the MAME process of the prepared track."""
+
+        return self._planned_seconds * VGM_WAIT_FACTOR + VGM_WAIT_MARGIN_SECONDS
 
     def start_info_ticker(self, clock=time.monotonic):
         """Count the music info down once per second until stopped.
@@ -207,12 +217,13 @@ class VgmPlayer:
             or plan.fade_out
         )
         self._vgm_title = title or info
-        self._planned_seconds = int(actual_sec)
+        # the info counts down from what MAME really runs
+        self._planned_seconds = mame_seconds_to_run(actual_sec)
         self._level_db = None
         if self._vgm_title:
             self._notify_vgm_info(self.vgm_status(self._planned_seconds))
         vgm_args = ['-videodriver', 'dummy', '-video', 'none', '-nojoystick', '-nowriteconfig',
-            '-seconds_to_run', str(int(actual_sec)), '-autoboot_script', self.lua_script,
+            '-seconds_to_run', str(self._planned_seconds), '-autoboot_script', self.lua_script,
             '-volume', '1', 'vgmplay', '-quik', vgm]
         emurun.update({
             'args': vgm_args,
