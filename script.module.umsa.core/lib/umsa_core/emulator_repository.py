@@ -14,7 +14,7 @@ never manages the lifetime of the caller's connection. Connections must use
 ``sqlite3.Row`` (step 4.2b contract, decision Q7) and are rejected otherwise.
 
 Write methods run their statements inside a savepoint (the ownership-aware
-transaction convention of :class:`umsa_core.status_repository.StatusRepository`):
+transaction convention of :func:`umsa_core.sqlite.write_savepoint`):
 
 - a standalone successful write commits the transaction the savepoint
   started, so ``connection.in_transaction`` is ``False`` afterwards;
@@ -42,7 +42,7 @@ from __future__ import annotations
 import sqlite3
 
 from .logging import log
-from .sqlite import require_row_connection
+from .sqlite import require_row_connection, write_savepoint
 
 
 def create_emulator_tables(cursor: sqlite3.Cursor) -> None:
@@ -191,29 +191,21 @@ class EmulatorRepository:
 
         if "id" in emu_info:
             emu_id = emu_info["id"]
-
-            def operation(cursor: sqlite3.Cursor) -> None:
+            with write_savepoint(self._conn, "umsa_emu_write") as cursor:
                 cursor.execute(
                     "UPDATE emu SET name = ?, exe = ?, dir = ?, zip = ?, mode = ? "
                     "WHERE id = ?",
                     (emu_info["name"], emu_info["exe"], emu_info["dir"],
                      emu_info["zip"], emu_info["mode"], emu_id))
-
-            self._write_within_savepoint(operation)
         else:
-            captured: dict = {}
-
-            def operation(cursor: sqlite3.Cursor) -> None:
+            with write_savepoint(self._conn, "umsa_emu_write") as cursor:
                 cursor.execute(
                     "INSERT INTO emu (name, exe, dir, zip, mode) VALUES (?, ?, ?, ?, ?)",
                     (emu_info["name"], emu_info["exe"], emu_info["dir"],
                      emu_info["zip"], emu_info["mode"]))
-                # capture the generated id from the insert cursor immediately,
+                # read the generated id from the insert cursor immediately,
                 # before any subsequent write could change lastrowid
-                captured["id"] = cursor.lastrowid
-
-            self._write_within_savepoint(operation)
-            emu_id = captured["id"]
+                emu_id = cursor.lastrowid
 
         if not reconfigure:
             self.connect_emulator(emu_id, source=source, swl_name=swl_name)
@@ -228,20 +220,17 @@ class EmulatorRepository:
         """
 
         if source:
-            def operation(cursor: sqlite3.Cursor) -> None:
-                cursor.execute(
-                    "INSERT INTO emu_conn (emu_id, source) VALUES (?, ?)",
-                    (emu_id, source))
+            column, value = "source", source
         elif swl_name:
-            def operation(cursor: sqlite3.Cursor) -> None:
-                cursor.execute(
-                    "INSERT INTO emu_conn (emu_id, swl) VALUES (?, ?)",
-                    (emu_id, swl_name))
+            column, value = "swl", swl_name
         else:
             log("UMSA database: connect_emulator error", level='debug')
             return
 
-        self._write_within_savepoint(operation)
+        with write_savepoint(self._conn, "umsa_emu_write") as cursor:
+            cursor.execute(
+                f"INSERT INTO emu_conn (emu_id, {column}) VALUES (?, ?)",
+                (emu_id, value))
 
     def delete_emulator_connection(self, emu_conn_id):
         """Delete one emulator connection to a software list or source.
@@ -252,9 +241,7 @@ class EmulatorRepository:
         connection was that emulator's final connection, otherwise ``None``.
         """
 
-        result: dict = {}
-
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_emu_write") as cursor:
             # get emu.ids for emu_conn.id before deleting
             cursor.execute(
                 "SELECT emu_id FROM emu_conn WHERE emu_id IN "
@@ -262,11 +249,8 @@ class EmulatorRepository:
             connected_emus = cursor.fetchall()
             # delete emu_conn.id
             cursor.execute("DELETE FROM emu_conn WHERE id = ?", (emu_conn_id,))
-            # return it if only 1
-            result["emu_id"] = connected_emus[0][0] if len(connected_emus) == 1 else None
-
-        self._write_within_savepoint(operation)
-        return result["emu_id"]
+        # return it if only 1
+        return connected_emus[0][0] if len(connected_emus) == 1 else None
 
     def delete_emulator(self, emu_id) -> None:
         """Delete an emulator and all of its connections.
@@ -279,41 +263,7 @@ class EmulatorRepository:
         value: ``None``.
         """
 
-        def delete_connections(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_emu_write") as cursor:
             cursor.execute("DELETE FROM emu_conn WHERE emu_id = ?", (emu_id,))
-
-        def delete_emulator_row(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_emu_write") as cursor:
             cursor.execute("DELETE FROM emu WHERE id = ?", (emu_id,))
-
-        self._write_within_savepoint(delete_connections)
-        self._write_within_savepoint(delete_emulator_row)
-
-    def _write_within_savepoint(self, operation) -> None:
-        """Run ``operation(cursor)`` inside an ownership-aware savepoint.
-
-        Follows the ``StatusRepository`` write convention: a savepoint is
-        always opened (which also starts the transaction when none is
-        active), the statements are released on success and rolled back to
-        on failure, and only a transaction this call started is committed. A
-        caller's outer transaction and its pending changes are never
-        committed, never rolled back, and never left with a dangling
-        savepoint.
-        """
-
-        conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SAVEPOINT umsa_emu_write")
-            try:
-                operation(cursor)
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_emu_write")
-                cursor.execute("RELEASE umsa_emu_write")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_emu_write")
-                if not had_transaction:
-                    conn.commit()
-        finally:
-            cursor.close()

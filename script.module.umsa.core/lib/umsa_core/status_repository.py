@@ -13,7 +13,7 @@ never manages the lifetime of the caller's connection. Connections must use
 ``sqlite3.Row`` (step 4.2b contract, decision Q7) and are rejected otherwise.
 
 Write methods run their statements inside a savepoint (the ownership-aware
-transaction convention of :class:`umsa_core.dat_repository.DatRepository`):
+transaction convention of :func:`umsa_core.sqlite.write_savepoint`):
 
 - a standalone successful write commits the transaction the savepoint
   started, so ``connection.in_transaction`` is ``False`` afterwards;
@@ -34,7 +34,7 @@ import sqlite3
 import time
 from collections.abc import Iterable
 
-from .sqlite import require_row_connection
+from .sqlite import require_row_connection, write_savepoint
 
 # sort columns of the play status list (``sets`` columns of status.db)
 PLAY_STATUS_ORDERS = ('time_played', 'last_played', 'play_count')
@@ -216,35 +216,6 @@ class StatusRepository:
             return None
         return row[0]
 
-    def _write_within_savepoint(self, operation) -> None:
-        """Run ``operation(cursor)`` inside an ownership-aware savepoint.
-
-        Follows the ``DatRepository`` write convention: a savepoint is always
-        opened (which also starts the transaction when none is active), the
-        statements are released on success and rolled back to on failure, and
-        only a transaction this call started is committed. A caller's outer
-        transaction and its pending changes are never committed, never rolled
-        back, and never left with a dangling savepoint.
-        """
-
-        conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SAVEPOINT umsa_status_write")
-            try:
-                operation(cursor)
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_status_write")
-                cursor.execute("RELEASE umsa_status_write")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_status_write")
-                if not had_transaction:
-                    conn.commit()
-        finally:
-            cursor.close()
-
     def write_status_after_play(self, set_id, played_seconds) -> None:
         """Record one play session for ``set_id``.
 
@@ -259,7 +230,7 @@ class StatusRepository:
 
         date = time.strftime("%Y-%m-%d %H:%M")
 
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_status_write") as cursor:
             # get data
             cursor.execute(
                 "SELECT time_played, play_count FROM sets WHERE id = ?",
@@ -289,8 +260,6 @@ class StatusRepository:
                     (set_data),
                 )
 
-        self._write_within_savepoint(operation)
-
     def save_further_media(
         self, set_id, marp: str | None = None, youtube: str | None = None
     ) -> None:
@@ -304,7 +273,7 @@ class StatusRepository:
         happens. Observable return value: ``None``.
         """
 
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_status_write") as cursor:
             # check set_id
             cursor.execute("SELECT sets.id FROM sets WHERE id = ?", (set_id,))
             if cursor.fetchone():
@@ -325,5 +294,3 @@ class StatusRepository:
                     "INSERT INTO sets (id, marp, youtube) VALUES(?,?,?)",
                     (set_id, marp or None, youtube or None),
                 )
-
-        self._write_within_savepoint(operation)

@@ -20,7 +20,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable
 
-from .sqlite import require_row_connection
+from .sqlite import require_row_connection, write_savepoint
 
 
 def create_artwork_tables(db_cursor: sqlite3.Cursor) -> None:
@@ -332,34 +332,19 @@ class ArtworkRepository:
         removed artwork rows.
         """
 
-        conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SAVEPOINT umsa_art_delete_unit")
-            try:
-                cursor.execute(
-                    f"DELETE FROM {self._qt('art_set')} "
-                    "WHERE source=? AND root_key=? AND scan_unit=?",
-                    (source, root_key, scan_unit),
-                )
-                removed = cursor.rowcount
-                cursor.execute(
-                    f"DELETE FROM {self._qt('art_scan_unit')} "
-                    "WHERE source=? AND root_key=? AND scan_unit=?",
-                    (source, root_key, scan_unit),
-                )
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_art_delete_unit")
-                cursor.execute("RELEASE umsa_art_delete_unit")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_art_delete_unit")
-                if not had_transaction:
-                    conn.commit()
-            return removed if removed is not None else 0
-        finally:
-            cursor.close()
+        with write_savepoint(self._conn, "umsa_art_delete_unit") as cursor:
+            cursor.execute(
+                f"DELETE FROM {self._qt('art_set')} "
+                "WHERE source=? AND root_key=? AND scan_unit=?",
+                (source, root_key, scan_unit),
+            )
+            removed = cursor.rowcount
+            cursor.execute(
+                f"DELETE FROM {self._qt('art_scan_unit')} "
+                "WHERE source=? AND root_key=? AND scan_unit=?",
+                (source, root_key, scan_unit),
+            )
+        return removed if removed is not None else 0
 
     def list_scan_units(self, source: str, root_key: str) -> list:
         """List every persisted scan unit for an exact ``(source, root_key)``.
@@ -403,36 +388,21 @@ class ArtworkRepository:
         if not keep:
             return 0
 
-        conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
         placeholders = ",".join("?" * len(keep))
         args = (source, *keep)
-        try:
-            cursor.execute("SAVEPOINT umsa_art_delete_roots")
-            try:
-                cursor.execute(
-                    f"DELETE FROM {self._qt('art_set')} "
-                    f"WHERE source=? AND root_key NOT IN ({placeholders})",
-                    args,
-                )
-                removed = cursor.rowcount or 0
-                cursor.execute(
-                    f"DELETE FROM {self._qt('art_scan_unit')} "
-                    f"WHERE source=? AND root_key NOT IN ({placeholders})",
-                    args,
-                )
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_art_delete_roots")
-                cursor.execute("RELEASE umsa_art_delete_roots")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_art_delete_roots")
-                if not had_transaction:
-                    conn.commit()
-            return removed
-        finally:
-            cursor.close()
+        with write_savepoint(self._conn, "umsa_art_delete_roots") as cursor:
+            cursor.execute(
+                f"DELETE FROM {self._qt('art_set')} "
+                f"WHERE source=? AND root_key NOT IN ({placeholders})",
+                args,
+            )
+            removed = cursor.rowcount or 0
+            cursor.execute(
+                f"DELETE FROM {self._qt('art_scan_unit')} "
+                f"WHERE source=? AND root_key NOT IN ({placeholders})",
+                args,
+            )
+        return removed
 
     def delete_scan_units(
         self, source: str, root_key: str, scan_units: Iterable[str]
@@ -452,36 +422,21 @@ class ArtworkRepository:
         if not units:
             return 0
 
-        conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
         removed = 0
-        try:
-            cursor.execute("SAVEPOINT umsa_art_delete_units")
-            try:
-                for unit in units:
-                    cursor.execute(
-                        f"DELETE FROM {self._qt('art_set')} "
-                        "WHERE source=? AND root_key=? AND scan_unit=?",
-                        (source, root_key, unit),
-                    )
-                    removed += cursor.rowcount or 0
-                    cursor.execute(
-                        f"DELETE FROM {self._qt('art_scan_unit')} "
-                        "WHERE source=? AND root_key=? AND scan_unit=?",
-                        (source, root_key, unit),
-                    )
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_art_delete_units")
-                cursor.execute("RELEASE umsa_art_delete_units")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_art_delete_units")
-                if not had_transaction:
-                    conn.commit()
-            return removed
-        finally:
-            cursor.close()
+        with write_savepoint(self._conn, "umsa_art_delete_units") as cursor:
+            for unit in units:
+                cursor.execute(
+                    f"DELETE FROM {self._qt('art_set')} "
+                    "WHERE source=? AND root_key=? AND scan_unit=?",
+                    (source, root_key, unit),
+                )
+                removed += cursor.rowcount or 0
+                cursor.execute(
+                    f"DELETE FROM {self._qt('art_scan_unit')} "
+                    "WHERE source=? AND root_key=? AND scan_unit=?",
+                    (source, root_key, unit),
+                )
+        return removed
 
     def replace_scan_unit(
         self,
@@ -513,43 +468,27 @@ class ArtworkRepository:
         and scan-unit state are preserved and the caller's transaction stays
         active and usable. The caller's connection is never closed.
         """
-        conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
-        try:
-            # Materialise the replacement inside the try so the cursor is closed
-            # even when consuming ``artwork_rows`` raises. Nothing is written
-            # before the savepoint, so a failure here leaves the database
-            # untouched.
-            rows = list(artwork_rows)
-            cursor.execute("SAVEPOINT umsa_art_replace_unit")
-            try:
-                cursor.execute(
-                    f"DELETE FROM {self._qt('art_set')} "
-                    "WHERE source=? AND root_key=? AND scan_unit=?",
-                    (source, root_key, scan_unit),
+        # Materialise the replacement before the savepoint: nothing is written
+        # yet, so a failure while consuming ``artwork_rows`` leaves the
+        # database untouched.
+        rows = list(artwork_rows)
+        with write_savepoint(self._conn, "umsa_art_replace_unit") as cursor:
+            cursor.execute(
+                f"DELETE FROM {self._qt('art_set')} "
+                "WHERE source=? AND root_key=? AND scan_unit=?",
+                (source, root_key, scan_unit),
+            )
+            if rows:
+                cursor.executemany(
+                    f"INSERT INTO {self._qt('art_set')} "
+                    "(id,source,root_key,scan_unit,type,extension,"
+                    "relative_path,archive_member) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    rows,
                 )
-                if rows:
-                    cursor.executemany(
-                        f"INSERT INTO {self._qt('art_set')} "
-                        "(id,source,root_key,scan_unit,type,extension,"
-                        "relative_path,archive_member) "
-                        "VALUES (?,?,?,?,?,?,?,?)",
-                        rows,
-                    )
-                cursor.execute(
-                    f"INSERT OR REPLACE INTO {self._qt('art_scan_unit')} "
-                    "(source,root_key,scan_unit,status,updated_at,dir_mtime) "
-                    "VALUES (?,?,?,?,datetime('now'),?)",
-                    (source, root_key, scan_unit, "done", dir_mtime),
-                )
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_art_replace_unit")
-                cursor.execute("RELEASE umsa_art_replace_unit")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_art_replace_unit")
-                if not had_transaction:
-                    conn.commit()
-        finally:
-            cursor.close()
+            cursor.execute(
+                f"INSERT OR REPLACE INTO {self._qt('art_scan_unit')} "
+                "(source,root_key,scan_unit,status,updated_at,dir_mtime) "
+                "VALUES (?,?,?,?,datetime('now'),?)",
+                (source, root_key, scan_unit, "done", dir_mtime),
+            )

@@ -27,7 +27,7 @@ from collections.abc import Iterable
 
 from .dat_parser import DRIVER_WIP
 from .scan_coordinator import scan_coordinator
-from .sqlite import require_row_connection
+from .sqlite import require_row_connection, write_savepoint
 
 ORIGIN_MAME_SUPPORT = "mame_support"
 ORIGIN_EXODOS = "exodos"
@@ -370,50 +370,35 @@ class DatRepository:
         never closed. Returns the id of the inserted row.
         """
 
-        conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SAVEPOINT umsa_dat_replace_set")
-            try:
+        with write_savepoint(self._conn, "umsa_dat_replace_set") as cursor:
+            cursor.execute(
+                "SELECT dat.id FROM dat_set JOIN dat ON dat.id = dat_set.dat_id "
+                "WHERE dat.origin = ? AND dat_set.id = ?",
+                (origin, set_id),
+            )
+            old_ids = [row[0] for row in cursor.fetchall()]
+            for dat_id in old_ids:
                 cursor.execute(
-                    "SELECT dat.id FROM dat_set JOIN dat ON dat.id = dat_set.dat_id "
-                    "WHERE dat.origin = ? AND dat_set.id = ?",
-                    (origin, set_id),
+                    "DELETE FROM dat_set WHERE dat_id = ? AND id = ?",
+                    (dat_id, set_id),
                 )
-                old_ids = [row[0] for row in cursor.fetchall()]
-                for dat_id in old_ids:
-                    cursor.execute(
-                        "DELETE FROM dat_set WHERE dat_id = ? AND id = ?",
-                        (dat_id, set_id),
-                    )
-                    cursor.execute(
-                        "DELETE FROM dat WHERE id = ? AND NOT EXISTS "
-                        "(SELECT 1 FROM dat_set WHERE dat_id = ?)",
-                        (dat_id, dat_id),
-                    )
                 cursor.execute(
-                    "INSERT INTO dat(file, entry, origin) VALUES (?, ?, ?)",
-                    (file, entry, origin),
+                    "DELETE FROM dat WHERE id = ? AND NOT EXISTS "
+                    "(SELECT 1 FROM dat_set WHERE dat_id = ?)",
+                    (dat_id, dat_id),
                 )
-                new_id = cursor.lastrowid
-                if new_id is None:
-                    raise RuntimeError("dat insert did not return a row id")
-                cursor.execute(
-                    "INSERT INTO dat_set(id, dat_id) VALUES (?, ?)",
-                    (set_id, new_id),
-                )
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_dat_replace_set")
-                cursor.execute("RELEASE umsa_dat_replace_set")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_dat_replace_set")
-                if not had_transaction:
-                    conn.commit()
-            return new_id
-        finally:
-            cursor.close()
+            cursor.execute(
+                "INSERT INTO dat(file, entry, origin) VALUES (?, ?, ?)",
+                (file, entry, origin),
+            )
+            new_id = cursor.lastrowid
+            if new_id is None:
+                raise RuntimeError("dat insert did not return a row id")
+            cursor.execute(
+                "INSERT INTO dat_set(id, dat_id) VALUES (?, ?)",
+                (set_id, new_id),
+            )
+        return new_id
 
     def replace_origin(self, origin: str, records,
                        allow_empty: bool = False) -> int:
@@ -450,48 +435,33 @@ class DatRepository:
                 "refusing to replace an origin with an empty record collection"
             )
 
-        conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
         published = 0
-        try:
-            cursor.execute("SAVEPOINT umsa_dat_replace_origin")
-            try:
-                cursor.execute(
-                    "DELETE FROM dat_set WHERE dat_id IN "
-                    "(SELECT id FROM dat WHERE origin = ?)",
-                    (origin,),
-                )
-                cursor.execute("DELETE FROM dat WHERE origin = ?", (origin,))
+        with write_savepoint(self._conn, "umsa_dat_replace_origin") as cursor:
+            cursor.execute(
+                "DELETE FROM dat_set WHERE dat_id IN "
+                "(SELECT id FROM dat WHERE origin = ?)",
+                (origin,),
+            )
+            cursor.execute("DELETE FROM dat WHERE origin = ?", (origin,))
 
-                for entry in entries:
-                    set_ids = getattr(entry, "set_ids", ())
+            for entry in entries:
+                set_ids = getattr(entry, "set_ids", ())
+                cursor.execute(
+                    "INSERT INTO dat(file, entry, origin, driver) "
+                    "VALUES (?, ?, ?, ?)",
+                    (entry.file, entry.entry, origin,
+                     getattr(entry, "driver", None)),
+                )
+                new_id = cursor.lastrowid
+                if new_id is None:
+                    raise RuntimeError("dat insert did not return a row id")
+                for set_id in set_ids:
                     cursor.execute(
-                        "INSERT INTO dat(file, entry, origin, driver) "
-                        "VALUES (?, ?, ?, ?)",
-                        (entry.file, entry.entry, origin,
-                         getattr(entry, "driver", None)),
+                        "INSERT INTO dat_set(id, dat_id) VALUES (?, ?)",
+                        (set_id, new_id),
                     )
-                    new_id = cursor.lastrowid
-                    if new_id is None:
-                        raise RuntimeError("dat insert did not return a row id")
-                    for set_id in set_ids:
-                        cursor.execute(
-                            "INSERT INTO dat_set(id, dat_id) VALUES (?, ?)",
-                            (set_id, new_id),
-                        )
-                    published += 1
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_dat_replace_origin")
-                cursor.execute("RELEASE umsa_dat_replace_origin")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_dat_replace_origin")
-                if not had_transaction:
-                    conn.commit()
-            return published
-        finally:
-            cursor.close()
+                published += 1
+        return published
 
     def publish_staged(self, origin: str) -> int:
         """Atomically replace one origin's published rows with the staged data.
@@ -507,13 +477,10 @@ class DatRepository:
 
         _guard_staging_coordinated()
         conn = self._conn
-        had_transaction = conn.in_transaction
-        cursor = conn.cursor()
         reader = conn.cursor()
         published = 0
         try:
-            cursor.execute("SAVEPOINT umsa_dat_publish")
-            try:
+            with write_savepoint(conn, "umsa_dat_publish") as cursor:
                 cursor.execute(
                     "DELETE FROM dat_set WHERE dat_id IN "
                     "(SELECT id FROM dat WHERE origin = ?)",
@@ -546,15 +513,6 @@ class DatRepository:
 
                 cursor.execute("DELETE FROM dat_staging")
                 cursor.execute("DELETE FROM dat_staging_set")
-            except Exception:
-                cursor.execute("ROLLBACK TO umsa_dat_publish")
-                cursor.execute("RELEASE umsa_dat_publish")
-                raise
-            else:
-                cursor.execute("RELEASE umsa_dat_publish")
-                if not had_transaction:
-                    conn.commit()
             return published
         finally:
             reader.close()
-            cursor.close()

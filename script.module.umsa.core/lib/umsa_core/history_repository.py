@@ -8,7 +8,7 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
-from .sqlite import require_row_connection
+from .sqlite import require_row_connection, write_savepoint
 
 FILTER_CATEGORY_INTERNAL = {
     "Softwarelists": "softwarelists",
@@ -87,27 +87,6 @@ def normalize_set_id(value: Any) -> int:
     return set_id
 
 
-def _write_within_savepoint(
-    connection: sqlite3.Connection, operation
-) -> None:
-    had_transaction = connection.in_transaction
-    cursor = connection.cursor()
-    try:
-        cursor.execute("SAVEPOINT umsa_history_write")
-        try:
-            operation(cursor)
-        except Exception:
-            cursor.execute("ROLLBACK TO umsa_history_write")
-            cursor.execute("RELEASE umsa_history_write")
-            raise
-        else:
-            cursor.execute("RELEASE umsa_history_write")
-            if not had_transaction:
-                connection.commit()
-    finally:
-        cursor.close()
-
-
 def create_history_tables(cursor: sqlite3.Cursor) -> None:
     """Create the history and metadata tables for status.db."""
 
@@ -175,15 +154,13 @@ class HistoryRepository:
         ids = list(software_list)[-100:] if software_list else []
         ids_list = list(ids)
 
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_history_write") as cursor:
             cursor.execute("DELETE FROM gui_lastgames")
             for pos, software_id in enumerate(ids_list):
                 cursor.execute(
                     "INSERT INTO gui_lastgames (position, software_id) VALUES (?, ?)",
                     (pos, int(software_id)),
                 )
-
-        _write_within_savepoint(self._conn, operation)
 
     def list_filter_names(self) -> list[str]:
         cursor = self._conn.cursor()
@@ -221,7 +198,7 @@ class HistoryRepository:
     def save_filter_selections(
         self, filter_name: str, filter_lists: dict[str, list[str]]
     ) -> None:
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_history_write") as cursor:
             cursor.execute(
                 "DELETE FROM filter_selections WHERE filter_name = ?",
                 (filter_name,),
@@ -244,8 +221,6 @@ class HistoryRepository:
                         "VALUES (?, ?, ?, ?)",
                         (filter_name, internal_key, pos, str(value)),
                     )
-
-        _write_within_savepoint(self._conn, operation)
 
     def record_screensaver_display(
         self, set_id: Any, software_id: Any = None
@@ -282,7 +257,7 @@ class HistoryRepository:
         # timezone-naive DATETIME and displayed_at is never used for ordering.
         displayed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_history_write") as cursor:
             # Move the set to the newest position: the old row keeps its
             # UNIQUE set_id, so it must go before the re-insert.
             cursor.execute(
@@ -301,8 +276,6 @@ class HistoryRepository:
                 "ORDER BY id DESC LIMIT ?)",
                 (SCREENSAVER_HISTORY_LIMIT,),
             )
-
-        _write_within_savepoint(self._conn, operation)
 
     def list_screensaver_history(
         self, limit: int | None = None
@@ -355,13 +328,11 @@ class HistoryRepository:
     def record_import_marker(self, marker: dict[str, Any]) -> None:
         value = json.dumps(marker, ensure_ascii=False)
 
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_history_write") as cursor:
             cursor.execute(
                 "INSERT OR REPLACE INTO status_meta (key, value) VALUES (?, ?)",
                 ("legacy_import", value),
             )
-
-        _write_within_savepoint(self._conn, operation)
 
     def get_meta(self, key: str) -> str | None:
         """Return the ``status_meta`` value for ``key`` (``None`` if unset)."""
@@ -376,18 +347,14 @@ class HistoryRepository:
     def set_meta(self, key: str, value: str) -> None:
         """Store ``value`` for ``key`` in ``status_meta``."""
 
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_history_write") as cursor:
             cursor.execute(
                 "INSERT OR REPLACE INTO status_meta (key, value) VALUES (?, ?)",
                 (key, value),
             )
 
-        _write_within_savepoint(self._conn, operation)
-
     def clear_import_marker(self) -> None:
-        def operation(cursor: sqlite3.Cursor) -> None:
+        with write_savepoint(self._conn, "umsa_history_write") as cursor:
             cursor.execute(
                 "DELETE FROM status_meta WHERE key = 'legacy_import'"
             )
-
-        _write_within_savepoint(self._conn, operation)
