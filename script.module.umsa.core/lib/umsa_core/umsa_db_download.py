@@ -5,10 +5,12 @@ It is Kodi-free and uses only standard library dependencies.
 
 The archive is downloaded into memory, only its ``umsa.db`` member is extracted
 into a temporary file next to the live database, checked with
-``PRAGMA integrity_check`` and then moved into place with ``os.replace``. An
-interrupted or broken download therefore never touches the existing
-``umsa.db``, and the archive can not overwrite any other file in the profile
-directory (for example ``status.db``).
+``PRAGMA integrity_check``, gets the indexes the queries need
+(``umsa_db_indexes``; the archive may come without them) and is then moved
+into place with ``os.replace``. An interrupted or broken download, or a failed
+index build, therefore never touches the existing ``umsa.db``, and the archive
+can not overwrite any other file in the profile directory (for example
+``status.db``).
 """
 
 import os
@@ -19,6 +21,8 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 from urllib.request import urlopen
+
+from . import umsa_db_indexes
 
 UMSA_DB_URL = "http://umsa.info/umsa_db.zip"
 UMSA_DB_NAME = "umsa.db"
@@ -94,17 +98,41 @@ def _check_integrity(path):
             f"downloaded {UMSA_DB_NAME} failed integrity check: {rows[:3]}")
 
 
+def _build_indexes(path, progress):
+    """Build the missing umsa.db indexes on the database file ``path``.
+
+    ``progress(index, total)`` is called before every index; an exception it
+    raises (a cancel) propagates unchanged.
+    """
+
+    try:
+        connection = sqlite3.connect(os.fspath(path))
+        try:
+            umsa_db_indexes.build_indexes(connection, progress)
+        finally:
+            connection.close()
+    except sqlite3.Error as error:
+        raise UmsaDbDownloadError(
+            f"building the indexes of {UMSA_DB_NAME} failed: {error}"
+        ) from error
+
+
 def download_and_update_umsa_db(data_dir, progress, title='Updating UMSA database'):
     """Download the UMSA database archive and replace ``data_dir/umsa.db``.
 
     ``progress`` is called as ``progress(percent, title, message)``; ``message``
     is ``None`` for the plain percentage updates during download (only sent
-    when the server announces a ``Content-Length``).
+    when the server announces a ``Content-Length``). Steps: download, unzip
+    ``umsa.db`` into a ``.part`` file, integrity check, build the missing
+    indexes (``progress`` is called before every index, so it can cancel the
+    build by raising), ``os.replace`` onto ``umsa.db``.
 
     Raises ``UmsaDbDownloadError`` when the download is incomplete, the archive
-    is broken or lacks ``umsa.db``, or the database fails its integrity check;
-    network errors (``OSError``) propagate unchanged. In every error case the
-    existing ``umsa.db`` stays untouched.
+    is broken or lacks ``umsa.db``, the database fails its integrity check, or
+    building the indexes fails (an index whose table or column is missing is
+    only skipped); network errors (``OSError``) and exceptions raised by
+    ``progress`` propagate unchanged. In every error case the existing
+    ``umsa.db`` stays untouched and the ``.part`` file is removed.
     """
 
     data_dir = Path(data_dir)
@@ -120,6 +148,10 @@ def download_and_update_umsa_db(data_dir, progress, title='Updating UMSA databas
     try:
         _extract_db(data, tmp_db)
         _check_integrity(tmp_db)
+        progress(99, title, 'building indexes...')
+        _build_indexes(
+            tmp_db,
+            lambda index, total: progress(99, title, 'building indexes...'))
         os.replace(tmp_db, data_dir / UMSA_DB_NAME)
     finally:
         if tmp_db.exists():
