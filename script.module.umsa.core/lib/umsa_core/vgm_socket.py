@@ -27,6 +27,8 @@ LUA_LOG_MSG_PREFIX = 'UMSA Emu lua'
 LUA_READ_POLL_TIMEOUT = 0.2
 LUA_READER_JOIN_TIMEOUT = 1.0
 LUA_LOG_MAX_LINE_BYTES = 8192
+# bounds one sendall when vgmplay.lua stops reading (full send buffer, C-L12)
+LUA_SEND_TIMEOUT = 1.0
 
 LUA_LEVEL_ADJ_TAG = 'LEVEL_ADJ:'
 
@@ -101,6 +103,9 @@ class VgmSocketServer:
     - Reader-thread creation, shutdown and bounded joining
     - Client connection cleanup
     - Listener shutdown and cleanup after errors
+
+    Sends are bounded by ``LUA_SEND_TIMEOUT`` and never hold the lifecycle
+    lock, so closing the connection never waits for a blocked send.
     """
 
     def __init__(
@@ -126,6 +131,9 @@ class VgmSocketServer:
         self._port_env: str | None = None
         self._bound_port: int | None = None
         self._lock = threading.Lock()
+        # serialises the senders only (no interleaved lines); taken before
+        # _lock, never by the close paths
+        self._send_lock = threading.Lock()
 
     def _log(self, message: str, level: str = 'debug'):
         """Forward one diagnostic without allowing logger failures to escape."""
@@ -215,6 +223,14 @@ class VgmSocketServer:
                     continue
                 except Exception as err:
                     self._log(f"UMSA VGM: accept failed: {err}", level='debug')
+                    return False
+
+                try:
+                    conn.settimeout(LUA_SEND_TIMEOUT)
+                except OSError as err:
+                    self._log(f"UMSA VGM: could not set client send timeout: "
+                              f"{err}", level='warning')
+                    self._close_socket(conn, 'client', shut_down=True)
                     return False
 
                 with self._lock:
@@ -356,16 +372,24 @@ class VgmSocketServer:
         return True
 
     def send_command(self, data: bytes) -> bool:
-        """Send a command to the Lua script over the accepted connection."""
+        """Send a command to the Lua script over the accepted connection.
+
+        ``sendall`` is bounded by ``LUA_SEND_TIMEOUT`` and runs outside the
+        lifecycle lock: a ``close_client`` meanwhile shuts the socket down and
+        the send fails. A timeout or failure returns False (``stop_vgm`` then
+        terminates MAME); a partly sent command is not repaired.
+        """
         self._log("UMSA VGM: sending command", level='debug')
-        with self._lock:
-            if not self._client:
+        if not data.endswith(b'\n'):
+            data = data + b'\n'
+        with self._send_lock:
+            with self._lock:
+                client = self._client
+            if client is None:
                 self._log("UMSA Emu: no lua socket connection (not accepted)", level='warning')
                 return False
-            if not data.endswith(b'\n'):
-                data = data + b'\n'
             try:
-                self._client.sendall(data)
+                client.sendall(data)
                 self._log(f"UMSA VGM: command sent: {data!r}", level='debug')
                 return True
             except Exception as err:
