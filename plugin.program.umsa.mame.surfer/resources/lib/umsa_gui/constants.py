@@ -6,7 +6,7 @@ the skin uses stays here as documentation; every other constant is used by a
 frontend module (``tests/arch/test_gui_constants.py``).
 """
 
-# DAT display categories, defined once in Core by the parsers that write them
+# DAT labels, defined once in Core by the parsers that write them
 from umsa_core import dat_parser as _dat
 from umsa_core.exodos_parser import DAT_FILE as _DAT_EXODOS
 from umsa_core.gb64_scanner import DAT_FILE as _DAT_GB64
@@ -48,32 +48,27 @@ TEXTLIST = 4033
 TEXTLIST_KEY_PROPERTY = 'key'
 TEXTLIST_KEY_NO_INFO = 'no_info'
 TEXTLIST_KEY_EMU_OUTPUT = 'emu_output'
-# placeholder in TEXTLIST_ORDER for DAT categories not listed by name (free
-# "- XYZ -" headings of a DAT, e.g. 'Tips/Tricks'); they sort alphabetically
+# placeholder in TEXTLIST_ORDER for DAT labels not listed by name (support
+# files with another name); they sort alphabetically
 TEXTLIST_OTHER_CATEGORIES = None
-# fixed order of the DAT categories in TEXTLIST ('Emulator output' is appended
-# after an emulator run by emulator_setup.add_or_update_emu_output)
+# fixed order of the DAT entries in TEXTLIST ('Emulator output' is appended
+# after an emulator run by emulator_setup.add_or_update_emu_output). The DAT
+# parser labels an entry with the name of its support file without extension,
+# so the names below are the display order of the known files, no parser
+# categories.
 TEXTLIST_ORDER = (
     _dat.DAT_HISTORY,
-    _dat.DAT_INFO,
-    _dat.DAT_MINFO,
-    _dat.DAT_SYSINFO,
+    'mameinfo',
+    'messinfo',
+    'sysinfo',
     _DAT_EXODOS,
     _DAT_GB64,
-    _dat.DAT_STORY,
-    _dat.DAT_GAMEPLAY,
-    _dat.DAT_START,
-    _dat.DAT_SETUP,
-    _dat.DAT_PLAY_INST,
-    _dat.DAT_SCORE,
-    _dat.DAT_COMMAND,
+    'gameinit',
+    'command',
+    'mamescore',
     TEXTLIST_OTHER_CATEGORIES,
-    _dat.DAT_WIP,
-    _dat.DAT_OTHERS,
     _dat.DRIVER_WIP,
 )
-# DAT categories never shown in TEXTLIST ('Rec' has its own menu entry)
-TEXTLIST_HIDDEN = (_dat.DAT_CONTRIBUTE, _dat.DAT_REC)
 IMAGE_RIGHT = 2232
 IMAGE_BIG_LIST = 2233
 IMAGE_LIST = 2223

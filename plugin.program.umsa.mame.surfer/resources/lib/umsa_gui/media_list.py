@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from json import loads
 
 import xbmc
-from umsa_core.dat_parser import DAT_REC
+from umsa_core.dat_parser import find_recommended
 from umsa_core.game_repository import parse_recommended_games
 
 from . import gamelist as gamelist_workflows
@@ -111,14 +111,12 @@ def choose_media(ctx):
 def show_rec(ctx, focus=True):
     """Shows recommended section from mameinfo.dat in gamelist"""
 
-    text = ''
-    if (ctx.software.actset['id'] in ctx.software.all_dat
-            and DAT_REC in ctx.software.all_dat[ctx.software.actset['id']]):
-        text = ctx.software.all_dat[ctx.software.actset['id']][DAT_REC]
-    else:
-        for i in ctx.software.all_dat:
-            if DAT_REC in ctx.software.all_dat[i]:
-                text = ctx.software.all_dat[i][DAT_REC]
+    # the active set first, then the first set with a "Recommended Games" section
+    text = find_recommended(ctx.software.all_dat.get(ctx.software.actset['id'], {}))
+    if not text:
+        for set_dats in ctx.software.all_dat.values():
+            text = find_recommended(set_dats)
+            if text:
                 break
     rec_list, pos = parse_recommended_games(text, ctx.services.ggdb.games)
     gamelist_workflows.popup_gamelist(ctx.gamelist, rec_list, tr(S.RECOMMENDED), pos=pos, focus=focus)

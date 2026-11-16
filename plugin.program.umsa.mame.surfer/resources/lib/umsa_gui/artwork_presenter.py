@@ -26,7 +26,6 @@ from .constants import (
     SHADOW_DAT,
     SYSTEM_WRAPLIST,
     TEXTLIST,
-    TEXTLIST_HIDDEN,
     TEXTLIST_KEY_NO_INFO,
     TEXTLIST_KEY_PROPERTY,
     TEXTLIST_ORDER,
@@ -51,9 +50,9 @@ class ArtworkCtx:
 
 
 def textlist_sort_key(category):
-    """Sort key of a DAT category in TEXTLIST: fixed rank, then name.
+    """Sort key of a DAT label in TEXTLIST: fixed rank, then name.
 
-    Categories missing from ``TEXTLIST_ORDER`` take the rank of the
+    Labels missing from ``TEXTLIST_ORDER`` take the rank of the
     ``TEXTLIST_OTHER_CATEGORIES`` placeholder and sort alphabetically there.
     """
 
@@ -268,8 +267,6 @@ def show_artwork(ctx, howmuch='all'):
         set_dat = ctx.software.all_dat[ctx.software.actset['id']]
         for k in sorted(set_dat, key=textlist_sort_key):
             moretext = ''
-            if k in TEXTLIST_HIDDEN:
-                continue
             if k == DAT_HISTORY:
                 moretext = stattext
 

@@ -6,12 +6,15 @@ file object) plus a mapping from ``"<swl>:<set>"`` to a UMSA set id, and
 yields :class:`DatEntry` records. An optional :class:`DatFileReport` collects
 the file version from the header and what could not be matched.
 
-The generated text, the ``dat.file`` display category and the set
-associations are those of the historical ``scan_dat()``/``scan_history()``
-helpers, with these differences:
+A DAT block (``$info=<sets>`` up to ``$end``) becomes **one** entry with
+its whole text; its label (``dat.file``) is the name of the input file without
+extension (``mameinfo``, ``gameinit``, ``command`` ...), so two files never
+overwrite each other's text of the same set. The ``$`` tag lines (``$mame``,
+``$bio``, ``$cmd``, ``$story``, ``$drv``) are not part of the text; one or
+more empty lines become one paragraph break, empty lines at the start and the
+end are dropped. :func:`recommended_text` cuts the ``Recommended Games``
+sections out of a text. Further rules:
 
-* ``- xxx -`` in ``command.dat`` without an open section goes to ``others``
-  (it raised ``KeyError`` before, C-L15);
 * only the list name ``info`` exactly is mapped to ``mame`` (C-L15);
 * a block or History ``<entry>`` without a single matching set yields nothing
   (C-L16); driver sections (``$drv``) are always kept;
@@ -21,6 +24,7 @@ helpers, with these differences:
 
 from __future__ import annotations
 
+import os
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Mapping
@@ -32,12 +36,12 @@ class DatEntry:
     """One parsed DAT information entry.
 
     Attributes:
-        file: The display category, matching the historical ``dat.file`` value
-            (for example ``Info``, ``MInfo``, ``History`` or ``Rec``).
-        entry: The complete entry text, including the existing ``[CR]`` and
-            ``-----NEXT--------[CR]`` separators. ``None`` is preserved for an
-            empty History ``<text>`` element, matching the historical
-            ``dat.entry`` value.
+        file: The label (``dat.file``): the input file name without extension
+            for a DAT block (``mameinfo``, ``sysinfo`` ...), :data:`DAT_HISTORY`
+            for the History XML, :data:`DRIVER_WIP` for a driver block.
+        entry: The whole entry text, lines separated by ``[CR]``. ``None`` is
+            preserved for an empty History ``<text>`` element, matching the
+            historical ``dat.entry`` value.
         set_ids: The ids of every matched UMSA set, in discovery order. An
             entry may be linked to several sets and the same id may appear more
             than once when the input names it through more than one
@@ -82,65 +86,22 @@ class DatFileReport:
     malformed: list = field(default_factory=list)
 
 
-# Display categories (``dat.file``) the parsers write. The frontend orders,
-# hides and dispatches on them (``umsa_gui.constants.TEXTLIST_ORDER``), so it
-# imports these names instead of repeating the texts.
-#: ``$bio`` of history.dat and the ``<text>`` of the History XML.
-DAT_HISTORY = 'History'
-#: ``$bio`` of every file not listed in ``_BIO_TAGS``; ``$mame``/``romset:`` lines.
-DAT_INFO = 'Info'
-#: ``$bio`` of mameinfo.dat.
-DAT_MINFO = 'MInfo'
-#: ``$bio`` of sysinfo.dat.
-DAT_SYSINFO = 'Sysinfo'
-#: ``$story`` (story.dat high scores).
-DAT_SCORE = 'Score'
-#: ``$cmd`` (command.dat).
-DAT_COMMAND = 'Command'
-#: Headings of mameinfo.dat/messinfo.dat.
-DAT_WIP = 'WIP'
-DAT_STORY = 'Story'
-DAT_START = 'Start'
-DAT_SETUP = 'Setup'
-DAT_GAMEPLAY = 'Gameplay'
-DAT_PLAY_INST = 'Play Inst.'
-#: ``Recommended Games`` lines (``game_repository.parse_recommended_games``).
-DAT_REC = 'Rec'
-#: Text outside any category.
-DAT_OTHERS = 'others'
-#: Free heading ``- CONTRIBUTE -`` (any ``- xxx -`` heading becomes ``Xxx``).
-DAT_CONTRIBUTE = 'Contribute'
-#: Display category of the WIP history of a MAME driver.
+# Labels (``dat.file``) the parsers write besides the DAT file names. The
+# frontend orders and dispatches on them (``umsa_gui.constants.TEXTLIST_ORDER``),
+# so it imports these names instead of repeating the texts.
+#: The ``<text>`` of the History XML.
+DAT_HISTORY = 'history'
+#: Label of the WIP history of a MAME driver (``$drv`` block).
 DRIVER_WIP = 'WIP Driver'
 
-# internal tag collecting the lines that follow ``$drv`` before the first
-# section heading (the first one is "<version> [<authors>]")
-_DRIVER_HEAD = '_driver_head'
+# tag lines of a block that are not part of its text
+_TAG_LINES = frozenset(('$mame', '$bio', '$cmd', '$story', '$drv'))
 
-_NEXT = "-----NEXT--------[CR]"
-
-# category of ``$bio`` per input file; every other file uses "Info"
-_BIO_TAGS = {
-    'history.dat': DAT_HISTORY,
-    'mameinfo.dat': DAT_MINFO,
-    'sysinfo.dat': DAT_SYSINFO,
-}
-
-_SECTION_TAGS = {
-    '$story': DAT_SCORE,
-    '$cmd': DAT_COMMAND,
-}
-
-# headings of mameinfo.dat/messinfo.dat and their categories
-_HEADINGS = {
-    'WIP:': DAT_WIP,
-    'STORY:': DAT_STORY,
-    'STORY AND PLAY INSTRUCTIONS:': DAT_STORY,  # only 2 times in mameinfo.dat
-    'START:': DAT_START,
-    'SETUP:': DAT_SETUP,
-    'GAMEPLAY:': DAT_GAMEPLAY,
-    'PLAY INSTRUCTIONS:': DAT_PLAY_INST,
-}
+_CR = '[CR]'
+_RECOMMENDED = 'Recommended Games'
+# lines that end a "Recommended Games" section: a heading ("Other Emulators:",
+# "WIP:") or one of the size/level lines that follow the list in mameinfo.dat
+_SECTION_END = re.compile(r'(?:.*:$|(?:romset|chd|levels):)', re.IGNORECASE)
 
 _VERSION_PATTERNS = (
     re.compile(r'\.dat\s+v?(\d+(?:\.\d+)+\w*)', re.IGNORECASE),
@@ -167,16 +128,49 @@ def driver_lookup_keys(source) -> tuple:
     return (source, base)
 
 
-def _driver_entry(driver: str, dat: dict):
-    """Build the single ``WIP Driver`` entry of a ``$drv`` section, or ``None``."""
+def recommended_text(text) -> str:
+    """Return the ``Recommended Games`` sections of an entry text.
 
-    head = dat.get(_DRIVER_HEAD, '').split('[CR]', 1)[0].strip()
-    wip = dat.get(DAT_WIP, '')
-    if not wip:
-        return DatEntry(DRIVER_WIP, head + '[CR]', (), driver) if head else None
-    if head:
-        return DatEntry(DRIVER_WIP, f"{head}[CR][CR]{wip}", (), driver)
-    return DatEntry(DRIVER_WIP, wip, (), driver)
+    Every section ``Recommended Games[ (<group>)][:]`` runs up to the next
+    heading (a line ending with ``:``), a ``Romset:``/``CHD:``/``LEVELS:``
+    line, the next section or the end of the text. The result has the format
+    :func:`umsa_core.game_repository.parse_recommended_games` reads: per
+    section ``- <group>:[CR]`` (nothing for a section without group), then
+    one ``<name>[CR]`` per line. A text without section (or ``None``) gives
+    ``''``.
+    """
+
+    if not text or _RECOMMENDED not in text:
+        return ''
+    parts = []
+    inside = False
+    for line in text.split(_CR):
+        if line.startswith(_RECOMMENDED):
+            inside = True
+            if '(' in line:
+                parts.append("- {}:{}".format(
+                    line[line.find('(') + 1:line.find(')')], _CR))
+        elif inside and line:
+            if _SECTION_END.match(line):
+                inside = False
+            else:
+                parts.append(line + _CR)
+    return ''.join(parts)
+
+
+def find_recommended(set_dats) -> str:
+    """Return the first :func:`recommended_text` of the texts of one set.
+
+    ``set_dats`` maps the labels of a set to its texts (one value of
+    ``DatRepository.get_dat_for_sets``). Returns ``''`` when no text has a
+    ``Recommended Games`` section.
+    """
+
+    for text in set_dats.values():
+        rec = recommended_text(text)
+        if rec:
+            return rec
+    return ''
 
 
 def _is_entry_start(line: str) -> bool:
@@ -219,7 +213,7 @@ def read_dat_header(lines: Iterable[str]) -> tuple:
 class _Block:
     """State of the entry being read (between ``$<swl>=<sets>`` and ``$end``)."""
 
-    __slots__ = ('dat', 'driver', 'header', 'line', 'sets', 'swl', 'tag')
+    __slots__ = ('blank', 'driver', 'header', 'line', 'lines', 'sets', 'swl')
 
     def __init__(self, number: int, line: str) -> None:
         self.line = number
@@ -231,77 +225,32 @@ class _Block:
         self.swl = ['mame' if name == 'info' else name
                     for name in swl_str.split(',') if name]
         self.sets = [name for name in sets_str.split(',') if name]
-        self.dat = {}
-        self.tag = ""
+        # text lines; ``blank`` notes empty lines since the last text line
+        self.lines = []
+        self.blank = False
         self.driver = None
 
+    def text(self) -> str:
+        """Return the collected text, every line ended by ``[CR]``."""
 
-def _open(dat: dict, tag: str) -> str:
-    """Start category ``tag``, or separate a repeated one; return ``tag``."""
-
-    if tag in dat:
-        dat[tag] += _NEXT
-    else:
-        dat[tag] = ""
-    return tag
+        return ''.join(line + _CR for line in self.lines)
 
 
-def _add_text(block: _Block, line: str) -> None:
-    """Append a text line to the open category, else to ``others``."""
-
-    if block.tag not in block.dat:
-        block.tag = _open(block.dat, DAT_OTHERS)
-    block.dat[block.tag] += line + "[CR]"
-
-
-def _is_info_line(line: str) -> bool:
-    return (line == '$mame'
-            or line[:7] == 'LEVELS:'
-            or line[:7].lower() == 'romset:'
-            or line == 'Other Emulators:')
-
-
-def _add_line(block: _Block, line: str, bio_tag: str, command_dat: bool) -> None:
+def _add_line(block: _Block, line: str) -> None:
     """Add one line (not ``$end``) of an entry to ``block``."""
 
-    dat = block.dat
-    if line == '$drv':
-        # driver section: "$info=<driver>.cpp" followed by "$drv"
-        block.driver = block.sets[0] if block.sets else None
-        block.tag = _DRIVER_HEAD
-        dat.setdefault(_DRIVER_HEAD, "")
-    elif line == '$bio':
-        block.tag = _open(dat, bio_tag)
-    elif line in _SECTION_TAGS:
-        block.tag = _open(dat, _SECTION_TAGS[line])
-    elif line[:2] == '- ' and line[-2:] == ' -':
-        if not command_dat:
-            tag = line[2:-2].lower().capitalize()
-            if tag == "Tips and tricks":
-                tag = "Tips/Tricks"
-            block.tag = _open(dat, tag)
-        elif block.tag in dat:
-            dat[block.tag] += "[CR]" + line
-        else:
-            _add_text(block, line)
-    elif _is_info_line(line):
-        # keeps the historical quirk: the first such line only opens "Info"
-        block.tag = DAT_INFO
-        if DAT_INFO in dat:
-            dat[DAT_INFO] += line + "[CR]"
-        else:
-            dat[DAT_INFO] = ""
-    elif line in _HEADINGS:
-        block.tag = _open(dat, _HEADINGS[line])
-    elif line[:17] == 'Recommended Games':
-        block.tag = DAT_REC
-        if '(' in line:
-            cat = "- {}:[CR]".format(line[line.find('(')+1:line.find(')')])
-        else:
-            cat = ""
-        dat[DAT_REC] = dat.get(DAT_REC, '') + cat
+    if not line:
+        block.blank = True
+    elif line in _TAG_LINES:
+        if line == '$drv':
+            # driver section: "$info=<driver>.cpp" followed by "$drv"
+            block.driver = block.sets[0] if block.sets else None
     else:
-        _add_text(block, line)
+        if block.blank and block.lines:
+            # one or more empty lines: one paragraph break
+            block.lines.append('')
+        block.blank = False
+        block.lines.append(line)
 
 
 def _is_sysinfo_stub(text: str) -> bool:
@@ -309,20 +258,20 @@ def _is_sysinfo_stub(text: str) -> bool:
 
     if "just a stub" in text:
         return True
-    return all(not part or part[0] == '=' for part in text.split('[CR]'))
+    return all(not part or part[0] == '=' for part in text.split(_CR))
 
 
-def _finish_block(block: _Block, all_sets: Mapping[str, int],
+def _finish_block(block: _Block, label: str, all_sets: Mapping[str, int],
                   report: DatFileReport, drivers):
-    """Yield the entries of a complete block and fill ``report``."""
+    """Yield the entry of a complete block and fill ``report``."""
 
+    text = block.text()
     if block.driver is not None:
         if drivers is not None and block.driver not in drivers:
             report.unmatched_drivers.append(block.driver)
-        entry = _driver_entry(block.driver, block.dat)
-        if entry is not None:
+        if text:
             report.entries += 1
-            yield entry
+            yield DatEntry(DRIVER_WIP, text, (), block.driver)
         return
 
     keys = [f"{swl}:{name}" for swl in block.swl for name in block.sets]
@@ -334,24 +283,22 @@ def _finish_block(block: _Block, all_sets: Mapping[str, int],
             report.unmatched_entries.append(", ".join(missing))
         return
 
-    for tag, text in block.dat.items():
-        if tag == "Sysinfo" and _is_sysinfo_stub(text):
-            continue
-        report.entries += 1
-        yield DatEntry(tag, text, set_ids)
+    if not text or (label == 'sysinfo' and _is_sysinfo_stub(text)):
+        return
+    report.entries += 1
+    yield DatEntry(label, text, set_ids)
 
 
 def _numbered_lines(fobj: Iterable[str], report: DatFileReport):
-    """Yield ``(line number, line)`` of the non-empty, right-stripped lines.
+    """Yield ``(line number, line)`` of the right-stripped lines.
 
-    A line ``$end<rest>`` is split into ``$end`` and ``<rest>`` and noted in
+    Empty lines are yielded as ``''`` (paragraph breaks of the text). A line
+    ``$end<rest>`` is split into ``$end`` and ``<rest>`` and noted in
     ``report.malformed``.
     """
 
     for number, raw in enumerate(fobj, 1):
         line = raw.rstrip()
-        if not line:
-            continue
         if line.startswith('$end') and len(line) > 4:
             report.malformed.append(f"line {number}: {line}")
             yield number, '$end'
@@ -361,13 +308,14 @@ def _numbered_lines(fobj: Iterable[str], report: DatFileReport):
 
 def parse_dat(fobj: Iterable[str], all_sets: Mapping[str, int], datfile: str,
               report: DatFileReport | None = None, drivers=None):
-    """Parse a MAME support file, yielding one :class:`DatEntry` per category.
+    """Parse a MAME support file, yielding one :class:`DatEntry` per block.
 
     ``fobj`` is any iterable of text lines (for example an open file or a
     ``StringIO``). ``all_sets`` maps ``"<swl>:<set>"`` to a UMSA set id.
-    ``datfile`` is the input file name, which selects the ``$bio`` category
-    (``history.dat``/``mameinfo.dat``/``sysinfo.dat``) and the ``- xxx -``
-    handling of ``command.dat``.
+    ``datfile`` is the input file name; without its extension it is the
+    label of every entry (``mameinfo.dat`` -> ``mameinfo``). A driver block
+    (``$drv``) yields a :data:`DRIVER_WIP` entry instead. Stubs of
+    ``sysinfo.dat`` ("just a stub", only ``=`` lines) are dropped.
 
     ``report`` (optional) receives the header version/date, the number of
     yielded entries and what was not found; it is complete once the
@@ -381,14 +329,15 @@ def parse_dat(fobj: Iterable[str], all_sets: Mapping[str, int], datfile: str,
 
     if report is None:
         report = DatFileReport(datfile)
-    bio_tag = _BIO_TAGS.get(datfile, DAT_INFO)
-    command_dat = datfile == 'command.dat'
+    label = os.path.splitext(datfile)[0]
     header = []
     header_read = False
     block = None
 
     for number, line in _numbered_lines(fobj, report):
         if block is None:
+            if not line:
+                continue
             if _is_entry_start(line):
                 if not header_read:
                     report.version, report.date = read_dat_header(header)
@@ -399,10 +348,10 @@ def parse_dat(fobj: Iterable[str], all_sets: Mapping[str, int], datfile: str,
             continue
 
         if line == '$end':
-            yield from _finish_block(block, all_sets, report, drivers)
+            yield from _finish_block(block, label, all_sets, report, drivers)
             block = None
         else:
-            _add_line(block, line, bio_tag, command_dat)
+            _add_line(block, line)
 
     if not header_read:
         report.version, report.date = read_dat_header(header)
@@ -411,7 +360,7 @@ def parse_dat(fobj: Iterable[str], all_sets: Mapping[str, int], datfile: str,
 
 
 def _history_entry(entry, all_sets: Mapping[str, int], report: DatFileReport):
-    """Yield the ``History`` entries of one ``<entry>`` element."""
+    """Yield the :data:`DAT_HISTORY` entries of one ``<entry>`` element."""
 
     keys = []
     set_ids = []

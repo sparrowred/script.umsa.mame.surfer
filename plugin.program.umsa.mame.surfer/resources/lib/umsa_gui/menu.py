@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import xbmc
 import xbmcgui
-from umsa_core.dat_parser import DAT_REC
+from umsa_core.dat_parser import find_recommended
 
 from . import strings as S
 from .constants import (
@@ -76,12 +76,7 @@ def build_sublist_menu(ctx, select):
     list_items.append(xbmcgui.ListItem(tr(S.MENU_MAKER), str(M_MAKER)))
     list_items.append(xbmcgui.ListItem(tr(S.MENU_CATEGORY), str(M_CAT)))
 
-    rec = False
-    for i in ctx.software.all_dat:
-        if DAT_REC in ctx.software.all_dat[i]:
-            rec = True
-            break
-    if rec:
+    if any(find_recommended(set_dats) for set_dats in ctx.software.all_dat.values()):
         list_items.append(xbmcgui.ListItem(tr(S.RECOMMENDED), str(M_REC)))
     else:
         position = position - 1

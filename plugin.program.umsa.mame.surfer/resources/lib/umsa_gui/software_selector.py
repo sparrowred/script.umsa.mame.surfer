@@ -13,7 +13,6 @@ from random import choice
 import xbmc
 import xbmcgui
 from umsa_core.artwork import machine_set_name
-from umsa_core.dat_parser import DAT_OTHERS
 from umsa_core.game_labels import split_gamename
 
 from . import artwork_presenter
@@ -97,15 +96,6 @@ def fill_set_list(ctx, pos):
         set_list_items.append(list_item)
 
     ctx.view.getControl(SET_LIST).addItems(set_list_items)
-
-
-def _vgm_title(ctx, vgm_name):
-    """Title of a vgmplay set; the set name when umsa.db does not know it."""
-
-    try:
-        return ctx.services.ggdb.games.get_info_by_set_and_swl(vgm_name, 'vgmplay')['name']
-    except TypeError:  # no such set in umsa.db
-        return vgm_name
 
 
 def select_software(ctx, software_id, set_id=None):
@@ -251,14 +241,6 @@ def select_software(ctx, software_id, set_id=None):
         for set_info in machine
         if set_info['swl_name'] == 'vgmplay'
     }
-    for dat_set in ctx.software.all_dat.values():
-        if DAT_OTHERS in dat_set and 'vgmplay' in dat_set[DAT_OTHERS]:
-            xbmc.log("UMSA gui: VGMs found!", xbmc.LOGINFO)
-            for splitentry in dat_set[DAT_OTHERS].split(','):
-                if 'vgmplay' in splitentry:
-                    vgm_name = splitentry.split('=')[1]
-                    if vgm_name not in vgm_titles:
-                        vgm_titles[vgm_name] = _vgm_title(ctx, vgm_name)
     ctx.software.vgms = set(vgm_titles) or None
     ctx.software.vgm_titles = vgm_titles
     xbmc.log(f"UMSA gui: {ctx.software.vgms}", xbmc.LOGDEBUG)
