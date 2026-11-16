@@ -22,7 +22,7 @@ from umsa_core.vgm_header import (
     format_vgm_title,
     mame_seconds_to_run,
 )
-from umsa_core.vgm_socket import _parse_vgmplay_port, parse_lua_level_db
+from umsa_core.vgm_socket import _parse_vgmplay_port, parse_lua_level
 
 VGM_RANDOM_BATCH_SIZE = 100
 VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
@@ -66,10 +66,10 @@ class VgmPlayer:
         self.playrandomvgm = False
         self._vgm_stopped_notified = False
 
-        # music info countdown ("<title> -MM:ss (<dB> dB)")
+        # music info countdown ("<title> -MM:ss (<+gain> dB[ auto| manual])")
         self._vgm_title = None
         self._planned_seconds = 0
-        self._level_db = None
+        self._level = None  # (gain_db, state) of the last level frame
         self._info_ticker = None
         self._info_ticker_stop = None
 
@@ -114,13 +114,13 @@ class VgmPlayer:
 
     def vgm_status(self, remaining_seconds):
         """Music info line for the current track."""
-        return format_vgm_status(self._vgm_title, remaining_seconds, self._level_db)
+        return format_vgm_status(self._vgm_title, remaining_seconds, self._level)
 
     def on_lua_log(self, text):
-        """Lua log frame listener: keep the last ``eff_db`` of ``LEVEL_ADJ``."""
-        level_db = parse_lua_level_db(text)
-        if level_db is not None:
-            self._level_db = level_db
+        """Lua log frame listener: keep gain and state of the last level frame."""
+        level = parse_lua_level(text)
+        if level is not None:
+            self._level = level
 
     def process_timeout(self):
         """Seconds to wait for the MAME process of the prepared track."""
@@ -219,7 +219,7 @@ class VgmPlayer:
         self._vgm_title = title or info
         # the info counts down from what MAME really runs
         self._planned_seconds = mame_seconds_to_run(actual_sec)
-        self._level_db = None
+        self._level = None
         if self._vgm_title:
             self._notify_vgm_info(self.vgm_status(self._planned_seconds))
         vgm_args = ['-videodriver', 'dummy', '-video', 'none', '-nojoystick', '-nowriteconfig',

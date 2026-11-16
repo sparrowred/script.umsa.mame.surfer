@@ -298,17 +298,28 @@ def format_vgm_title(track_filename, gamename):
     return f'Song "{track_filename[:-4].title()}" from "{gamename}"'
 
 
-def format_vgm_status(title, remaining_seconds, level_db=None):
-    """Music info line: ``<title> -MM:ss`` plus ``(<dB> dB)`` once measured.
+# suffix of the gain in the music info per leveling state
+# (vgm_socket.LUA_LEVEL_STATES); a frozen gain needs no marker
+_LEVEL_STATE_SUFFIX = {'auto': ' auto', 'locked': '', 'manual': ' manual'}
+
+
+def format_vgm_status(title, remaining_seconds, level=None):
+    """Music info line: ``<title> -MM:ss`` plus ``(<+gain> dB[ auto| manual])``.
 
     ``remaining_seconds`` counts down during playback and is clamped at 0;
-    ``level_db`` is the last effective loudness reported by vgmplay.lua.
+    ``level`` is ``(gain_db, state)`` of the last level frame of vgmplay.lua:
+    the gain UMSA puts on the track and whether the leveling still adjusts
+    it (``auto``), froze it (``locked``, no marker) or the user changed it
+    (``manual``).
     """
 
     # round up: a fresh 180 s plan reads -03:00, not -02:59
     remaining = max(0, math.ceil(remaining_seconds))
     minutes, seconds = divmod(remaining, 60)
     status = f'{title} -{minutes:02d}:{seconds:02d}'
-    if level_db is not None:
-        status += f' ({level_db:.1f} dB)'
+    if level is not None:
+        gain_db, state = level
+        # a gain that rounds to zero reads +0.0, never -0.0
+        gain = round(gain_db, 1) or 0.0
+        status += f' ({gain:+.1f} dB{_LEVEL_STATE_SUFFIX.get(state, "")})'
     return status

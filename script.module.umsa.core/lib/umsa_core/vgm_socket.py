@@ -30,7 +30,14 @@ LUA_LOG_MAX_LINE_BYTES = 8192
 # bounds one sendall when vgmplay.lua stops reading (full send buffer, C-L12)
 LUA_SEND_TIMEOUT = 1.0
 
-LUA_LEVEL_ADJ_TAG = 'LEVEL_ADJ:'
+# frames of vgmplay.lua that carry ``gain_db=`` and ``state=`` (end of the
+# music info): playback start, leveling step, leveling lock, manual change
+LUA_LEVEL_TAGS = (
+    'LEVEL_INITIAL:', 'LEVEL_ADJ:', 'LEVEL_LOCKED:', 'VGM VOLUME UP:', 'VGM VOLUME DOWN:')
+LUA_GAIN_FIELD = 'gain_db='
+LUA_STATE_FIELD = 'state='
+# auto = leveling adjusts, locked = leveling frozen, manual = user changed it
+LUA_LEVEL_STATES = ('auto', 'locked', 'manual')
 
 # one default for the setting, the listener and (as a literal) vgmplay.lua
 VGMPLAY_DEFAULT_PORT = DEFAULT_VGM_PORT
@@ -70,23 +77,30 @@ def parse_lua_log_line(line):
     return LUA_LOG_LEVELS.get(level, LUA_LOG_FALLBACK_LEVEL), text
 
 
-def parse_lua_level_db(text):
-    """Return ``eff_db`` of a ``LEVEL_ADJ`` frame text, else None (pure).
+def parse_lua_level(text):
+    """Return ``(gain_db, state)`` of a level frame text, else None (pure).
 
-    vgmplay.lua reports ``LEVEL_ADJ: t=.. rms_db=.. eff_db=.. gain a->b``
-    whenever its loudness leveling changes the gain.
+    vgmplay.lua reports the gain it puts on the track and who sets it as
+    ``gain_db=<dB> state=<auto|locked|manual>`` in ``LEVEL_INITIAL`` (start),
+    ``LEVEL_ADJ`` (leveling step), ``LEVEL_LOCKED`` (leveling frozen) and
+    ``VGM VOLUME UP/DOWN`` (manual change). Both fields are needed; an
+    unknown state or a gain that is no finite number gives None.
     """
-    if not isinstance(text, str) or not text.startswith(LUA_LEVEL_ADJ_TAG):
+    if not isinstance(text, str) or not text.startswith(LUA_LEVEL_TAGS):
         return None
+    gain = state = None
     for token in text.split():
-        if token.startswith('eff_db='):
+        if gain is None and token.startswith(LUA_GAIN_FIELD):
             try:
-                value = float(token[len('eff_db='):])
+                gain = float(token[len(LUA_GAIN_FIELD):])
             except ValueError:
                 return None
-            # inf/nan never reach the label
-            return value if math.isfinite(value) else None
-    return None
+        elif state is None and token.startswith(LUA_STATE_FIELD):
+            state = token[len(LUA_STATE_FIELD):]
+    # inf/nan never reach the label
+    if gain is None or not math.isfinite(gain) or state not in LUA_LEVEL_STATES:
+        return None
+    return gain, state
 
 
 class VgmSocketServer:

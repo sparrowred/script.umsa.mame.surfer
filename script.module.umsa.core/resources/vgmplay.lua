@@ -70,10 +70,11 @@ local LEVEL_ROLL_SEC     = 1.5    -- rolling window ~1-2s for decisions
 -- the lock the gain never rises again; RMS measurement continues. It is
 -- still cut when the output level exceeds the target by more than
 -- LEVEL_LOCK_GUARD_DB or a later sample peak breaks the headroom (quiet
--- intro, loud main part).
-local LEVEL_LOCK_MIN_SEC    = 10.0 -- no freeze before 10s
-local LEVEL_LOCK_MAX_SEC    = 15.0 -- hard ceiling: freeze no later than 15s
-local LEVEL_LOCK_STABLE_SEC = 3.0  -- gain must be settled for this long
+-- intro, loud main part). The three times are seconds of measured audio
+-- (windows above LEVEL_NOISE_FLOOR), not run time.
+local LEVEL_LOCK_MIN_SEC    = 10.0 -- no freeze before 10s of measured audio
+local LEVEL_LOCK_MAX_SEC    = 15.0 -- hard ceiling: freeze after 15s of measured audio
+local LEVEL_LOCK_STABLE_SEC = 3.0  -- gain must be settled for this long (measured)
 local LEVEL_LOCK_DITHER_DB  = 2.0  -- +/- dither counts as settled
 local LEVEL_LOCK_GUARD_DB   = 4.0  -- locked: cut once this far above the target
 
@@ -141,6 +142,12 @@ local total_energy_samples = 0  -- Total fingerprint samples (sum of fingerprint
 local peak_energy = 0           -- Peak RMS observed in any fingerprint window
 local peak_sample = 0           -- Largest absolute sample seen (leveling headroom)
 local fingerprint_count = 0     -- Number of fingerprint windows completed
+-- The same over music windows only (review M9): neither flat nor at or below
+-- LEVEL_NOISE_FLOOR, i.e. the windows the leveling measures. Silence, a frozen
+-- mixer and the tail before a silence exit stay out.
+local music_energy_sum = 0
+local music_energy_samples = 0
+local music_windows = 0
 
 --
 -- Dynamic leveling state
@@ -158,7 +165,15 @@ local level_baseline_vol = nil
 -- gain at which the stability window started.
 local level_locked = false
 local level_anchor_gain = nil
-local level_anchor_time = 0
+local level_anchor_time = 0     -- measured seconds (level_total_valid_sec)
+
+-- Diagnostics of the locked phase for the final RMS_STATS (review M2): when
+-- the lock fell, the gain it froze, the loudest predicted output level seen
+-- by a locked evaluation and the sum of all cuts made while locked.
+local level_lock_time = nil
+local level_lock_gain = nil
+local level_post_lock_max_db = -math.huge
+local level_locked_cut_db = 0
 
 -- Fade-out state (see the fade-out configuration): planned once during
 -- initialisation, fade_base_vol is the volume the fade started from.
@@ -241,6 +256,38 @@ local function compute_recent_rms_db()
     return rms_db, #level_win_energy_list
 end
 
+-- " out_db=<dB>": predicted output level of the recent music at the volume
+-- MAME uses now (sound.volume + measured source level). Empty when there is
+-- no measurement (empty rolling window, no sound hook) or no sound.volume.
+-- Read by Python for the music info (review M5).
+local function out_db_field()
+    local rms_db = compute_recent_rms_db()
+    if rms_db == -math.huge then
+        return ""
+    end
+    local ok, volume = pcall(function()
+        return manager.machine.sound.volume
+    end)
+    if not ok or type(volume) ~= "number" then
+        return ""
+    end
+    return string.format(" out_db=%.2f", volume + rms_db)
+end
+
+-- " gain_db=<dB> state=<auto|locked|manual>": the gain UMSA puts on the
+-- track and who sets it (leveling, frozen leveling, user). Python shows both
+-- at the end of the music info.
+local function gain_state_fields(gain_db, state)
+    return string.format(" gain_db=%.2f state=%s", gain_db, state)
+end
+
+local function lock_leveling(now, text)
+    level_locked = true
+    level_lock_time = now
+    level_lock_gain = level_current_gain_db
+    log("INFO", text .. out_db_field() .. gain_state_fields(level_current_gain_db, "locked"))
+end
+
 local function update_leveling()
     -- No gain change may follow the final statistics sequence or work
     -- against the fade-out
@@ -252,29 +299,31 @@ local function update_leveling()
     -- otherwise when the gain has stayed within LEVEL_LOCK_DITHER_DB of its
     -- anchor for LEVEL_LOCK_STABLE_SEC after LEVEL_LOCK_MIN_SEC. Once locked
     -- the gain is never raised again (see the cut-only branch below); RMS
-    -- measurement continues.
+    -- measurement continues. The lock times count seconds of measured audio
+    -- (windows above the noise floor), not run time: a silent or faint
+    -- lead-in must not use up the time the loop needs to reach the target.
+    local measured = level_total_valid_sec
     if level_locked then
         -- nothing to decide here
-    elseif now >= LEVEL_LOCK_MAX_SEC then
-        level_locked = true
-        log("INFO", string.format(
-            "LEVEL_LOCKED: t=%.3f reason=max gain=%.2f", now, level_current_gain_db))
+    elseif measured >= LEVEL_LOCK_MAX_SEC - 1e-9 then
+        lock_leveling(now, string.format(
+            "LEVEL_LOCKED: t=%.3f measured=%.1f reason=max gain=%.2f",
+            now, measured, level_current_gain_db))
         return
-    elseif now >= LEVEL_LOCK_MIN_SEC then
+    elseif measured >= LEVEL_LOCK_MIN_SEC - 1e-9 then
         if level_anchor_gain == nil then
             level_anchor_gain = level_current_gain_db
-            level_anchor_time = now
+            level_anchor_time = measured
         elseif math.abs(level_current_gain_db - level_anchor_gain) <= LEVEL_LOCK_DITHER_DB then
-            if now - level_anchor_time >= LEVEL_LOCK_STABLE_SEC then
-                level_locked = true
-                log("INFO", string.format(
-                    "LEVEL_LOCKED: t=%.3f reason=stable gain=%.2f anchor=%.2f",
-                    now, level_current_gain_db, level_anchor_gain))
+            if measured - level_anchor_time >= LEVEL_LOCK_STABLE_SEC - 1e-9 then
+                lock_leveling(now, string.format(
+                    "LEVEL_LOCKED: t=%.3f measured=%.1f reason=stable gain=%.2f anchor=%.2f",
+                    now, measured, level_current_gain_db, level_anchor_gain))
                 return
             end
         else
             level_anchor_gain = level_current_gain_db
-            level_anchor_time = now
+            level_anchor_time = measured
         end
     end
     if level_last_adj_sec < 0 then
@@ -322,6 +371,9 @@ local function update_leveling()
 
     local wanted
     if level_locked then
+        if effective_db > level_post_lock_max_db then
+            level_post_lock_max_db = effective_db
+        end
         -- cut only: the frozen gain stays unless the output is clearly too loud
         local excess = effective_db - (LEVEL_TARGET_DB + LEVEL_LOCK_GUARD_DB)
         wanted = level_current_gain_db
@@ -353,9 +405,17 @@ local function update_leveling()
     if math.abs(step) > 1e-6 then
         local old_gain = level_current_gain_db
         apply_gain(old_gain + step)
+        if level_locked then
+            level_locked_cut_db = level_locked_cut_db + (old_gain - level_current_gain_db)
+        end
+        -- eff_db is the predicted output before the step, out_db after it
+        -- (the music info shows out_db)
         log("INFO", string.format(
-            "LEVEL_ADJ: t=%.3f rms_db=%.2f eff_db=%.2f gain %.2f->%.2f",
-            now, rms_db, effective_db, old_gain, level_current_gain_db))
+            "LEVEL_ADJ: t=%.3f rms_db=%.2f eff_db=%.2f out_db=%.2f%s gain %.2f->%.2f",
+            now, rms_db, effective_db,
+            effective_db + (level_current_gain_db - old_gain),
+            gain_state_fields(level_current_gain_db, level_locked and "locked" or "auto"),
+            old_gain, level_current_gain_db))
     end
     level_last_adj_sec = now
 end
@@ -584,7 +644,7 @@ log("INFO", string.format(
 if has_sound_hook then
     apply_gain(LEVEL_INITIAL_GAIN_DB)
     log("INFO", string.format(
-        "LEVEL_INITIAL: t=%.3f gain_db=%.2f baseline_db=%.2f start_delay=%.1f",
+        "LEVEL_INITIAL: t=%.3f gain_db=%.2f baseline_db=%.2f start_delay=%.1f state=auto",
         emu.time(), level_current_gain_db, level_baseline_vol, LEVEL_START_DELAY
     ))
 end
@@ -707,26 +767,47 @@ local function emit_final_logs(reason)
     local avg_dbfs_str = (avg_dbfs == -math.huge) and "-inf" or string.format("%.2f", avg_dbfs)
     local peak_dbfs_str = (peak_dbfs == -math.huge) and "-inf" or string.format("%.2f", peak_dbfs)
 
+    -- Music-only average (review M9): avg_* above keeps every window so it
+    -- stays comparable with the earlier analyses.
+    local music_rms = 0
+    if music_energy_samples > 0 then
+        music_rms = math.sqrt(music_energy_sum / music_energy_samples)
+    end
+    local music_dbfs = linear_to_db(music_rms)
+    local music_dbfs_str = (music_dbfs == -math.huge) and "-inf" or string.format("%.2f", music_dbfs)
+
+    -- Locked-phase diagnostics (review M2); empty / -inf without a lock.
+    local lock_t_str = level_lock_time and string.format("%.3f", level_lock_time) or ""
+    local lock_gain_str = level_lock_gain and string.format("%.2f", level_lock_gain) or ""
+    local post_lock_max_str = (level_post_lock_max_db == -math.huge) and "-inf"
+        or string.format("%.2f", level_post_lock_max_db)
+
     -- Final RMS_STATS closes the statistics sequence. INFO (not DEBUG) so the
     -- final sequence survives with debug logging switched off.
     log("INFO", string.format(
-        "RMS_STATS: t=%.3f fingerprint=%.3f avg_rms_so_far=%.6f peak_rms=%.6f windows=%d silence_dips=%d",
+        "RMS_STATS: t=%.3f fingerprint=%.3f avg_rms_so_far=%.6f peak_rms=%.6f windows=%d silence_dips=%d"
+            .. " lock_t=%s lock_gain=%s post_lock_max_db=%s locked_cut_db=%.2f",
         now, diag_last_rms,
         total_energy_samples > 0 and math.sqrt(total_energy_sum / total_energy_samples) or 0,
         peak_energy,
         fingerprint_count,
-        silence_dips
+        silence_dips,
+        lock_t_str, lock_gain_str, post_lock_max_str, level_locked_cut_db
     ), true)
 
     log("INFO", string.format(
-        "VGM_VOLUME file=\"%s\" avg_rms=%.6f avg_dbfs=%s peak_rms=%.6f peak_dbfs=%s samples=%d fingerprint_windows=%d",
+        "VGM_VOLUME file=\"%s\" avg_rms=%.6f avg_dbfs=%s peak_rms=%.6f peak_dbfs=%s samples=%d fingerprint_windows=%d"
+            .. " music_rms=%.6f music_dbfs=%s music_windows=%d",
         emu.gamename(),
         avg_rms,
         avg_dbfs_str,
         peak_energy,
         peak_dbfs_str,
         total_energy_samples,
-        fingerprint_count
+        fingerprint_count,
+        music_rms,
+        music_dbfs_str,
+        music_windows
     ), true)
 
     log("INFO", string.format(
@@ -773,6 +854,27 @@ end
 --
 -- Command handling
 --
+-- Manual volume change by the user. It switches the leveling off for the rest
+-- of the track; without sound.volume (MAME before 0.278) nothing changes and
+-- the leveling stays on. The frame carries out_db for the music info.
+local function change_volume(step_db, name)
+    local ok, volume = pcall(function()
+        manager.machine.sound.volume = manager.machine.sound.volume + step_db
+        return manager.machine.sound.volume
+    end)
+    if not ok or type(volume) ~= "number" then
+        log("WARN", "VGM VOLUME " .. name .. " failed")
+        return
+    end
+    level_manual_override = true
+    local gain_fields = ""
+    if level_baseline_vol then
+        gain_fields = gain_state_fields(volume - level_baseline_vol, "manual")
+    end
+    log("INFO", string.format("VGM VOLUME %s: volume=%.2f", name, volume)
+        .. out_db_field() .. gain_fields)
+end
+
 local function handle_command(line)
     line = line:gsub("\r$", "")
     line = line:gsub("^%s+", "")
@@ -785,17 +887,9 @@ local function handle_command(line)
     if line == "exit" then
         exit_now("EXIT on socket command")
     elseif line == "volume_up" then
-        level_manual_override = true
-        pcall(function()
-            manager.machine.sound.volume = manager.machine.sound.volume+1
-        end)
-        log("INFO", "VGM VOLUME UP")
+        change_volume(1, "UP")
     elseif line == "volume_down" then
-        level_manual_override = true
-        pcall(function()
-            manager.machine.sound.volume = manager.machine.sound.volume-1
-        end)
-        log("INFO", "VGM VOLUME DOWN")
+        change_volume(-1, "DOWN")
     else
         log("WARN", "Unknown command: " .. line)
     end
@@ -973,21 +1067,24 @@ local function update_audio_statistics(energy)
     fingerprint_count = fingerprint_count + 1
 end
 
-local function update_level_window(energy, now)
+local function update_level_window(energy, now, duration)
     -- Silence and the noise floor are not measured: a pause or a faint intro
     -- must not pull the rolling level down and trigger a boost.
     if linear_to_db(energy) <= LEVEL_NOISE_FLOOR then
-        return
+        return false
     end
     table.insert(level_win_energy_list, energy)
     table.insert(level_win_time_list, now)
-    level_total_valid_sec = level_total_valid_sec + FINGERPRINT_SECONDS
+    -- the real length of the window (it closes on the first callback at or
+    -- after FINGERPRINT_SECONDS), so measured seconds keep pace with run time
+    level_total_valid_sec = level_total_valid_sec + duration
 
     local cutoff_roll = now - LEVEL_ROLL_SEC
     while #level_win_time_list > 0 and level_win_time_list[1] < cutoff_roll - 1e-9 do
         table.remove(level_win_time_list, 1)
         table.remove(level_win_energy_list, 1)
     end
+    return true
 end
 
 if not has_sound_hook then
@@ -1034,8 +1131,11 @@ emu.register_sound_update(function(samples)
         update_audio_statistics(energy)
 
         -- a frozen buffer is no music: keep it out of the leveling
-        if not fingerprint_flat then
-            update_level_window(energy, now)
+        if not fingerprint_flat
+                and update_level_window(energy, now, now - fingerprint_start) then
+            music_energy_sum = music_energy_sum + fingerprint_sum
+            music_energy_samples = music_energy_samples + fingerprint_samples
+            music_windows = music_windows + 1
         end
 
         update_leveling()

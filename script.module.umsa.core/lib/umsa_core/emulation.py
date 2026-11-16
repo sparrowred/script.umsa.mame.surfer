@@ -175,7 +175,7 @@ class Emulation:
         self.vgm_socket = VgmSocketServer(
             logger=log,
             process_exited=lambda: self.process is not None and self.process.poll() is not None,
-            # eff_db of LEVEL_ADJ frames feeds the music info
+            # gain_db/state of the level frames feed the music info
             frame_listener=self.vgm_player.on_lua_log,
         )
 
