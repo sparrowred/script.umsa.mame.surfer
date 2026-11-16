@@ -458,13 +458,19 @@ class UMSA(xbmcgui.WindowXMLDialog):
                     self.close()
                     return False
         else:
-            # DB download in foreground, dat+art scan in background
+            # DB download in foreground, DAT scan in background, only on a
+            # profile without dat.db
+            # dat.db is created by DBMod right after the download: look before
+            had_dat_db = CORE_DATA_PATHS.dat_db.is_file()
             if not scan_orchestrator.update(self.ctx.scan_orchestrator, 'db', CORE_DATA_PATHS):
                 xbmc.log("UMSA gui: onInit: no umsa.db after download, closing",
                          xbmc.LOGERROR)
                 self.close()
                 return False
-            self._start_scan('dat')
+            if had_dat_db:
+                xbmc.log("UMSA gui: onInit: dat.db exists, no automatic DAT scan")
+            else:
+                self._start_scan('dat')
 
         # one-time legacy import + load persisted filter selections and history
         startup_import.run_startup_import(self.ctx.startup_import)
