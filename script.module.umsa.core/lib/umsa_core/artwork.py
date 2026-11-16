@@ -87,12 +87,22 @@ def categorize_art_type(art_type: str) -> str:
     return 'unknown'
 
 
+# Root keys computed by root_key_for_path, by root path string. The resolver
+# reads them instead of calling realpath for every artwork row (C-L22).
+_ROOT_KEYS: dict[str, str] = {}
+_ROOT_KEYS_MAX = 64
+
+
 def root_key_for_path(root_path: str) -> str:
     """Generate a deterministic root key from a filesystem path.
 
     Normalizes the path (realpath, strips trailing separators) and returns
     a stable SHA256 hex digest. This ensures records from a previous root
     cannot be accidentally resolved against a new root.
+
+    Always computes the key afresh (scanners, ``ArtworkQueries.set_source_roots``)
+    and stores it for :func:`resolve_artwork_path`, so a scan also refreshes
+    the key the resolver uses (e.g. after a symlinked root was moved).
     """
 
     if root_path is None:
@@ -108,7 +118,36 @@ def root_key_for_path(root_path: str) -> str:
     if os.altsep:
         normalized = normalized.rstrip(os.altsep)
 
-    return hashlib.sha256(normalized.encode('utf-8', errors='replace')).hexdigest()
+    key = hashlib.sha256(normalized.encode('utf-8', errors='replace')).hexdigest()
+    if len(_ROOT_KEYS) >= _ROOT_KEYS_MAX and root_path not in _ROOT_KEYS:
+        _ROOT_KEYS.clear()
+    _ROOT_KEYS[root_path] = key
+    return key
+
+
+def _cached_root_key(root_path: str) -> str:
+    """Return the root key of ``root_path``, computed once per path string."""
+
+    key = _ROOT_KEYS.get(root_path)
+    if key is None:
+        key = root_key_for_path(root_path)
+    return key
+
+
+def _safe_relative(relative_path: str) -> bool:
+    """Return whether a stored ``relative_path`` stays inside its root.
+
+    Absolute paths (also ``\\``-rooted or with a drive letter) and paths with
+    a ``..`` component are unsafe: ``os.path.join`` would drop or leave the
+    configured root.
+    """
+
+    if os.path.isabs(relative_path) or relative_path[:1] in ('/', '\\'):
+        return False
+    if relative_path[1:2] == ':':
+        return False
+    parts = relative_path.replace('\\', '/').split('/')
+    return '..' not in parts
 
 
 def resolve_artwork_path(art: dict[str, Any], set_info: dict[str, Any],
@@ -118,7 +157,9 @@ def resolve_artwork_path(art: dict[str, Any], set_info: dict[str, Any],
     Supports both ordinary files and files stored inside ZIP archives.
     For archive records, returns a Kodi-compatible archive path (not extracted).
     The function does not rely on absolute roots stored in the database and
-    validates root_key against the current configured root.
+    validates root_key against the current configured root (the key of a
+    root path is computed once, see :func:`root_key_for_path`). A stored
+    ``relative_path`` that is absolute or contains ``..`` resolves to ``''``.
 
     Args:
         art: Artwork metadata from database (new schema). May contain:
@@ -142,12 +183,15 @@ def resolve_artwork_path(art: dict[str, Any], set_info: dict[str, Any],
 
     # Validate root key matches current root to prevent cross-root resolution
     art_root_key = art.get('root_key', '')
-    current_root_key = root_key_for_path(current_root)
+    current_root_key = _cached_root_key(current_root)
     if art_root_key and current_root_key and art_root_key != current_root_key:
         return ''
 
     archive_member = art.get('archive_member')
     relative_path = art.get('relative_path')
+    # A DB row must never point outside its root (absolute path or "..").
+    if relative_path and not _safe_relative(relative_path):
+        return ''
 
     # Handle archive-contained files
     if archive_member:

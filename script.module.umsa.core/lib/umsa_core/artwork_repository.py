@@ -267,14 +267,14 @@ class ArtworkRepository:
         """
         if status == "error":
             statement = (
-                "INSERT OR REPLACE INTO art_scan_unit "
+                f"INSERT OR REPLACE INTO {self._qt('art_scan_unit')} "
                 "(source,root_key,scan_unit,status,last_error,updated_at) "
                 "VALUES (?,?,?,?,?,datetime('now'))"
             )
             args = (source, root_key, scan_unit, status, last_error)
         else:
             statement = (
-                "INSERT OR REPLACE INTO art_scan_unit "
+                f"INSERT OR REPLACE INTO {self._qt('art_scan_unit')} "
                 "(source,root_key,scan_unit,status,updated_at) "
                 "VALUES (?,?,?,?,datetime('now'))"
             )
