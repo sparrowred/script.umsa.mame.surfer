@@ -7,6 +7,7 @@ replayer.
 """
 
 import os
+import traceback
 from dataclasses import dataclass
 from random import choice, randint
 
@@ -14,6 +15,7 @@ import xbmc
 import xbmcgui
 from umsa_core.support import marp_search
 
+from . import error_notify
 from . import strings as S
 from .constants import TEXTLIST, TEXTLIST_KEY_EMU_OUTPUT, TEXTLIST_KEY_PROPERTY
 from .strings import tr
@@ -186,7 +188,13 @@ def marp_replayer(ctx, dl_file=None, set_name=None, random=None):
 
     if not dl_file:
         rand_version = randint(178, 289)
-        all_marps = marp_search(version=rand_version)
+        try:
+            all_marps = marp_search(version=rand_version)
+        except Exception as error:  # noqa: BLE001 - reported to the user
+            xbmc.log(f"UMSA gui: MARP search for version {rand_version} failed: "
+                     f"{error}\n{traceback.format_exc()}", xbmc.LOGERROR)
+            error_notify.notify_error(ctx.services.dialog, S.MARP_FAILED, error=error)
+            return
         if not all_marps:
             ctx.services.dialog.notification(
                 tr(S.MARP), tr(S.MARP_NO_REPLAYS, rand_version))

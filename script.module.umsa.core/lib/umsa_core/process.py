@@ -1,5 +1,6 @@
 """Subprocess ownership and status helpers."""
 
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -34,12 +35,65 @@ class ProcessStatus:
     exit_code: int | None = None
 
 
+# ProcessLaunchError.reason: why a start failed (machine-readable)
+LAUNCH_WORKING_DIR_MISSING = 'working_dir_missing'
+LAUNCH_PROGRAM_MISSING = 'program_missing'
+LAUNCH_PERMISSION_DENIED = 'permission_denied'
+LAUNCH_FAILED = 'launch_failed'
+
+
 class ProcessLaunchError(OSError):
     """Raised when the operating system cannot start a requested process.
 
     It remains an ``OSError`` so callers that handled ``Popen`` launch failures
-    continue to recognize the exception.
+    continue to recognize the exception. ``reason`` is one of the
+    ``LAUNCH_*`` constants, ``path`` the path concerned (working directory or
+    program), when known.
     """
+
+    def __init__(self, message, reason=LAUNCH_FAILED, path=None):
+        super().__init__(message)
+        self.reason = reason
+        self.path = path
+
+
+def launch_popen(command: ProcessCommand, cwd: WorkingDirectory | None,
+                 **popen_kwargs) -> Popen:
+    """Start ``command`` with ``Popen``; the one place that starts emulators.
+
+    A missing working directory is reported before anything is started.
+    Every ``OSError`` of ``Popen`` becomes a ``ProcessLaunchError`` whose
+    ``reason`` tells a missing working directory, a missing program and a
+    missing permission apart.
+    """
+
+    if cwd and not os.path.isdir(cwd):
+        raise ProcessLaunchError(
+            f"could not start process {command!r}: working directory "
+            f"{cwd!r} does not exist",
+            LAUNCH_WORKING_DIR_MISSING, cwd)
+    try:
+        return Popen(command, cwd=cwd, **popen_kwargs)
+    except OSError as error:
+        if cwd is not None and error.filename == cwd:
+            reason, path = LAUNCH_WORKING_DIR_MISSING, cwd
+        elif isinstance(error, FileNotFoundError):
+            reason, path = LAUNCH_PROGRAM_MISSING, _program(command)
+        elif isinstance(error, PermissionError):
+            reason, path = LAUNCH_PERMISSION_DENIED, _program(command)
+        else:
+            reason, path = LAUNCH_FAILED, None
+        raise ProcessLaunchError(
+            f"could not start process {command!r}: {error}", reason, path,
+        ) from error
+
+
+def _program(command: ProcessCommand):
+    """The program of ``command`` (its first element)."""
+
+    if isinstance(command, (str, bytes, PathLike)):
+        return command
+    return command[0] if command else None
 
 
 class ProcessRunner:
@@ -75,7 +129,7 @@ class ProcessRunner:
         capture_output: bool = False,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        """Start a process, raising ProcessLaunchError if Popen fails."""
+        """Start a process, raising ProcessLaunchError if it cannot start."""
 
         if self.status().state is ProcessState.RUNNING:
             raise RuntimeError("a process is already running")
@@ -87,13 +141,17 @@ class ProcessRunner:
                 # the runner owns both files beyond this call
                 stdout_file = TemporaryFile()  # noqa: SIM115
                 stderr_file = TemporaryFile()  # noqa: SIM115
-                process = Popen(
-                    command, cwd=cwd, stdout=stdout_file, stderr=stderr_file,
+                process = launch_popen(
+                    command, cwd, stdout=stdout_file, stderr=stderr_file,
                     env=env,
                 )
             else:
-                process = Popen(command, cwd=cwd, env=env)
+                process = launch_popen(command, cwd, env=env)
+        except ProcessLaunchError:
+            _close_files(stdout_file, stderr_file)
+            raise
         except OSError as error:
+            # the capture files could not be created
             _close_files(stdout_file, stderr_file)
             raise ProcessLaunchError(
                 f"could not start process {command!r}: {error}"

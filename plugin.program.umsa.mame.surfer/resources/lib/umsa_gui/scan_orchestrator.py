@@ -5,6 +5,7 @@ dialogs and the database re-connect.
 """
 
 import os
+import traceback
 from dataclasses import dataclass
 
 import xbmc
@@ -17,6 +18,7 @@ from umsa_core.umsa_db_download import (
     download_and_update_umsa_db,
 )
 
+from . import error_notify
 from . import strings as S
 from .strings import tr
 
@@ -32,6 +34,25 @@ def _cancel_pressed(progress_dialog):
         return bool(progress_dialog.iscanceled())
     except Exception:  # noqa: BLE001 - a closed dialog counts as not cancelled
         return False
+
+
+def _close_dialog(dialog):
+    """Close a progress dialog; a failure is only logged."""
+
+    try:
+        dialog.close()
+    except Exception as error:  # noqa: BLE001 - the report comes first
+        xbmc.log(f'UMSA gui: could not close the progress dialog: {error}',
+                 xbmc.LOGWARNING)
+
+
+def _db_open_failed(ctx, progress_dialog, error):
+    """umsa.db could not be closed or (re)opened: log it, close the dialog, tell the user."""
+
+    xbmc.log(f"UMSA gui: update: umsa.db could not be opened: {error}\n"
+             f"{traceback.format_exc()}", xbmc.LOGERROR)
+    _close_dialog(progress_dialog)
+    error_notify.notify_error(ctx.services.dialog, S.DB_OPEN_FAILED, error=error)
 
 
 @dataclass
@@ -64,8 +85,12 @@ def update(ctx, what, core_data_paths):
         progress_dialog = xbmcgui.DialogProgress()
         progress_dialog.create(tr(S.DB_UPDATING), tr(S.DB_DOWNLOADING))
         # close db before update (keep status.db open for the re-connect)
-        if ctx.services.ggdb:
-            ctx.services.ggdb.close_umsa_db()
+        try:
+            if ctx.services.ggdb:
+                ctx.services.ggdb.close_umsa_db()
+        except Exception as error:  # noqa: BLE001 - reported to the user
+            _db_open_failed(ctx, progress_dialog, error)
+            return False
 
         def progress(percent, title, message):
             if progress_dialog.iscanceled():
@@ -75,37 +100,52 @@ def update(ctx, what, core_data_paths):
             else:
                 progress_dialog.update(percent, message)
 
+        cancelled = False
+        failure = None
         try:
             download_and_update_umsa_db(core_data_paths.data_dir, progress)
         except _DownloadCancelled:
             xbmc.log("UMSA gui: update: umsa.db download cancelled", xbmc.LOGINFO)
-            failure = (tr(S.DB_DOWNLOAD_CANCELLED), xbmcgui.NOTIFICATION_INFO)
+            cancelled = True
         except (UmsaDbDownloadError, OSError) as exc:
-            xbmc.log(f"UMSA gui: update: umsa.db download failed: {exc}", xbmc.LOGERROR)
-            failure = (tr(S.DB_DOWNLOAD_FAILED, exc), xbmcgui.NOTIFICATION_ERROR)
-        else:
-            failure = None
+            xbmc.log(f"UMSA gui: update: umsa.db download failed: {exc}\n"
+                     f"{traceback.format_exc()}", xbmc.LOGERROR)
+            failure = exc
 
-        if failure:
+        if cancelled or failure is not None:
             progress_dialog.close()
             # the old umsa.db is unchanged, reopen it
-            if ctx.services.ggdb:
-                ctx.services.ggdb.open_db(settings_folder)
-            ctx.services.dialog.notification(tr(S.DB_TITLE), failure[0], failure[1], 5000)
+            try:
+                if ctx.services.ggdb:
+                    ctx.services.ggdb.open_db(settings_folder)
+            except Exception as error:  # noqa: BLE001 - reported to the user
+                _db_open_failed(ctx, progress_dialog, error)
+                return False
+            if cancelled:
+                ctx.services.dialog.notification(
+                    tr(S.DB_TITLE), tr(S.DB_DOWNLOAD_CANCELLED),
+                    xbmcgui.NOTIFICATION_INFO, 5000)
+            else:
+                # the reason only (network ...), the error is in the log
+                error_notify.notify_error(ctx.services.dialog, S.DB_TITLE, error=failure)
             return False
 
         # re-connect to db
-        if ctx.services.ggdb:
-            progress_dialog.update(100, tr(S.DB_REOPENING))
-            ctx.services.ggdb.open_db(settings_folder)
-        # first run
-        else:
-            ctx.services.ggdb = DBMod(
-                settings_folder,
-                ctx.settings.nonmame,
-                ctx.filters.filter_lists,
-                ctx.settings.pref_country,
-            )
+        try:
+            if ctx.services.ggdb:
+                progress_dialog.update(100, tr(S.DB_REOPENING))
+                ctx.services.ggdb.open_db(settings_folder)
+            # first run
+            else:
+                ctx.services.ggdb = DBMod(
+                    settings_folder,
+                    ctx.settings.nonmame,
+                    ctx.filters.filter_lists,
+                    ctx.settings.pref_country,
+                )
+        except Exception as error:  # noqa: BLE001 - reported to the user
+            _db_open_failed(ctx, progress_dialog, error)
+            return False
 
         progress_dialog.close()
         return True
@@ -173,3 +213,8 @@ def update(ctx, what, core_data_paths):
             ctx.services.dialog.notification(
                 tr(S.SCAN_STATUS), tr(S.SCAN_CANCELLED),
                 xbmcgui.NOTIFICATION_INFO, 4000)
+        elif scan_result is None:
+            # the worker failed; Core logged it with its traceback
+            error_notify.notify_error(
+                ctx.services.dialog, S.SCAN_FAILED, title,
+                reason_id=S.REASON_UNEXPECTED)

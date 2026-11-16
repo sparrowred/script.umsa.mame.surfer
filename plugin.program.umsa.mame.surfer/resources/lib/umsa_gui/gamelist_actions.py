@@ -5,6 +5,7 @@ emulators, plays media, changes the machine of a set or selects a new software.
 """
 
 import os
+import traceback
 import zipfile
 from dataclasses import dataclass
 from json import dumps
@@ -16,7 +17,13 @@ from umsa_core.emulation import format_vgm_title
 from umsa_core.game_labels import split_gamename
 from umsa_core.support import marp_search
 
-from . import artwork_presenter, emulator_setup, optional_plugins, software_selector
+from . import (
+    artwork_presenter,
+    emulator_setup,
+    error_notify,
+    optional_plugins,
+    software_selector,
+)
 from . import gamelist as gamelist_workflows
 from . import strings as S
 from .constants import (
@@ -184,8 +191,11 @@ def gamelist_click(ctx):
     elif kind == KIND_MEDIA:
         # video
         if list_id[-3:] == 'mp4':
-            list_item = xbmcgui.ListItem(select_label)
-            ctx.services.player.play(list_id, listitem=list_item, windowed=True)
+            try:
+                list_item = xbmcgui.ListItem(select_label)
+                ctx.services.player.play(list_id, listitem=list_item, windowed=True)
+            except Exception as error:  # noqa: BLE001 - reported to the user
+                _report(ctx, S.MEDIA_VIDEO_FAILED, f'video {list_id!r}', error)
         # pdf viewer
         elif list_id[-3:] == 'pdf':
             open_manual(ctx, list_id)
@@ -194,40 +204,37 @@ def gamelist_click(ctx):
             emulator_setup.marp_replayer(ctx.emulator, dl_file=list_id, set_name=what)
         # vgm
         elif what == "vgm":
-            vgm_zipfile = ctx.services.emulation.find_roms('vgmplay', list_id)
-            xbmc.log(f"UMSA gui: get vgmfile - {vgm_zipfile}")
-            vgm_tracklist = zipfile.ZipFile(vgm_zipfile).namelist()
-            select = vgm_tracklist.copy()
-            if select:
-                which_track = ctx.services.dialog.select(tr(S.SELECT_VGM_TRACK), select)
-                if which_track > -1:
-                    track = vgm_tracklist[which_track]
-                    header = parse_vgm_header(vgm_zipfile, track, logger=log)
-                    plan = calculate_playback_plan(
-                        header,
-                        max_seconds=ctx.settings.vgm_max_duration)
-                    # Core turns the title into "<title> -MM:ss (<dB> dB)"
-                    title = format_vgm_title(track, ctx.software.actset['gamename'])
-                    ctx.services.emulation.play_vgm(
-                        f'{list_id}:{which_track+1:03d}',
-                        info=title, plan=plan)
+            try:
+                _play_vgm(ctx, list_id)
+            except Exception as error:  # noqa: BLE001 - reported to the user
+                _report(ctx, S.VGM_FAILED, f'VGM {list_id!r}', error)
         # youtube
         elif what == "yt":
-            ctx.services.player.play(
-                f"plugin://plugin.video.youtube/play/?video_id={list_id}",
-                windowed=True)
+            try:
+                ctx.services.player.play(
+                    f"plugin://plugin.video.youtube/play/?video_id={list_id}",
+                    windowed=True)
+            except Exception as error:  # noqa: BLE001 - reported to the user
+                _report(ctx, S.MEDIA_YOUTUBE_FAILED, f'youtube video {list_id!r}', error)
         # search marp, youtube
         elif what == ENTRY_SEARCH and list_id == SEARCH_YOUTUBE:
             yt_search_url = "plugin://plugin.video.youtube/kodion/search/query/?category_label=REPLACE&incognito=True&q=REPLACE&type=video"
-            yt_search_str = f"{split_gamename(ctx.software.actset['gamename'])[0]} {ctx.software.actset['machine_name']}".replace(' ', '%20')
-            ctx.exit()
-            xbmc.executebuiltin(f"ActivateWindow(Videos,{yt_search_url.replace('REPLACE',yt_search_str)},return)")
+            try:
+                yt_search_str = f"{split_gamename(ctx.software.actset['gamename'])[0]} {ctx.software.actset['machine_name']}".replace(' ', '%20')
+                ctx.exit()
+                xbmc.executebuiltin(f"ActivateWindow(Videos,{yt_search_url.replace('REPLACE',yt_search_str)},return)")
+            except Exception as error:  # noqa: BLE001 - reported to the user
+                _report(ctx, S.MEDIA_YOUTUBE_FAILED, 'youtube search', error)
 
         elif what == ENTRY_SEARCH and list_id == SEARCH_MARP:
             if ctx.software.actset['swl_name'] == "mame":
-                ctx.services.ggdb.status.save_further_media(
-                    ctx.software.actset['id'], marp=dumps(
-                        marp_search(short_name=ctx.software.actset['name'])))
+                try:
+                    ctx.services.ggdb.status.save_further_media(
+                        ctx.software.actset['id'], marp=dumps(
+                            marp_search(short_name=ctx.software.actset['name'])))
+                except Exception as error:  # noqa: BLE001 - reported to the user
+                    _report(ctx, S.MARP_FAILED, 'MARP search', error)
+                    return
             gamelist_workflows.update_gamelist(ctx.gamelist, M_MEDIA)
     # select new software
     else:
@@ -238,6 +245,39 @@ def gamelist_click(ctx):
                 ctx.selector, software_id, set_id=int(set_id))
         else:
             software_selector.remember_and_select(ctx.selector, software_id)
+
+
+def _report(ctx, title_id, what, error):
+    """Log a failed media action with its traceback and tell the user (E-1)."""
+
+    log(f'UMSA gui: {what} failed: {error}\n{traceback.format_exc()}', level='error')
+    error_notify.notify_error(ctx.services.dialog, title_id, error=error)
+
+
+def _play_vgm(ctx, list_id):
+    """Let the user pick a track of the VGM set ``list_id`` and play it.
+
+    A refused start (``play_vgm`` returns False: a playback runs) stays
+    silent (C-M9).
+    """
+
+    vgm_zipfile = ctx.services.emulation.find_roms('vgmplay', list_id)
+    xbmc.log(f"UMSA gui: get vgmfile - {vgm_zipfile}")
+    vgm_tracklist = zipfile.ZipFile(vgm_zipfile).namelist()
+    select = vgm_tracklist.copy()
+    if select:
+        which_track = ctx.services.dialog.select(tr(S.SELECT_VGM_TRACK), select)
+        if which_track > -1:
+            track = vgm_tracklist[which_track]
+            header = parse_vgm_header(vgm_zipfile, track, logger=log)
+            plan = calculate_playback_plan(
+                header,
+                max_seconds=ctx.settings.vgm_max_duration)
+            # Core turns the title into "<title> -MM:ss (<dB> dB)"
+            title = format_vgm_title(track, ctx.software.actset['gamename'])
+            ctx.services.emulation.play_vgm(
+                f'{list_id}:{which_track+1:03d}',
+                info=title, plan=plan)
 
 
 def open_manual(ctx, path):
@@ -251,7 +291,11 @@ def open_manual(ctx, path):
     if optional_plugins.KODIPDF:
         # the reader takes over the display
         ctx.exit()
-        optional_plugins.play_pdf(path, compress=True, is_image_plugin=False)
+        try:
+            optional_plugins.play_pdf(path, compress=True, is_image_plugin=False)
+        except Exception as error:  # noqa: BLE001 - reported to the user
+            # the window is closed already, the notification shows anyway
+            _report(ctx, S.MEDIA_MANUAL_FAILED, f'manual {path!r}', error)
         return
     viewer = ctx.settings.pdfviewer
     if not viewer:

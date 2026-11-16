@@ -3,6 +3,7 @@
 import os
 import shlex
 import subprocess
+import traceback
 from platform import platform
 from threading import Event, Lock, Thread, current_thread
 from time import monotonic
@@ -23,6 +24,12 @@ from umsa_core.chd_extractor import (
     extract_chd,
 )
 from umsa_core.launch_preparer import LaunchPreparer
+from umsa_core.process import (
+    LAUNCH_FAILED,
+    LAUNCH_PERMISSION_DENIED,
+    LAUNCH_PROGRAM_MISSING,
+    launch_popen,
+)
 from umsa_core.rom_extractor import extract_rom
 from umsa_core.rom_finder import (
     NONMAME,  # noqa: F401
@@ -116,6 +123,8 @@ class Emulation:
         self.mame_dir = mame_dir
         self.chdman_exe = chdman_exe
         self.process = None
+        # called with the exception when a VGM worker fails (GUI notification)
+        self.on_vgm_error = None
         # VGM playback: the MAME process of the running track, the stop
         # request of stop_vgm() and the worker threads; the start lock makes
         # "is a playback running?" and starting its worker one step
@@ -270,8 +279,8 @@ class Emulation:
         # Watch has no pipes here: nothing reads the output of this process
         # (captured launches go through start_managed_process)
         if self.emurun['emulation_start'] in (0, 1): # Normal, Watch
-            self.process = subprocess.Popen(
-                args, cwd=self.emurun['working_dir'], **popen_env)
+            self.process = launch_popen(
+                args, self.emurun['working_dir'], **popen_env)
         elif self.emurun['emulation_start'] == 2: # Fallback
             self.process = None
             # most terminals hand the -e string to a shell; shlex.join quotes
@@ -291,8 +300,15 @@ class Emulation:
                     f'UMSA Emulation: launch={launch_id} could not start '
                     f'terminal fallback '
                     f'{torun!r}: {error}', level='error')
+                if isinstance(error, FileNotFoundError):
+                    reason = LAUNCH_PROGRAM_MISSING
+                elif isinstance(error, PermissionError):
+                    reason = LAUNCH_PERMISSION_DENIED
+                else:
+                    reason = LAUNCH_FAILED
                 raise ProcessLaunchError(
-                    f'could not start terminal fallback {torun!r}: {error}'
+                    f'could not start terminal fallback {torun!r}: {error}',
+                    reason, self.terminal if reason != LAUNCH_FAILED else None,
                 ) from error
             duration = monotonic() - started_at
             log(
@@ -630,6 +646,9 @@ class Emulation:
             else:
                 log(f'UMSA Emu: MAME vgmplay has not returned a process: {self.run}', level='debug')
             return True
+        except Exception as error:  # noqa: BLE001 - a worker must not die silently
+            self._report_vgm_error(error)
+            return False
         finally:
             self._vgm_process = None
             self.vgm_player.stop_info_ticker()
@@ -659,8 +678,23 @@ class Emulation:
                 find_roms_func=lambda emurun, rom_paths: self.find_roms(),
                 run_func=run_func,
                 stop_requested=self._vgm_stop.is_set)
+        except Exception as error:  # noqa: BLE001 - a worker must not die silently
+            self._report_vgm_error(error)
         finally:
             self._close_vgm_sockets()
+
+    def _report_vgm_error(self, error):
+        """Log a failed VGM playback and hand it to ``on_vgm_error``."""
+
+        log(f'UMSA VGM: playback failed: {error}\n{traceback.format_exc()}',
+            level='error')
+        if self.on_vgm_error is None:
+            return
+        try:
+            self.on_vgm_error(error)
+        except Exception as callback_error:  # noqa: BLE001 - only a report
+            log(f'UMSA VGM: error callback failed: {callback_error}',
+                level='warning')
 
     def play_random_vgm(self, textinfo=None, db_path=None):
         """Start random vgm playback in a thread.

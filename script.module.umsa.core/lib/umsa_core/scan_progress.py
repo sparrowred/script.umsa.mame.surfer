@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import traceback
 
 from .abort import ShutdownRequested, resolve_wait
 from .logging import log
@@ -58,7 +59,8 @@ def run_scan_with_progress(state, name, scan, progress, title, sleep,
                     owner.set()
                 result['value'] = scan()
         except Exception as exc:  # noqa: BLE001 - a scan must never stay stuck
-            log(f"UMSA scan: '{name}' worker failed: {exc}", level='error')
+            log(f"UMSA scan: '{name}' worker failed: {exc}\n"
+                f"{traceback.format_exc()}", level='error')
         finally:
             finished.set()
 

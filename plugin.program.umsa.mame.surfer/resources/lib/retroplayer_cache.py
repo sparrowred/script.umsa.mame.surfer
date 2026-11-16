@@ -13,6 +13,7 @@ the window.
 """
 
 import os
+import traceback
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -22,6 +23,7 @@ from emulator_launcher import new_emurun
 from umsa_core import ShutdownRequested
 from umsa_core.rom_cache import CacheCopyCancelled, cache_archives
 from umsa_core.rom_finder import EXTENSIONS, NONMAME
+from umsa_gui import error_notify
 from umsa_gui import strings as S
 from umsa_gui.strings import tr
 
@@ -65,11 +67,12 @@ def _close(ctx):
     ctx.emu_dialog.close()
 
 
-def _fail(ctx, message):
+def _fail(ctx, error=None, reason_id=None):
+    """Close the start and tell the user (``umsa_gui.error_notify``)."""
+
     _close(ctx)
-    ctx.dialog.notification(
-        heading=tr(S.ERROR), message=message,
-        icon=xbmcgui.NOTIFICATION_ERROR, time=7500)
+    error_notify.notify_error(
+        ctx.dialog, S.RUN_START_FAILED, EMULATOR_NAME, error=error, reason_id=reason_id)
 
 
 def prepare_playfile(ctx):
@@ -139,31 +142,47 @@ def run_retroplayer(ctx):
     except OSError as error:
         xbmc.log(f"UMSA gui: retroplayer: could not prepare the ROM: {error}",
                  xbmc.LOGERROR)
-        _fail(ctx, str(error))
+        _fail(ctx, error=error)
+        return
+    except Exception as error:  # noqa: BLE001 - reported to the user
+        xbmc.log(f"UMSA gui: retroplayer: preparing the ROM failed: {error}\n"
+                 f"{traceback.format_exc()}", xbmc.LOGERROR)
+        _fail(ctx, error=error)
         return
     finally:
-        ctx.emulation.after_run()
+        # a cleanup failure must not hide the report of the start
+        try:
+            ctx.emulation.after_run()
+        except Exception as error:  # noqa: BLE001 - only logged
+            xbmc.log(f"UMSA gui: retroplayer: cleanup failed: {error}\n"
+                     f"{traceback.format_exc()}", xbmc.LOGWARNING)
 
     if not playfile:
-        _fail(ctx, tr(S.RUN_CANNOT_FIND_ROM))
+        _fail(ctx, reason_id=S.RUN_CANNOT_FIND_ROM)
         return
     xbmc.log(f"UMSA gui: retroplayer: playfile = {playfile}", xbmc.LOGDEBUG)
 
-    game_item = xbmcgui.ListItem(playfile)
-    game_item.setInfo(type='game', infoLabels={'title': ctx.actset['gamename']})
-    game_tag = game_item.getGameInfoTag()
-    game_tag.setTitle(ctx.actset['name'])
-    game_tag.setPlatform(ctx.actset['machine_label'])
-    game_tag.setGenres([ctx.actset['category']])
-    game_tag.setPublisher(ctx.actset['publisher'])
-    game_tag.setDeveloper(ctx.actset['publisher'])  # get dev from game entry
-    game_tag.setOverview('set info from history')  # TODO
-    year = ctx.actset['year']
-    game_tag.setYear(int(year) if str(year).isdigit() else 0)
-    if ctx.player.isPlaying():
-        ctx.player.stop()
-        xbmc.sleep(500)
-    ctx.player.play(playfile, game_item)
+    try:
+        game_item = xbmcgui.ListItem(playfile)
+        game_item.setInfo(type='game', infoLabels={'title': ctx.actset['gamename']})
+        game_tag = game_item.getGameInfoTag()
+        game_tag.setTitle(ctx.actset['name'])
+        game_tag.setPlatform(ctx.actset['machine_label'])
+        game_tag.setGenres([ctx.actset['category']])
+        game_tag.setPublisher(ctx.actset['publisher'])
+        game_tag.setDeveloper(ctx.actset['publisher'])  # get dev from game entry
+        game_tag.setOverview('set info from history')  # TODO
+        year = ctx.actset['year']
+        game_tag.setYear(int(year) if str(year).isdigit() else 0)
+        if ctx.player.isPlaying():
+            ctx.player.stop()
+            xbmc.sleep(500)
+        ctx.player.play(playfile, game_item)
+    except Exception as error:  # noqa: BLE001 - reported to the user
+        xbmc.log(f"UMSA gui: retroplayer: could not start {playfile!r}: {error}\n"
+                 f"{traceback.format_exc()}", xbmc.LOGERROR)
+        _fail(ctx, error=error)
+        return
     _close(ctx)
     # TODO need to exit or find out how to deinit the window and init it
     # again after the play session (as long as the player plays, the game runs)

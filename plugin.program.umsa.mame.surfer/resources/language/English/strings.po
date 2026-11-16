@@ -573,10 +573,6 @@ msgctxt "#32484"
 msgid "download replay..."
 msgstr ""
 
-msgctxt "#32485"
-msgid "{0} error"
-msgstr ""
-
 msgctxt "#32486"
 msgid "rom not found"
 msgstr ""
@@ -611,10 +607,6 @@ msgstr ""
 
 msgctxt "#32494"
 msgid "searching roms..."
-msgstr ""
-
-msgctxt "#32495"
-msgid "error"
 msgstr ""
 
 msgctxt "#32496"
@@ -683,10 +675,6 @@ msgstr ""
 
 msgctxt "#32522"
 msgid "download cancelled"
-msgstr ""
-
-msgctxt "#32523"
-msgid "download failed: {0}"
 msgstr ""
 
 msgctxt "#32524"
@@ -803,4 +791,100 @@ msgstr ""
 
 msgctxt "#32561"
 msgid "Could not start the PDF viewer: {0}"
+msgstr ""
+
+msgctxt "#32562"
+msgid "{0} - see kodi.log"
+msgstr ""
+
+msgctxt "#32563"
+msgid "UMSA: action failed"
+msgstr ""
+
+msgctxt "#32564"
+msgid "{0} could not start"
+msgstr ""
+
+msgctxt "#32565"
+msgid "{0}: preparation failed"
+msgstr ""
+
+msgctxt "#32566"
+msgid "working folder not found"
+msgstr ""
+
+msgctxt "#32567"
+msgid "program not found"
+msgstr ""
+
+msgctxt "#32568"
+msgid "no permission"
+msgstr ""
+
+msgctxt "#32569"
+msgid "start refused by the system"
+msgstr ""
+
+msgctxt "#32570"
+msgid "CHD extraction failed"
+msgstr ""
+
+msgctxt "#32571"
+msgid "network error"
+msgstr ""
+
+msgctxt "#32572"
+msgid "archive is damaged"
+msgstr ""
+
+msgctxt "#32573"
+msgid "database error"
+msgstr ""
+
+msgctxt "#32574"
+msgid "file not found"
+msgstr ""
+
+msgctxt "#32575"
+msgid "file system error"
+msgstr ""
+
+msgctxt "#32576"
+msgid "unexpected error"
+msgstr ""
+
+msgctxt "#32577"
+msgid "nothing found"
+msgstr ""
+
+msgctxt "#32578"
+msgid "Music could not be played"
+msgstr ""
+
+msgctxt "#32579"
+msgid "Video could not be played"
+msgstr ""
+
+msgctxt "#32580"
+msgid "Manual could not be opened"
+msgstr ""
+
+msgctxt "#32581"
+msgid "YouTube failed"
+msgstr ""
+
+msgctxt "#32582"
+msgid "MARP replays could not be loaded"
+msgstr ""
+
+msgctxt "#32583"
+msgid "{0} failed"
+msgstr ""
+
+msgctxt "#32584"
+msgid "Database could not be opened"
+msgstr ""
+
+msgctxt "#32585"
+msgid "Settings could not be read"
 msgstr ""

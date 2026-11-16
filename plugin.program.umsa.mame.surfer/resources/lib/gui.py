@@ -12,6 +12,7 @@ Kodi dialog stays the single owner of the skin controls.
 import functools
 import os
 import sys
+import traceback
 from random import choice, randint
 from threading import Lock, Thread
 
@@ -20,7 +21,7 @@ import xbmcgui
 from emulator_launcher import LaunchCtx, launch_emulator
 from retroplayer_cache import RetroplayerCtx, run_retroplayer
 from settings_adapter import FrontendSettings, load_all_settings
-from umsa_core import set_log
+from umsa_core import ShutdownRequested, set_log
 from umsa_core.database import DBMod
 from umsa_core.default_filter import DEFAULT_FILTER_NAME
 from umsa_core.emulation import Emulation
@@ -45,6 +46,7 @@ from umsa_core_kodi import (
 from umsa_gui import (
     artwork_presenter,
     emulator_setup,
+    error_notify,
     filter_ui,
     gamelist_actions,
     menu,
@@ -181,8 +183,13 @@ class VgmCommandMonitor(xbmc.Monitor):
             return
         action = parse_vgm_action_method(method)
         if action in ('volume_up', 'volume_down', 'next', 'stop', 'start_random'):
-            screensaver_vgm.handle_vgm_action(
-                self.owner.ctx.screensaver_vgm, action)
+            try:
+                screensaver_vgm.handle_vgm_action(
+                    self.owner.ctx.screensaver_vgm, action)
+            except Exception as error:  # noqa: BLE001 - safety net of a Kodi callback
+                error_notify.report_unexpected(
+                    self.owner.services.dialog, 'VGM action', error,
+                    notify=not self.owner._resources_released)
 
 
 # guards the hand-over of the database close to a still running scan thread
@@ -197,12 +204,27 @@ def _window_handler(method):
 
     Requests of the monitor that arrive meanwhile run after the outermost
     handler returned.
+
+    It is also the safety net of the callbacks (E-1): an exception the
+    workflows did not report is logged with its traceback and shown as
+    ``ERR_UNEXPECTED_TITLE`` (only logged after ``release_resources()``)
+    instead of ending in Kodi. A Kodi shutdown (``ShutdownRequested``) is
+    only logged.
     """
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self.requests.busy():
-            return method(self, *args, **kwargs)
+            try:
+                return method(self, *args, **kwargs)
+            except ShutdownRequested as error:
+                xbmc.log(f"UMSA gui: {method.__name__}: Kodi shuts down: {error}",
+                         xbmc.LOGINFO)
+            except Exception as error:  # noqa: BLE001 - safety net of a Kodi callback
+                error_notify.report_unexpected(
+                    self.services.dialog, method.__name__, error,
+                    notify=not self._resources_released)
+            return None
 
     return wrapper
 
@@ -394,6 +416,9 @@ class UMSA(xbmcgui.WindowXMLDialog):
                 screensaver_vgm.hide_vgm_info, self.ctx.screensaver_vgm),
             vgm_max_duration=self.settings.vgm_max_duration, rom_cache=self.settings.rom_cache,
             cache_layout=self.settings.cache_layout, vgm_port=self.settings.vgm_port)
+        # a failing VGM worker (thread) tells the user; the worker logged it
+        self.services.emulation.on_vgm_error = lambda error: error_notify.notify_error(
+            self.services.dialog, S.VGM_FAILED, error=error)
 
         # receive VGM control commands from the screensaver add-on
         self.vgm_monitor = VgmCommandMonitor(self)
@@ -761,8 +786,14 @@ class UMSA(xbmcgui.WindowXMLDialog):
                         screensaver_vgm.start_random_vgm(self.ctx.screensaver_vgm)
                 elif menu_item == M_ASETTINGS:
                     self.setFocus(self.getControl(self.listing.main_focus))
-                    open_core_settings()
-                    self.read_settings()
+                    try:
+                        open_core_settings()
+                        self.read_settings()
+                    except Exception as error:  # noqa: BLE001 - reported to the user
+                        xbmc.log(f"UMSA gui: settings could not be read: {error}\n"
+                                 f"{traceback.format_exc()}", xbmc.LOGERROR)
+                        error_notify.notify_error(
+                            self.services.dialog, S.SETTINGS_FAILED, error=error)
                 else:
                     # close the menu; 'loading...' shows in LABEL_STATUS until the list pops up
                     self.setFocus(self.getControl(self.listing.main_focus))
@@ -807,11 +838,24 @@ class UMSA(xbmcgui.WindowXMLDialog):
                         gamelist_workflows.update_gamelist(self.ctx.gamelist, M_SEARCH)
                 # directly play a youtube video
                 elif menu_item == M_MEDIA:
-                    yt_list = youtube_search(
-                        split_gamename(self.software.actset['gamename'])[0],
-                        self.software.actset['machine_name'])
-                    playurl = f"plugin://plugin.video.youtube/play/?video_id={choice(yt_list)[0]}"
-                    self.services.player.play(playurl, windowed=True)
+                    try:
+                        yt_list = youtube_search(
+                            split_gamename(self.software.actset['gamename'])[0],
+                            self.software.actset['machine_name'])
+                        if yt_list:
+                            playurl = ("plugin://plugin.video.youtube/play/"
+                                       f"?video_id={choice(yt_list)[0]}")
+                            self.services.player.play(playurl, windowed=True)
+                        else:
+                            xbmc.log("UMSA gui: youtube search found nothing", xbmc.LOGINFO)
+                            error_notify.notify_error(
+                                self.services.dialog, S.MEDIA_YOUTUBE_FAILED,
+                                reason_id=S.REASON_NOTHING_FOUND)
+                    except Exception as error:  # noqa: BLE001 - reported to the user
+                        xbmc.log(f"UMSA gui: youtube video failed: {error}\n"
+                                 f"{traceback.format_exc()}", xbmc.LOGERROR)
+                        error_notify.notify_error(
+                            self.services.dialog, S.MEDIA_YOUTUBE_FAILED, error=error)
                     # close menu
                     self.setFocus(self.getControl(self.listing.main_focus))
                 # start random screensaver
@@ -1044,6 +1088,11 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         try:
             scan_orchestrator.update(self.ctx.scan_orchestrator, what, CORE_DATA_PATHS)
+        except Exception as error:  # noqa: BLE001 - safety net of the scan thread
+            # Kodi notifications may be shown from a thread
+            error_notify.report_unexpected(
+                self.services.dialog, f'scan {what}', error,
+                notify=not self._resources_released)
         finally:
             with _SCAN_LOCK:
                 self._scan_ended = True
@@ -1056,10 +1105,15 @@ class UMSA(xbmcgui.WindowXMLDialog):
 
         if self._resources_released:
             return
-        if kind == REQUEST_CLOSE:
-            self.exit()
-        elif kind == REQUEST_OPEN_SOFTWARE:
-            software_selector.open_software(self.ctx.software_selector, value)
+        try:
+            if kind == REQUEST_CLOSE:
+                self.exit()
+            elif kind == REQUEST_OPEN_SOFTWARE:
+                software_selector.open_software(self.ctx.software_selector, value)
+        except Exception as error:  # noqa: BLE001 - safety net of the monitor
+            error_notify.report_unexpected(
+                self.services.dialog, 'monitor request', error,
+                notify=not self._resources_released)
 
     def exit(self):
         """Exit add-on: stop video, close database."""

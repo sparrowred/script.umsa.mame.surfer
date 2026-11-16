@@ -6,16 +6,18 @@ from GUI lifecycle and control wiring.
 
 import os
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
 from umsa_core import ShutdownRequested, log
-from umsa_core.emulation import CHDExtractionCancelled, CHDExtractionError
+from umsa_core.emulation import CHDExtractionCancelled
 from umsa_core.game_labels import make_time_nice
 from umsa_core.rom_cache import CacheCopyCancelled
 from umsa_core.savestates import list_savestates, with_savestate
+from umsa_gui import error_notify
 from umsa_gui import strings as S
 from umsa_gui.strings import tr
 
@@ -76,6 +78,17 @@ def _close_emu_dialog(ctx: LaunchCtx, reason: str) -> None:
         log(
             f'UMSA gui: could not close emulator dialog after {reason}: '
             f'{error}', level='warning')
+
+
+def _end_failed_launch(ctx: LaunchCtx) -> None:
+    """End a failed launch: stop the screensaver and close the dialog.
+
+    The caller logged the error and tells the user next
+    (``error_notify.notify_error`` with the emulator name and the reason).
+    """
+
+    ctx.stop_screensaver()
+    _close_emu_dialog(ctx, 'launch failure')
 
 
 def _choose_savestate(ctx: LaunchCtx) -> bool:
@@ -183,27 +196,66 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
 
     exe = emu_infos.get('exe', '') or ''
 
-    # exodos
-    if 'exodos' in exe:
-        try:
-            ctx.emu_dialog.update(10, tr(S.RUN_SEARCHING_SHELLSCRIPT))
-        except Exception as error:
-            log(
-                f'UMSA gui: could not update emulator progress: {error}',
-                level='debug')
-        ctx.emulation.prepare_exodos_run(emu_infos)
-    # marp
-    elif exe == "marp":
-        try:
-            ctx.emu_dialog.update(20, tr(S.RUN_DOWNLOAD_REPLAY))
-        except Exception as error:
-            log(
-                f'UMSA gui: could not update emulator progress: {error}',
-                level='debug')
-        ctx.emulation.prepare_marp_run(emu_infos)
-    # mame
-    elif exe == "mame":
-        ctx.emulation.prepare_mame_run(ctx.ggdb, ctx.actset, dialog=ctx.emu_dialog)
+    # preparation: a failure is reported here and ends the launch (E-1)
+    error = None
+    try:
+        # exodos
+        if 'exodos' in exe:
+            try:
+                ctx.emu_dialog.update(10, tr(S.RUN_SEARCHING_SHELLSCRIPT))
+            except Exception as dialog_error:
+                log(
+                    f'UMSA gui: could not update emulator progress: {dialog_error}',
+                    level='debug')
+            ctx.emulation.prepare_exodos_run(emu_infos)
+        # marp
+        elif exe == "marp":
+            try:
+                ctx.emu_dialog.update(20, tr(S.RUN_DOWNLOAD_REPLAY))
+            except Exception as dialog_error:
+                log(
+                    f'UMSA gui: could not update emulator progress: {dialog_error}',
+                    level='debug')
+            ctx.emulation.prepare_marp_run(emu_infos)
+        # mame
+        elif exe == "mame":
+            ctx.emulation.prepare_mame_run(ctx.ggdb, ctx.actset, dialog=ctx.emu_dialog)
+        # other emulator
+        else:
+            error = ctx.emulation.other_emulator(
+                emu_infos, sleep=ctx.sleep, dialog=ctx.emu_dialog,
+                wait=ctx.wait)
+    except ShutdownRequested:
+        log(
+            f'UMSA gui: launch={launch_id} Kodi shuts down, emulator '
+            f'preparation stopped', level='warning')
+        _close_emu_dialog(ctx, 'shutdown')
+        ctx.on_shutdown()
+        return
+    except (CHDExtractionCancelled, CacheCopyCancelled):
+        log(
+            f'UMSA gui: launch={launch_id} CHD extraction or cache copy cancelled for '
+            f'{ctx.actset.get("swl_name")!r}/{ctx.actset.get("name")!r}',
+            level='debug')
+        ctx.stop_screensaver()
+        _close_emu_dialog(ctx, 'CHD cancellation')
+        return
+    except Exception as prepare_error:  # noqa: BLE001 - reported to the user
+        # CHDExtractionError included
+        log(
+            f'UMSA gui: launch={launch_id} emulator preparation failed '
+            f'for {ctx.actset.get("swl_name")!r}/'
+            f'{ctx.actset.get("name")!r} with '
+            f'{emu_infos.get("name", "")!r}: {prepare_error}\n'
+            f'{traceback.format_exc()}',
+            level='error')
+        _end_failed_launch(ctx)
+        error_notify.notify_error(
+            ctx.dialog, S.RUN_PREPARE_FAILED, emu_infos.get('name', ''),
+            error=prepare_error)
+        return
+
+    if exe == "mame":
         if not _choose_savestate(ctx):
             log(
                 f'UMSA gui: launch={launch_id} save state selection cancelled',
@@ -211,92 +263,17 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
             ctx.stop_screensaver()
             _close_emu_dialog(ctx, 'save state selection')
             return
-    # other emulator
-    else:
-        import xbmcgui
-        try:
-            error = ctx.emulation.other_emulator(
-                emu_infos, sleep=ctx.sleep, dialog=ctx.emu_dialog,
-                wait=ctx.wait)
-        except ShutdownRequested:
-            log(
-                f'UMSA gui: launch={launch_id} Kodi shuts down, emulator '
-                f'preparation stopped', level='warning')
-            _close_emu_dialog(ctx, 'shutdown')
-            ctx.on_shutdown()
-            return
-        except (CHDExtractionCancelled, CacheCopyCancelled):
-            log(
-                f'UMSA gui: launch={launch_id} CHD extraction or cache copy cancelled for '
-                f'{ctx.actset.get("swl_name")!r}/{ctx.actset.get("name")!r}',
-                level='debug')
-            ctx.stop_screensaver()
-            try:
-                ctx.emu_dialog.close()
-            except Exception as error:
-                log(
-                    f'UMSA gui: could not close emulator dialog after CHD '
-                    f'cancellation: {error}', level='warning')
-            return
-        except CHDExtractionError as error:
-            log(
-                f'UMSA gui: launch={launch_id} CHD extraction failed for '
-                f'{ctx.actset.get("swl_name")!r}/{ctx.actset.get("name")!r}: '
-                f'{error}',
-                level='error')
-            ctx.stop_screensaver()
-            try:
-                ctx.emu_dialog.close()
-            except Exception as close_error:
-                log(
-                    f'UMSA gui: could not close emulator dialog after CHD '
-                    f'error: {close_error}', level='warning')
-            try:
-                ctx.dialog.notification(
-                    tr(S.RUN_ERROR_TITLE, emu_infos.get("name", "")), str(error),
-                    xbmcgui.NOTIFICATION_ERROR, 3500)
-            except Exception as notify_error:
-                log(
-                    f'UMSA gui: could not show CHD error notification: '
-                    f'{notify_error}', level='warning')
-            return
-        except Exception as error:
-            ctx.stop_screensaver()
-            try:
-                ctx.emu_dialog.close()
-            except Exception as close_error:
-                log(
-                    f'UMSA gui: could not close emulator dialog after '
-                    f'preparation error: {close_error}', level='warning')
-            log(
-                f'UMSA gui: launch={launch_id} emulator preparation failed '
-                f'for {ctx.actset.get("swl_name")!r}/'
-                f'{ctx.actset.get("name")!r} with '
-                f'{emu_infos.get("name", "")!r}: {error}',
-                level='error')
-            raise
+    elif 'exodos' not in exe and exe != "marp":
         if not error:
             log(
                 f'UMSA gui: launch={launch_id} emulator preparation stopped: '
                 f'ROM/CHD not found for {ctx.actset.get("swl_name")!r}/'
                 f'{ctx.actset.get("name")!r}',
                 level='warning')
-            ctx.stop_screensaver()
-            try:
-                ctx.emu_dialog.close()
-            except Exception as close_error:
-                log(
-                    f'UMSA gui: could not close emulator dialog after '
-                    f'missing ROM: {close_error}', level='warning')
-            try:
-                ctx.dialog.notification(
-                    tr(S.RUN_ERROR_TITLE, emu_infos.get("name", "")),
-                    tr(S.RUN_ROM_NOT_FOUND),
-                    xbmcgui.NOTIFICATION_ERROR, 3500)
-            except Exception as notify_error:
-                log(
-                    f'UMSA gui: could not show missing ROM notification: '
-                    f'{notify_error}', level='warning')
+            _end_failed_launch(ctx)
+            error_notify.notify_error(
+                ctx.dialog, S.RUN_PREPARE_FAILED, emu_infos.get('name', ''),
+                reason_id=S.RUN_ROM_NOT_FOUND)
             return
         # multiple extracted files
         if ('extract_files' in ctx.emulation.emurun and
@@ -358,18 +335,18 @@ def _launch_emulator(ctx: LaunchCtx) -> None:
                 )
             else:
                 ctx.emulation.run()
-        except OSError as error:
+        except Exception as error:  # noqa: BLE001 - reported to the user
+            # ProcessLaunchError (reason) and e.g. a TypeError of the terminal
             log(
                 f'UMSA gui: launch={launch_id} '
-                f'{emu_infos.get("name", "")} launch failed: {error}',
+                f'{emu_infos.get("name", "")} launch failed: {error}\n'
+                f'{traceback.format_exc()}',
                 level='error')
-            try:
-                ctx.emu_dialog.close()
-            except Exception as close_error:
-                log(
-                    f'UMSA gui: could not close emulator dialog after launch '
-                    f'failure: {close_error}', level='warning')
-            raise
+            _end_failed_launch(ctx)
+            error_notify.notify_error(
+                ctx.dialog, S.RUN_START_FAILED, emu_infos.get('name', ''),
+                error=error)
+            return
         try:
             out, err = ctx.emulation.wait_for_completion(
                 dialog=ctx.emu_dialog, sleep=ctx.sleep, wait=ctx.wait)
@@ -510,4 +487,9 @@ def launch_emulator(ctx: LaunchCtx) -> None:
         else:
             cleanup = getattr(ctx.emulation, 'after_run', None)
             if callable(cleanup):
-                cleanup()
+                # a cleanup failure must not hide the report of the launch
+                try:
+                    cleanup()
+                except Exception as error:  # noqa: BLE001 - only logged
+                    log(f'UMSA gui: cleanup after the emulator run failed: '
+                        f'{error}\n{traceback.format_exc()}', level='warning')
