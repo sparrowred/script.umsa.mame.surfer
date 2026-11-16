@@ -16,6 +16,7 @@ from umsa_core import (
     get_machine_artwork_path,
     resolve_artwork_path,
 )
+from umsa_core.dat_parser import DAT_HISTORY
 
 from . import menu
 from . import strings as S
@@ -269,7 +270,7 @@ def show_artwork(ctx, howmuch='all'):
             moretext = ''
             if k in TEXTLIST_HIDDEN:
                 continue
-            if k == 'History':
+            if k == DAT_HISTORY:
                 moretext = stattext
 
             list_item = xbmcgui.ListItem()

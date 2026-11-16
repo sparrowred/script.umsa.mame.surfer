@@ -59,6 +59,13 @@ class CoreDataPaths:
             raise ValueError("filter name must be a non-empty file name")
         return self.data_dir / f"filter_{name}.txt"
 
+    def scan_log(self, name: str) -> Path:
+        """Return the log file of scan ``name`` (``<name>scan.log``)."""
+
+        if not name or Path(name).name != name or name in (".", ".."):
+            raise ValueError("scan log name must be a non-empty file name")
+        return self.data_dir / f"{name}scan.log"
+
 
 # maintenance commands of the Core settings (script.module.umsa.core/maintenance.py)
 MAINTENANCE_DELETE_COMMANDS = ("delete_umsa_db", "delete_status_db", "delete_media_db")

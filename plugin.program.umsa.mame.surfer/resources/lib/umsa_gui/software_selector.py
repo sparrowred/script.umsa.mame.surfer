@@ -13,6 +13,7 @@ from random import choice
 import xbmc
 import xbmcgui
 from umsa_core.artwork import machine_set_name
+from umsa_core.dat_parser import DAT_OTHERS
 from umsa_core.game_labels import split_gamename
 
 from . import artwork_presenter
@@ -251,9 +252,9 @@ def select_software(ctx, software_id, set_id=None):
         if set_info['swl_name'] == 'vgmplay'
     }
     for dat_set in ctx.software.all_dat.values():
-        if 'others' in dat_set and 'vgmplay' in dat_set['others']:
+        if DAT_OTHERS in dat_set and 'vgmplay' in dat_set[DAT_OTHERS]:
             xbmc.log("UMSA gui: VGMs found!", xbmc.LOGINFO)
-            for splitentry in dat_set['others'].split(','):
+            for splitentry in dat_set[DAT_OTHERS].split(','):
                 if 'vgmplay' in splitentry:
                     vgm_name = splitentry.split('=')[1]
                     if vgm_name not in vgm_titles:

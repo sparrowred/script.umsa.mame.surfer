@@ -6,7 +6,9 @@ UMSA set mapping once, discovers the input files, parses them with
 :mod:`umsa_core.dat_parser` and stages the results through
 :class:`umsa_core.dat_repository.DatRepository`. Only when every file has been
 read and parsed successfully does it publish the staged ``mame_support``
-result in one short transaction.
+result in one short transaction, together with one ``dat_source`` row per
+file (header version and counters), and write ``datscan.log`` (entries and
+sets that were not found) next to the databases.
 
 The scanner never touches ``DBMod`` and never receives its connection. It
 contains no per-entry SQL; all statement ownership lives in the repository.
@@ -16,9 +18,14 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import time
+from datetime import datetime
 
-from .dat_parser import parse_dat, parse_history
+from .dat_parser import (
+    DatFileReport,
+    driver_lookup_keys,
+    parse_dat,
+    parse_history,
+)
 from .dat_repository import (
     ORIGIN_MAME_SUPPORT,
     DatRepository,
@@ -26,11 +33,27 @@ from .dat_repository import (
 )
 from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
+from .scan_log import ScanLog
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 
 
 class _DatCancellationCheckError(Exception):
     """Raised when the host cancellation predicate itself fails."""
+
+
+def _source_row(report: DatFileReport, scanned_at: str) -> dict:
+    """Return the ``dat_source`` values of one parsed file."""
+
+    return {
+        'file': report.file,
+        'version': report.version,
+        'date': report.date,
+        'entries': report.entries,
+        'unmatched_entries': len(report.unmatched_entries),
+        'unmatched_sets': len(report.unmatched_sets),
+        'unmatched_drivers': len(report.unmatched_drivers),
+        'scanned_at': scanned_at,
+    }
 
 
 class DatScanner:
@@ -76,7 +99,12 @@ class DatScanner:
             raise _DatCancellationCheckError(str(exc)) from exc
 
     def _load_set_mapping(self):
-        """Load the ``"<swl>:<set>" -> set id`` mapping from ``umsa.db``."""
+        """Load the set mapping and the known driver names from ``umsa.db``.
+
+        Returns ``(all_sets, drivers)``: ``all_sets`` maps ``"<swl>:<set>"``
+        to the set id, ``drivers`` holds every ``sets.source`` value and its
+        base name (:func:`driver_lookup_keys`).
+        """
 
         umsa_db = self._db_paths.umsa_db
         if not os.path.isfile(umsa_db):
@@ -93,17 +121,72 @@ class DatScanner:
                 all_sets = {}
                 for row in gdbc.fetchall():
                     all_sets[f"{row['swl']}:{row['name']}"] = row['id']
-                return all_sets
+                gdbc.execute(
+                    "SELECT DISTINCT source FROM sets WHERE source IS NOT NULL")
+                drivers = set()
+                for row in gdbc.fetchall():
+                    drivers.update(driver_lookup_keys(row[0]))
+                return all_sets, drivers
             finally:
                 gdbc.close()
         finally:
             gdb.close()
 
+    def _finish_report(self, datdir, set_count, reports, summary):
+        """Add the sums to ``summary``, write ``datscan.log`` and log a line."""
+
+        summary['unmatched_entries'] = sum(
+            len(report.unmatched_entries) for report in reports)
+        summary['unmatched_sets'] = sum(
+            len(report.unmatched_sets) for report in reports)
+        summary['unmatched_drivers'] = sum(
+            len(report.unmatched_drivers) for report in reports)
+
+        scan_log = ScanLog(self._db_paths.scan_log('dat'), 'UMSA dat scan')
+        scan_log.line(f"Folder: {datdir}")
+        scan_log.line(f"Sets in umsa.db: {set_count}")
+        for report in reports:
+            scan_log.section(report.file, (
+                f"Version: {report.version or '-'}, date: {report.date or '-'}",
+                (f"Entries: {report.entries}, "
+                 f"entries without a set (not stored): "
+                 f"{len(report.unmatched_entries)}, "
+                 f"sets not found: {len(report.unmatched_sets)}, "
+                 f"drivers not found: {len(report.unmatched_drivers)}, "
+                 f"malformed lines: {len(report.malformed)}"),
+            ))
+            for heading, lines in (
+                    ('entries without a set (not stored)',
+                     report.unmatched_entries),
+                    ('sets not found', report.unmatched_sets),
+                    ('drivers not found', report.unmatched_drivers),
+                    ('malformed lines', report.malformed)):
+                if lines:
+                    scan_log.section(f"{report.file}: {heading}", lines)
+        if scan_log.write():
+            summary['log'] = scan_log.path
+
+        log(f"UMSA dat scan: {summary['entries']} entries from "
+            f"{summary['files']} files; not stored: "
+            f"{summary['unmatched_entries']} entries without a set; "
+            f"{summary['unmatched_sets']} sets and "
+            f"{summary['unmatched_drivers']} drivers not found; "
+            f"log: {summary['log']}", level='info')
+
     def scan(self, datdir, cancel_event=None):
         """Scan ``datdir`` and atomically publish the ``mame_support`` result.
 
         Returns a summary whose keys are ``files``, ``entries``, ``published``,
-        ``cancelled``, ``aborted`` and ``errors``.
+        ``cancelled``, ``aborted``, ``errors``, ``busy``, the sums
+        ``unmatched_entries``, ``unmatched_sets`` and ``unmatched_drivers``
+        and ``log`` (path of the written ``datscan.log`` as ``str``, else
+        ``None``).
+
+        Entries without any matching set are not stored; they, the sets and
+        the drivers that were not found are counted per file in
+        ``dat_source`` and listed in ``datscan.log``. The log is written only
+        after a successful publish; a failure to write it is logged and
+        leaves the scan published.
 
         A missing/unreadable ``umsa.db``, a missing input directory or any
         unreadable/unparseable input file aborts the scan without publishing,
@@ -125,6 +208,10 @@ class DatScanner:
             'aborted': False,
             'errors': 0,
             'busy': False,
+            'unmatched_entries': 0,
+            'unmatched_sets': 0,
+            'unmatched_drivers': 0,
+            'log': None,
         }
 
         try:
@@ -143,15 +230,13 @@ class DatScanner:
 
     def _scan_locked(self, datdir, cancel_event, summary):
         """Run the DAT scan while the shared lock is held by the caller."""
-        _t0 = time.time()
-        _phase = {}
 
         db_paths = self._db_paths
 
         # A missing/unreadable UMSA database must abort before any DAT data is
         # touched, so a failed scan can never look like a valid empty result.
         try:
-            t = time.time(); all_sets = self._load_set_mapping(); _phase["load_mapping"] = time.time()-t
+            all_sets, drivers = self._load_set_mapping()
         except Exception as exc:
             log(f"UMSA dat scan: cannot load UMSA set mapping: {exc}",
                 level='error')
@@ -162,7 +247,7 @@ class DatScanner:
         # Discover the input files before opening the DAT database. A missing
         # or inaccessible directory must never be treated as an empty scan.
         try:
-            t = time.time(); entries = list(self._listdir(datdir)); _phase["discover"] = time.time()-t
+            entries = list(self._listdir(datdir))
         except OSError as exc:
             log(f"UMSA dat scan: cannot list '{datdir}': {exc}", level='error')
             summary['aborted'] = True
@@ -196,8 +281,9 @@ class DatScanner:
             staged_cur = db_conn.cursor()
             total = len(entries)
 
-            t_parse_start = time.time(); processed = 0
-            for index, datfile in enumerate(entries):
+            reports = []
+            processed = 0
+            for datfile in entries:
                 try:
                     if self._cancelled(cancel_event):
                         summary['cancelled'] = True
@@ -218,13 +304,19 @@ class DatScanner:
                     )
                     continue
 
+                report = DatFileReport(datfile)
+                history = datfile == 'history.xml'
+                # binary for the XML parser, which reads the encoding itself
+                open_args = ({'mode': 'rb'} if history else
+                             {'mode': 'r', 'encoding': 'utf-8-sig',
+                              'errors': 'ignore'})
                 try:
-                    with open(full_path, 'r', encoding='utf-8',
-                              errors='ignore') as fobj:
-                        if datfile == 'history.xml':
-                            parsed = parse_history(fobj.read(), all_sets)
+                    with open(full_path, **open_args) as fobj:
+                        if history:
+                            parsed = parse_history(fobj, all_sets, report)
                         else:
-                            parsed = parse_dat(fobj, all_sets, datfile)
+                            parsed = parse_dat(fobj, all_sets, datfile,
+                                               report, drivers)
 
                         for entry in parsed:
                             if self._cancelled(cancel_event):
@@ -235,10 +327,11 @@ class DatScanner:
                                 entry.entry,
                                 entry.set_ids,
                                 db_cursor=staged_cur,
-                                driver=getattr(entry, "driver", None),
+                                driver=entry.driver,
                             )
                             summary['entries'] += 1
                     db_conn.commit()
+                    reports.append(report)
                     processed += 1
                     self._report(
                         int(processed / total * 100) if total else 100, datfile
@@ -277,20 +370,22 @@ class DatScanner:
             # abort happened.
             if not summary['cancelled'] and not summary['aborted']:
                 try:
-                    _phase["parse"] = time.time() - t_parse_start
-                    t_pub = time.time()
-                    self._report(what='publishing', percent=processed if 'processed' in locals() else total if total else 100)
-                    repo.publish_staged(ORIGIN_MAME_SUPPORT)
+                    self._report(what='publishing')
+                    scanned_at = datetime.now().isoformat(timespec='seconds')
+                    repo.publish_staged(
+                        ORIGIN_MAME_SUPPORT,
+                        sources=[_source_row(report, scanned_at)
+                                 for report in reports],
+                    )
                     summary['published'] = True
-                    _phase["publish"] = time.time() - t_pub
                     self._report(what='publishing complete', percent=100)
                 except Exception as exc:
                     log(f"UMSA dat scan: publish failed: {exc}", level='error')
                     summary['aborted'] = True
                     summary['errors'] += 1
 
-            _phase["total_locked"] = time.time() - _t0
-            log(f"UMSA dat scan timing: { {k: round(v,3) for k,v in _phase.items()} }", level="debug")
+            if summary['published']:
+                self._finish_report(datdir, len(all_sets), reports, summary)
             return summary
         finally:
             if db_conn is not None:

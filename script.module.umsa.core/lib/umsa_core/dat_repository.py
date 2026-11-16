@@ -1,7 +1,7 @@
 """DAT database repository.
 
-This module centralises SQL access to the DAT tables (``dat``, ``dat_set``)
-and is the authoritative DAT schema definition, following the conventions of
+This module centralises SQL access to the DAT tables (``dat``, ``dat_set``,
+``dat_source``) and is the authoritative DAT schema definition, following the conventions of
 :mod:`umsa_core.artwork_repository`.
 
 The repository operates on an existing SQLite connection supplied by the
@@ -89,6 +89,23 @@ def create_dat_tables(db_cursor: sqlite3.Cursor) -> None:
     # driver WIP lookup by driver name (rows with a NULL driver are the rest)
     db_cursor.execute(
         "CREATE INDEX IF NOT EXISTS dat_driver_idx ON dat(driver)")
+    # one row per scanned input file: header version and counters
+    db_cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dat_source(
+            origin            TEXT NOT NULL,
+            file              TEXT NOT NULL,
+            version           TEXT,
+            date              TEXT,
+            entries           INTEGER NOT NULL DEFAULT 0,
+            unmatched_entries INTEGER NOT NULL DEFAULT 0,
+            unmatched_sets    INTEGER NOT NULL DEFAULT 0,
+            unmatched_drivers INTEGER NOT NULL DEFAULT 0,
+            scanned_at        TEXT,
+            PRIMARY KEY(origin, file)
+        )
+        """
+    )
     _backfill_origin(db_cursor)
 
 
@@ -256,6 +273,26 @@ class DatRepository:
                 [DRIVER_WIP, *names],
             )
             return {row[0]: row[1] for row in cursor.fetchall()}
+        finally:
+            cursor.close()
+
+    def get_sources(self, origin: str | None = None) -> list:
+        """Return the ``dat_source`` rows as dicts, sorted by ``file``.
+
+        ``origin`` limits the result to one origin; ``None`` returns all.
+        """
+
+        table = self._qt('dat_source')
+        cursor = self._conn.cursor()
+        try:
+            if origin is None:
+                cursor.execute(f"SELECT * FROM {table} ORDER BY file, origin")
+            else:
+                cursor.execute(
+                    f"SELECT * FROM {table} WHERE origin = ? ORDER BY file",
+                    (origin,),
+                )
+            return [dict(row) for row in cursor.fetchall()]
         finally:
             cursor.close()
 
@@ -463,7 +500,7 @@ class DatRepository:
                 published += 1
         return published
 
-    def publish_staged(self, origin: str) -> int:
+    def publish_staged(self, origin: str, sources=None) -> int:
         """Atomically replace one origin's published rows with the staged data.
 
         In a single short transaction it deletes the ``dat_set`` relationships
@@ -471,6 +508,10 @@ class DatRepository:
         inserts the staged entries (assigning fresh ids) and their
         relationships, and clears the staging tables. On any error the
         transaction is rolled back and the previous valid rows are kept.
+
+        ``sources`` (an iterable of dicts keyed by the ``dat_source`` columns
+        except ``origin``) replaces the ``dat_source`` rows of ``origin`` in
+        the same transaction; ``None`` leaves ``dat_source`` untouched.
 
         Returns the number of published entries.
         """
@@ -513,6 +554,23 @@ class DatRepository:
 
                 cursor.execute("DELETE FROM dat_staging")
                 cursor.execute("DELETE FROM dat_staging_set")
+
+                if sources is not None:
+                    cursor.execute(
+                        "DELETE FROM dat_source WHERE origin = ?", (origin,))
+                    for source in sources:
+                        cursor.execute(
+                            "INSERT INTO dat_source(origin, file, version, "
+                            "date, entries, unmatched_entries, "
+                            "unmatched_sets, unmatched_drivers, scanned_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (origin, source['file'], source.get('version'),
+                             source.get('date'), source.get('entries', 0),
+                             source.get('unmatched_entries', 0),
+                             source.get('unmatched_sets', 0),
+                             source.get('unmatched_drivers', 0),
+                             source.get('scanned_at')),
+                        )
             return published
         finally:
             reader.close()

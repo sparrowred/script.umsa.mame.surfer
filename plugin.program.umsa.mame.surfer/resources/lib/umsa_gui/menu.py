@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import xbmc
 import xbmcgui
+from umsa_core.dat_parser import DAT_REC
 
 from . import strings as S
 from .constants import (
@@ -77,7 +78,7 @@ def build_sublist_menu(ctx, select):
 
     rec = False
     for i in ctx.software.all_dat:
-        if 'Rec' in ctx.software.all_dat[i]:
+        if DAT_REC in ctx.software.all_dat[i]:
             rec = True
             break
     if rec:

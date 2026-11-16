@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from json import loads
 
 import xbmc
+from umsa_core.dat_parser import DAT_REC
 from umsa_core.game_repository import parse_recommended_games
 
 from . import gamelist as gamelist_workflows
@@ -112,12 +113,12 @@ def show_rec(ctx, focus=True):
 
     text = ''
     if (ctx.software.actset['id'] in ctx.software.all_dat
-            and 'Rec' in ctx.software.all_dat[ctx.software.actset['id']]):
-        text = ctx.software.all_dat[ctx.software.actset['id']]['Rec']
+            and DAT_REC in ctx.software.all_dat[ctx.software.actset['id']]):
+        text = ctx.software.all_dat[ctx.software.actset['id']][DAT_REC]
     else:
         for i in ctx.software.all_dat:
-            if 'Rec' in ctx.software.all_dat[i]:
-                text = ctx.software.all_dat[i]['Rec']
+            if DAT_REC in ctx.software.all_dat[i]:
+                text = ctx.software.all_dat[i][DAT_REC]
                 break
     rec_list, pos = parse_recommended_games(text, ctx.services.ggdb.games)
     gamelist_workflows.popup_gamelist(ctx.gamelist, rec_list, tr(S.RECOMMENDED), pos=pos, focus=focus)

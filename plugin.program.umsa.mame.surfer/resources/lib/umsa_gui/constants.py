@@ -6,8 +6,10 @@ the skin uses stays here as documentation; every other constant is used by a
 frontend module (``tests/arch/test_gui_constants.py``).
 """
 
-# DAT display category of the driver WIP, defined once in Core
-from umsa_core.dat_parser import DRIVER_WIP as _DRIVER_WIP
+# DAT display categories, defined once in Core by the parsers that write them
+from umsa_core import dat_parser as _dat
+from umsa_core.exodos_parser import DAT_FILE as _DAT_EXODOS
+from umsa_core.gb64_scanner import DAT_FILE as _DAT_GB64
 
 # Action codes
 # See guilib/Key.h
@@ -52,26 +54,26 @@ TEXTLIST_OTHER_CATEGORIES = None
 # fixed order of the DAT categories in TEXTLIST ('Emulator output' is appended
 # after an emulator run by emulator_setup.add_or_update_emu_output)
 TEXTLIST_ORDER = (
-    'History',
-    'Info',
-    'MInfo',
-    'Sysinfo',
-    'eXoDOS',
-    'GameBase64',
-    'Story',
-    'Gameplay',
-    'Start',
-    'Setup',
-    'Play Inst.',
-    'Score',
-    'Command',
+    _dat.DAT_HISTORY,
+    _dat.DAT_INFO,
+    _dat.DAT_MINFO,
+    _dat.DAT_SYSINFO,
+    _DAT_EXODOS,
+    _DAT_GB64,
+    _dat.DAT_STORY,
+    _dat.DAT_GAMEPLAY,
+    _dat.DAT_START,
+    _dat.DAT_SETUP,
+    _dat.DAT_PLAY_INST,
+    _dat.DAT_SCORE,
+    _dat.DAT_COMMAND,
     TEXTLIST_OTHER_CATEGORIES,
-    'WIP',
-    'others',
-    _DRIVER_WIP,
+    _dat.DAT_WIP,
+    _dat.DAT_OTHERS,
+    _dat.DRIVER_WIP,
 )
 # DAT categories never shown in TEXTLIST ('Rec' has its own menu entry)
-TEXTLIST_HIDDEN = ('Contribute', 'Rec')
+TEXTLIST_HIDDEN = (_dat.DAT_CONTRIBUTE, _dat.DAT_REC)
 IMAGE_RIGHT = 2232
 IMAGE_BIG_LIST = 2233
 IMAGE_LIST = 2223
