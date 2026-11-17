@@ -61,7 +61,6 @@ def set_emulator_running(running: bool) -> None:
 
 
 def is_emulator_running() -> bool:
-    """Return whether an external emulator is running."""
     return xbmcgui.Window(SHARED_WINDOW_ID).getProperty(EMULATOR_RUNNING_PROPERTY) == "true"
 
 
@@ -107,16 +106,12 @@ def clear_stale_screensaver_state() -> None:
 
 
 def get_core_data_paths(create: bool = True) -> CoreDataPaths:
-    """Return the paths of the shared Core profile directory."""
-
     addon = xbmcaddon.Addon(id=CORE_ADDON_ID)
     profile_path = xbmcvfs.translatePath(addon.getAddonInfo("profile"))
     return CoreDataPaths(profile_path, create=create)
 
 
 def get_core_vgmplay_script() -> str:
-    """Return the path of ``resources/vgmplay.lua`` of the Core add-on."""
-
     addon = xbmcaddon.Addon(id=CORE_ADDON_ID)
     addon_path = xbmcvfs.translatePath(addon.getAddonInfo("path"))
     return os.path.join(addon_path, "resources", "vgmplay.lua")
@@ -157,28 +152,20 @@ def set_frontend_running(running: bool) -> None:
 
 
 def is_frontend_running() -> bool:
-    """Return whether the frontend window is open."""
-
     return xbmcgui.Window(SHARED_WINDOW_ID).getProperty(
         FRONTEND_RUNNING_PROPERTY) == "true"
 
 
 def is_screensaver_running() -> bool:
-    """Return whether the UMSA screensaver runs."""
-
     return bool(xbmcgui.Window(SHARED_WINDOW_ID).getProperty(
         SCREENSAVER_RUNNING_PROPERTY))
 
 
 def request_frontend_close() -> None:
-    """Ask a running frontend to close itself (it releases the databases)."""
-
     xbmc.executebuiltin(f"NotifyAll({VGM_SENDER},{FRONTEND_CLOSE_METHOD})")
 
 
 def is_frontend_close_method(method: str) -> bool:
-    """Return whether an ``onNotification`` method is the frontend close request."""
-
     return method.endswith(FRONTEND_CLOSE_METHOD)
 
 
@@ -198,16 +185,12 @@ def publish_vgm_info(text: str, show: bool = True) -> None:
 
 
 def clear_vgm_info() -> None:
-    """Clear the shared VGM info and playing flag."""
-
     window = xbmcgui.Window(VGM_WINDOW_ID)
     window.clearProperty(VGM_INFO_PROPERTY)
     window.clearProperty(VGM_PLAYING_PROPERTY)
 
 
 def vgm_active() -> bool:
-    """Return whether a VGM playback is active."""
-
     return xbmcgui.Window(VGM_WINDOW_ID).getProperty(VGM_PLAYING_PROPERTY) == "true"
 
 
@@ -269,7 +252,6 @@ def make_abort_wait(monitor=None):
         monitor = xbmc.Monitor()
 
     def wait(milliseconds):
-        """Wait up to ``milliseconds``; return ``True`` when Kodi aborts."""
         return bool(monitor.waitForAbort(max(0, milliseconds) / 1000.0))
 
     return wait

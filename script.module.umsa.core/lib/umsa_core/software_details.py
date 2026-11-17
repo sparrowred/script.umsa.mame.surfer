@@ -137,13 +137,9 @@ class SoftwareDetails:
         self._artwork = artwork
 
     def get_status_for_set(self, set_id):
-        """Return the play status dict of a set id, or ``None``."""
-
         return status_dict(self._status.get_status_for_set(set_id))
 
     def get_latest_by_software(self, software_id):
-        """Return the id of the latest played set of a software, or ``None``."""
-
         sets = self._games.get_set_ids_for_software(software_id)
         return self._status.get_latest_by_set_ids(sets)
 

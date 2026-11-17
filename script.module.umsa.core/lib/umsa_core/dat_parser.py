@@ -266,8 +266,6 @@ class _Block:
         self.driver = None
 
     def text(self) -> str:
-        """Return the collected text, every line ended by ``[CR]``."""
-
         return ''.join(line + _CR for line in self.lines)
 
 

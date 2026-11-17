@@ -334,7 +334,6 @@ class ArtworkQueries:
         """
 
         def source_rank(row):
-            """Sort own artwork before other sources."""
             return 0 if row["source"] == "own_artwork" else 1
 
         own = {}

@@ -77,22 +77,18 @@ class VgmPlayer:
 
     @property
     def vgm_info_callback(self):
-        """Return the callback that gets the music info line."""
         return self._vgm_info_callback
 
     @vgm_info_callback.setter
     def vgm_info_callback(self, value):
-        """Set the callback that gets the music info line."""
         self._vgm_info_callback = value
 
     @property
     def vgm_stopped_callback(self):
-        """Return the callback for the end of a playback."""
         return self._vgm_stopped_callback
 
     @vgm_stopped_callback.setter
     def vgm_stopped_callback(self, value):
-        """Set the callback for the end of a playback."""
         self._vgm_stopped_callback = value
 
     def _vgm_process_env(self, vgm_port_env, fade_seconds=None, token=None):
@@ -127,7 +123,6 @@ class VgmPlayer:
                 log(f'UMSA Emu: VGM info callback failed: {error}', level='warning')
 
     def vgm_status(self, remaining_seconds):
-        """Return the music info line for the current track."""
         return format_vgm_status(self._vgm_title, remaining_seconds, self._level)
 
     def on_lua_log(self, text):
@@ -275,7 +270,6 @@ class VgmPlayer:
         consecutive_unplayable = 0
 
         def keep_playing():
-            """Return whether the playback goes on."""
             if not self.playrandomvgm:
                 return False
             return not (stop_requested and stop_requested())

@@ -39,13 +39,9 @@ class ScanState:
             self.what = what
 
     def is_cancelled(self):
-        """Cancellation predicate of the scanners."""
-
         return not self.running
 
     def request_stop(self):
-        """Ask the active scan to stop at its next check."""
-
         self.running = False
 
     @contextmanager

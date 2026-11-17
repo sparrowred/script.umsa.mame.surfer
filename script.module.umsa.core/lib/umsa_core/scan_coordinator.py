@@ -52,13 +52,9 @@ class ScanCoordinator:
             self._lock.release()
 
     def owned_by_current_thread(self) -> bool:
-        """Return ``True`` when the current thread owns the lock."""
-
         return self._owner_ident == threading.get_ident()
 
     def is_locked(self) -> bool:
-        """Return ``True`` when any thread owns the lock."""
-
         return self._owner_ident is not None
 
 

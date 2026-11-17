@@ -154,12 +154,10 @@ class DatRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the wrapped connection."""
         return self._conn
 
     @property
     def schema(self) -> str:
-        """Return the schema qualifier in use (``"main"`` or ``"dat"``)."""
         return self._schema
 
     def _qt(self, table: str) -> str:

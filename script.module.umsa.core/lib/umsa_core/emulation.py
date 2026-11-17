@@ -107,7 +107,6 @@ def resolve_mame_paths(mame_ini, mame_dir):
     """
 
     def resolve(entry):
-        """Return ``entry`` expanded and joined to ``mame_dir``."""
         return os.path.join(
             mame_dir, os.path.expanduser(os.path.expandvars(entry)))
 
@@ -242,50 +241,38 @@ class Emulation:
 
     @property
     def playvgm(self):
-        """Return whether a single VGM track plays (``VgmPlayer.playvgm``)."""
         return self.vgm_player.playvgm
 
     @playvgm.setter
     def playvgm(self, value):
-        """Set ``VgmPlayer.playvgm``."""
         self.vgm_player.playvgm = value
 
     @property
     def playintrovgm(self):
-        """Return whether the intro VGM plays (``VgmPlayer.playintrovgm``)."""
         return self.vgm_player.playintrovgm
 
     @playintrovgm.setter
     def playintrovgm(self, value):
-        """Set ``VgmPlayer.playintrovgm``."""
         self.vgm_player.playintrovgm = value
 
     @property
     def playrandomvgm(self):
-        """Return whether random VGM playback runs (``VgmPlayer.playrandomvgm``)."""
         return self.vgm_player.playrandomvgm
 
     @playrandomvgm.setter
     def playrandomvgm(self, value):
-        """Set ``VgmPlayer.playrandomvgm``."""
         self.vgm_player.playrandomvgm = value
 
     @property
     def snapshot_directory(self):
-        """Return the absolute MAME snapshot directory (``''`` when unset)."""
-
         return self.mame_ini.get('snapshot_directory', '')
 
     @property
     def state_directory(self):
-        """Return the absolute MAME save state directory (mame.ini, else ``sta``)."""
-
         return state_directory(self.mame_ini, self.mame_dir)
 
     @property
     def rom_paths(self):
-        """Return the absolute MAME rom paths (``[]`` when unset)."""
-
         return self.mame_ini.get('rompath', [])
 
     def run(self):
@@ -391,35 +378,24 @@ class Emulation:
         )
 
     def managed_process_status(self) -> ProcessStatus:
-        """Return the status of the Core-managed game process."""
-
         return self.process_runner.status()
 
     def terminate_managed_process(self):
-        """Terminate the Core-managed game process."""
-
         self.process_runner.terminate()
 
     def kill_managed_process(self):
-        """Kill the Core-managed game process."""
-
         self.process_runner.kill()
 
     def read_managed_process_output(self):
-        """Read stdout and stderr captured by the Core process runner."""
-
         return self.process_runner.read_output()
 
     def prepare_exodos_run(self, emu_infos):
-        """Prepare ``emurun`` for eXoDOS."""
         self.launch_preparer.prepare_exodos_run(self.emurun, emu_infos)
 
     def prepare_marp_run(self, emu_infos):
-        """Prepare ``emurun`` for a MARP replay."""
         self.launch_preparer.prepare_marp_run(self.emurun, emu_infos)
 
     def prepare_mame_run(self, ggdb, actset, dialog=None):
-        """Prepare ``emurun['args']`` for MAME based on ``actset``."""
         self.launch_preparer.prepare_mame_run(self.emurun, ggdb, actset, dialog)
 
     def wait_for_completion(self, dialog=None, sleep=None, wait=None):
@@ -484,12 +460,10 @@ class Emulation:
             self.emurun = {}
 
     def terminate(self):
-        """Terminate the emulator process."""
         if self.process:
             self.process.terminate()
 
     def kill(self):
-        """Kill the emulator process."""
         if self.process:
             self.process.kill()
 
@@ -722,7 +696,6 @@ class Emulation:
             self.vgm_player._notify_vgm_stopped()
             return
         def run_func(vgm, close_server=True, plan=None, info=None, title=None):
-            """Play one track of the random playback."""
             return self.play_vgm_thread(
                 vgm, sec2run=90, intro=False,
                 close_server=close_server, plan=plan, info=info, title=title)
@@ -811,7 +784,6 @@ class Emulation:
             return True
 
     def find_nonmame_roms(self, exodos_shell=''):
-        """Find the files of a non-MAME set (eXoDOS, GB64, WHDLoad) into ``emurun``."""
         find_nonmame_roms(self.emurun, self.nonmame, exodos_shell)
 
     def find_roms(self, swl_name=None, set_name=None):
@@ -837,11 +809,9 @@ class Emulation:
             return None
 
     def extract_chd(self, sleep=None, dialog=None, wait=None):
-        """Extract the MAME CHD CD-ROM of ``emurun`` to CUE/BIN (:func:`extract_chd`)."""
         return extract_chd(self.emurun, self.chdman_exe, sleep, dialog, wait)
 
     def extract_rom(self):
-        """Extract the MAME ROM zip of ``emurun`` (:func:`extract_rom`)."""
         return extract_rom(self.emurun)
 
     def demul(self):
@@ -858,6 +828,5 @@ class Emulation:
         self.launch_preparer.fsuae(self.emurun)
 
     def other_emulator(self, emu_infos, dialog=None, sleep=None, wait=None):
-        """Prepare ``emurun`` for a non-MAME emulator."""
         return self.launch_preparer.other_emulator(
             self.emurun, emu_infos, dialog, sleep, wait=wait)

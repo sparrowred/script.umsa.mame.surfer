@@ -249,44 +249,30 @@ class DBMod:
 
     @property
     def games(self):
-        """Game metadata of ``umsa.db`` (:class:`GameRepository`)."""
-
         return GameRepository(self.gdb)
 
     @property
     def artwork(self):
-        """Scanned artwork of the attached ``art`` schema (:class:`ArtworkRepository`)."""
-
         return ArtworkRepository(self.gdb, schema="art")
 
     @property
     def dats(self):
-        """DAT texts of the attached ``dat`` schema (:class:`DatRepository`)."""
-
         return DatRepository(self.gdb, schema="dat")
 
     @property
     def status(self):
-        """Play status and further media of ``status.db`` (:class:`StatusRepository`)."""
-
         return StatusRepository(self.sdb)
 
     @property
     def emulators(self):
-        """Emulator configuration of ``status.db`` (:class:`EmulatorRepository`)."""
-
         return EmulatorRepository(self.sdb)
 
     @property
     def history(self):
-        """History, saved filters and metadata of ``status.db`` (:class:`HistoryRepository`)."""
-
         return HistoryRepository(self.sdb)
 
     @property
     def software(self):
-        """Software details composed from the repositories (:class:`SoftwareDetails`)."""
-
         return SoftwareDetails(self.games, self.status, self.dats, self.artwork)
 
     def ensure_default_filter(self):
@@ -299,6 +285,4 @@ class DBMod:
         return ensure_default_filter(self.history, self.gdb, self.nonmame)
 
     def run_legacy_import(self):
-        """Run the one-time legacy import via the configured Core paths."""
-
         return _run_legacy_import(self.sdb, self.db_paths)

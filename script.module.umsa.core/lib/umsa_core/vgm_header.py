@@ -295,8 +295,6 @@ def calculate_playback_plan(header: VGMHeader, max_seconds: int = MAX_PLAYBACK_S
 
 
 def format_vgm_title(track_filename, gamename):
-    """Return the title part of the VGM music info, shared by all play modes."""
-
     return f'Song "{track_filename[:-4].title()}" from "{gamename}"'
 
 

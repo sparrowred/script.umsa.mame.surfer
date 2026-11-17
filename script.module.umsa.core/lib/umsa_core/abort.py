@@ -18,8 +18,6 @@ class ShutdownRequested(Exception):
 
 
 def time_wait(milliseconds: int) -> bool:
-    """Sleep via ``time.sleep`` and return ``False``; a stop is never requested."""
-
     _time_sleep(milliseconds / 1000.0)
     return False
 
@@ -34,7 +32,6 @@ def wait_from_sleep(sleep: Callable[[int], object] | None) -> Wait:
         return time_wait
 
     def wait(milliseconds: int) -> bool:
-        """Sleep and return ``False``."""
         sleep(milliseconds)
         return False
 
@@ -42,6 +39,4 @@ def wait_from_sleep(sleep: Callable[[int], object] | None) -> Wait:
 
 
 def resolve_wait(wait: Wait | None, sleep: Callable[[int], object] | None = None) -> Wait:
-    """Return ``wait`` if given, else the wrapped ``sleep``."""
-
     return wait if wait is not None else wait_from_sleep(sleep)

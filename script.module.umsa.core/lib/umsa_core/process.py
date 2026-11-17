@@ -167,14 +167,10 @@ class ProcessRunner:
         return ProcessStatus(ProcessState.STOPPED, exit_code)
 
     def terminate(self) -> None:
-        """Send terminate to the owned process, if one has been started."""
-
         if self._process is not None:
             self._process.terminate()
 
     def kill(self) -> None:
-        """Send kill to the owned process, if one has been started."""
-
         if self._process is not None:
             self._process.kill()
 

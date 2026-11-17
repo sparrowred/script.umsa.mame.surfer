@@ -64,7 +64,6 @@ class StatusRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the wrapped connection."""
         return self._conn
 
     def get_status_for_set(self, set_id) -> sqlite3.Row | None:

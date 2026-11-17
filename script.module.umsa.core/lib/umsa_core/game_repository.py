@@ -38,7 +38,6 @@ class GameRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the wrapped connection."""
         return self._conn
 
     @staticmethod
@@ -63,27 +62,22 @@ class GameRepository:
         )
 
     def get_swl(self) -> list:
-        """Return the software lists as ``{'id': name, 'name': description}``."""
         return self._fetch_dicts(
             "SELECT name as id, description as name FROM swl ORDER BY name"
         )
 
     def get_source(self) -> list:
-        """Return the distinct source files of the sets as ``{'source'}`` dicts."""
         return self._fetch_dicts("SELECT DISTINCT source FROM sets ORDER BY source")
 
     def get_year(self) -> list:
-        """Return the years as ``{'id', 'name'}``, ordered by name."""
         return self._fetch_dicts("SELECT name as id, name FROM year ORDER BY name")
 
     def get_players(self) -> list:
-        """Return the player counts as ``{'id', 'name'}``, ordered by name."""
         return self._fetch_dicts(
             "SELECT name as id, name FROM nplayers ORDER BY name"
         )
 
     def get_categories(self) -> list:
-        """Return the categories as ``{'id', 'name'}``, ordered by name."""
         return self._fetch_dicts("SELECT name as id, name FROM category ORDER BY name")
 
     def get_set_name(self, set_id) -> str | None:

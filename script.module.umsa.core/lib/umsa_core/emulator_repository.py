@@ -59,7 +59,6 @@ class EmulatorRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the wrapped connection."""
         return self._conn
 
     def get_emulators(self, source=None, swl_name=None) -> list[dict]:

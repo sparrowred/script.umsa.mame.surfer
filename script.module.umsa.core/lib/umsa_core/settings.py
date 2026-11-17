@@ -122,8 +122,6 @@ class SharedSettings:
 
     @property
     def aspect_ratio_factor(self) -> float:
-        """Return the horizontal/vertical factor for the configured aspect ratio."""
-
         return ASPECT_RATIOS.get(
             self.aspect_ratio, ASPECT_RATIOS[DEFAULT_ASPECT_RATIO]
         )

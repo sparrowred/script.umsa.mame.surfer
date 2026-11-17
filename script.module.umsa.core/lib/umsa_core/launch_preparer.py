@@ -65,8 +65,6 @@ def _remove_owned_symlink(emurun: dict) -> None:
 
 
 def update_dialog(dialog, percent, msg):
-    """Update the progress dialog if there is one."""
-
     if dialog:
         dialog.update(percent, msg)
 
@@ -111,8 +109,6 @@ class LaunchPreparer:
 
     @property
     def cache_layout(self):
-        """Return the ROM cache layout; without one a flat layout in ``temp_dir``."""
-
         if self._cache_layout is not None:
             return self._cache_layout
         return CacheLayout(self.temp_dir)

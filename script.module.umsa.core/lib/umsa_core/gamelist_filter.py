@@ -586,34 +586,24 @@ def software_query():
 
 
 def source_query(source):
-    """Return the selector of a MAME source file."""
-
     return '', 'sets.source = ?', [source]
 
 
 def category_query(cat):
-    """Return the selector of a category name."""
-
     return ("JOIN category ON category.id = sets.classification_id",
             'category.name = ?', [cat])
 
 
 def year_query(year):
-    """Return the selector of a year name."""
-
     return 'JOIN year ON year.id = sets.year_id', 'year.name = ?', [year]
 
 
 def players_query(players):
-    """Return the selector of a player count name."""
-
     return ('JOIN nplayers ON nplayers.id = sets.nplayers_id',
             'nplayers.name = ?', [players])
 
 
 def swl_query(swl_name):
-    """Return the selector of a software-list name."""
-
     return 'JOIN swl ON swl.id = sets.swllink_id', 'swl.name = ?', [swl_name]
 
 
@@ -696,8 +686,6 @@ class Gamelist:
         return self._search.search(term)
 
     def set_filter_enabled(self, flag):
-        """Enable or disable the active filter for subsequent queries."""
-
         self.use_filter = flag
 
     def set_order(self, order):
@@ -754,45 +742,31 @@ class Gamelist:
         return slist, pos, result_count
 
     def get_by_software(self, set_id):
-        """Select the complete list and return it (see :meth:`execute_statement`)."""
-
         self.join, self.where, self.where_params = software_query()
         return self.execute_statement(set_id)
 
     def get_software_for_source(self, set_id, source):
-        """Select the software of a MAME source file and return the list."""
-
         self.join, self.where, self.where_params = source_query(source)
         return self.execute_statement(set_id)
 
     def get_by_cat(self, cat, set_id):
-        """Select the software of a category and return the list."""
-
         self.join, self.where, self.where_params = category_query(cat)
         return self.execute_statement(set_id)
 
     def get_by_year(self, year, set_id):
-        """Select the software of a year and return the list."""
-
         self.join, self.where, self.where_params = year_query(year)
         return self.execute_statement(set_id)
 
     def get_by_players(self, players, set_id):
-        """Select the software for a number of players and return the list."""
-
         self.join, self.where, self.where_params = players_query(players)
         return self.execute_statement(set_id)
 
     def get_by_maker(self, maker, set_id):
-        """Select the software of a maker (with clones) and return the list."""
-
         self.join, self.where, self.where_params = maker_query(
             self._get_connection(), maker)
         return self.execute_statement(set_id)
 
     def get_by_swl(self, swl_name, set_id):
-        """Select the software of a software list and return the list."""
-
         self.join, self.where, self.where_params = swl_query(swl_name)
         return self.execute_statement(set_id)
 

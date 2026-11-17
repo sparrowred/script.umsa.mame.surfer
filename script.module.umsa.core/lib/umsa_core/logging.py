@@ -15,7 +15,5 @@ def set_log(function: LogCallback | None) -> None:
 
 
 def log(*args, level: str = "debug") -> None:
-    """Forward a message to the registered callback, if there is one."""
-
     if _log_callback is not None:
         _log_callback(*args, level=level)

@@ -80,8 +80,6 @@ def list_savestates(state_dir, subdir):
 
 
 def with_savestate(args, slot):
-    """Return new MAME arguments that load ``slot`` at start."""
-
     if isinstance(args, str):
         args = [args]
     return list(args) + ['-state', slot]

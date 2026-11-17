@@ -44,8 +44,6 @@ def nonmame_exclusions(nonmame):
 
 
 def load_default_filter_spec(path=DEFAULT_FILTER_SPEC_PATH):
-    """Return the parsed default filter description."""
-
     with open(path, encoding="utf-8") as handle:
         return json.load(handle)
 

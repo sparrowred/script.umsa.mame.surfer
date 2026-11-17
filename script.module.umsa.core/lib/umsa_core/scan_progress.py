@@ -57,7 +57,6 @@ def run_scan_with_progress(state, name, scan, progress, title, sleep,
             finished.set()
 
     def request_stop(reason):
-        """Ask the scan to stop, only when this call owns it."""
         if owner.is_set() and not finished.is_set():
             log(f"UMSA scan: '{name}' {reason}, stopping the scan", level='info')
             state.request_stop()

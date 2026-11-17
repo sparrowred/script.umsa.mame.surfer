@@ -147,7 +147,6 @@ class HistoryRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the wrapped connection."""
         return self._conn
 
     def load_lastgames(self) -> list[int]:

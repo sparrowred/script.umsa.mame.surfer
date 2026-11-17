@@ -96,12 +96,10 @@ class ArtworkRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the wrapped connection."""
         return self._conn
 
     @property
     def schema(self) -> str:
-        """Return the schema qualifier in use (``"main"`` or ``"art"``)."""
         return self._schema
 
     def _qt(self, table: str) -> str:
@@ -258,7 +256,6 @@ class ArtworkRepository:
         scan_unit: str,
         db_cursor: sqlite3.Cursor | None = None,
     ) -> None:
-        """Mark a scan unit as running."""
         self._write_status(source, root_key, scan_unit, "running", db_cursor=db_cursor)
 
     def set_scan_unit_error(

@@ -464,7 +464,6 @@ class VgmSocketServer:
             self._close_socket(client, 'client', shut_down=True)
 
     def close_server(self):
-        """Close the listening socket and any client connection."""
         with self._lock:
             self._close_all()
 
@@ -496,5 +495,4 @@ class VgmSocketServer:
 
     @property
     def bound_port(self) -> int | None:
-        """Return the port the server is bound to, ``None`` when not listening."""
         return self._bound_port
