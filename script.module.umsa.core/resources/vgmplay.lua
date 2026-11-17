@@ -787,18 +787,21 @@ local function emit_final_logs(reason)
     local lock_gain_str = level_lock_gain and string.format("%.2f", level_lock_gain) or ""
     local post_lock_max_str = (level_post_lock_max_db == -math.huge) and "-inf"
         or string.format("%.2f", level_post_lock_max_db)
+    local peak_db = linear_to_db(peak_sample)
+    local peak_db_str = (peak_db == -math.huge) and "-inf" or string.format("%.2f", peak_db)
 
     -- Final RMS_STATS closes the statistics sequence. INFO (not DEBUG) so the
     -- final sequence survives with debug logging switched off.
     log("INFO", string.format(
         "RMS_STATS: t=%.3f fingerprint=%.3f avg_rms_so_far=%.6f peak_rms=%.6f windows=%d silence_dips=%d"
-            .. " lock_t=%s lock_gain=%s post_lock_max_db=%s locked_cut_db=%.2f periodic=%d",
+            .. " lock_t=%s lock_gain=%s post_lock_max_db=%s locked_cut_db=%.2f periodic=%d peak_db=%s",
         now, diag_last_rms,
         total_energy_samples > 0 and math.sqrt(total_energy_sum / total_energy_samples) or 0,
         peak_energy,
         fingerprint_count,
         silence_dips,
-        lock_t_str, lock_gain_str, post_lock_max_str, level_locked_cut_db, periodic_calls
+        lock_t_str, lock_gain_str, post_lock_max_str, level_locked_cut_db, periodic_calls,
+        peak_db_str
     ), true)
 
     log("INFO", string.format(
