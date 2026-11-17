@@ -54,6 +54,11 @@ CHD_PROCESS_STOP_TIMEOUT = 2
 # after the kill that follows when they did not
 VGM_STOP_TIMEOUT = 3.0
 VGM_KILL_JOIN_TIMEOUT = 1.0
+# longest wait for vgmplay.lua to connect after MAME was started. 268 starts
+# in the Kodi log of 2026-11-17 connected within 0.44-0.79 s; a MAME that
+# fails to start ends the wait early (process exit check), so this only
+# bounds a MAME that hangs before the script runs.
+VGM_CONNECT_TIMEOUT = 10.0
 # shortest gap between two volume steps sent to vgmplay.lua: Kodi raises
 # the volume actions of an analog trigger in bursts, one step per action
 # would change the gain by many dB at once (about 5 dB/s while held)
@@ -503,9 +508,21 @@ class Emulation:
         return True
 
     def _accept_vgm_conn(self):
-        """Accept connection from vgmplay.lua client with bounded waiting."""
-        return self.vgm_socket.wait_for_connection(
-            timeout=30.0, token=self.vgm_player.vgm_token)
+        """Accept connection from vgmplay.lua client with bounded waiting.
+
+        Logs how long the connection took (data for slower devices) or that
+        it did not come within ``VGM_CONNECT_TIMEOUT``.
+        """
+        started = monotonic()
+        connected = self.vgm_socket.wait_for_connection(
+            timeout=VGM_CONNECT_TIMEOUT, token=self.vgm_player.vgm_token)
+        elapsed = monotonic() - started
+        if connected:
+            log(f'UMSA VGM: Lua connected after {elapsed:.2f} s', level='debug')
+        else:
+            log(f'UMSA VGM: no Lua connection after {elapsed:.2f} s '
+                f'(limit {VGM_CONNECT_TIMEOUT:.0f} s)', level='debug')
+        return connected
 
     def _close_vgm_sockets(self):
         self.vgm_socket.close_server()

@@ -51,19 +51,11 @@ class PlaybackPlan:
 # Constants
 MAX_PLAYBACK_SECONDS = 180           # Default ceiling (setting vgm_max_duration, 20-300 s)
 HEADER_REJECTION_FALLBACK = 120      # Seconds for invalid headers
-FADE_OUT_SECONDS = 2.0               # Fade-out of a playback that is cut
+FADE_OUT_SECONDS = 3.0               # Fade-out of a playback that is cut
 LOOP_ONLY_INTRO_THRESHOLD = 0.5     # Seconds - fixed, not configurable
 SANITY_MAX_DURATION = 600          # 10 minutes max total duration
 SANITY_MAX_SAMPLE_RATE = 100000
 SANITY_MIN_SAMPLE_RATE = 1000
-
-# Loop-only repetition table (hardcoded)
-LOOP_ONLY_REPS = [
-    (10, 1),   # loop < 10s
-    (20, 1),   # loop < 20s
-    (40, 1),   # loop < 40s
-    (float('inf'), 1),  # loop >= 40s
-]
 
 def _invalid_header(member: str, reason: str) -> VGMHeader:
     """Create an invalid VGMHeader with all required fields."""
@@ -262,12 +254,8 @@ def calculate_playback_plan(header: VGMHeader, max_seconds: int = MAX_PLAYBACK_S
         )
     
     if header.loop_only:
-        # Loop-only: repetition table
-        reps = 2
-        for threshold, r in LOOP_ONLY_REPS:
-            if header.loop_seconds < threshold:
-                reps = r
-                break
+        # Loop-only: one loop
+        reps = 1
         duration = min(header.loop_seconds * reps, max_seconds)
         return PlaybackPlan(
             seconds_to_run=duration,

@@ -99,8 +99,10 @@ local PREEXIT_MARGIN = 1.0
 --
 -- Python sets VGMPLAY_FADE_SECONDS for a playback that -seconds_to_run cuts
 -- inside the music (looping tracks, capped tracks, intro VGMs); a track that
--- runs to its own end gets none. The master volume then falls linearly in dB
--- by FADE_FLOOR_DB over the last seconds and is muted at the limit. A socket
+-- runs to its own end gets none. The master volume then falls by
+-- FADE_FLOOR_DB * progress^2 over the last seconds and is muted at the limit:
+-- the curve stays audible longer than a straight line in dB (measured on MAME
+-- 0.289: a straight -40 dB line was inaudible after ~1.2 s of 2 s). A socket
 -- exit (stop, skip) ends at once, without fade.
 local FADE_FLOOR_DB = -40.0      -- attenuation reached at the end of the fade
 local FADE_MAX_SECONDS = 10.0    -- longer requests are ignored
@@ -765,7 +767,7 @@ local function update_fade_out(now)
     local progress = (now - fade_start_at) / fade_len
     local volume = FADE_MUTE_DB
     if progress < 1 then
-        volume = fade_base_vol + FADE_FLOOR_DB * progress
+        volume = fade_base_vol + FADE_FLOOR_DB * progress * progress
         if volume < FADE_MUTE_DB then
             volume = FADE_MUTE_DB
         end
@@ -903,7 +905,13 @@ end
 -- Manual volume change by the user. It switches the leveling off for the rest
 -- of the track; without sound.volume (MAME before 0.278) nothing changes and
 -- the leveling stays on. The frame carries out_db for the music info.
+-- Once the fade-out has started the verb is dropped (L9): the fade sets the
+-- volume every frame, a manual step would be overwritten and misreported.
 local function change_volume(step_db, name)
+    if fade_base_vol ~= nil then
+        log("INFO", "VGM VOLUME " .. name .. " ignored (fade)")
+        return
+    end
     local ok, volume = pcall(function()
         manager.machine.sound.volume = manager.machine.sound.volume + step_db
         return manager.machine.sound.volume
@@ -968,7 +976,8 @@ local function poll_socket()
 
     local data = socket:read(4096)
 
-    if #data == 0 then
+    -- L10: read may return nil on a closed peer
+    if type(data) ~= "string" or #data == 0 then
         return
     end
 
