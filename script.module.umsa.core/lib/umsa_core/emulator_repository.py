@@ -30,7 +30,7 @@ saved emulator in the database. ``delete_emulator`` likewise keeps the
 historical order and commit boundaries: the ``emu_conn`` rows are deleted and
 committed before the ``emu`` row delete is attempted, so a failed emulator
 delete leaves the connections removed (intentionally unchanged failure
-atomicity, documented in ``docs/database_refactor``).
+atomicity, documented in ``docs/historical/database_refactor``).
 
 Reads never commit and own only short-lived cursors that are closed in a
 ``finally`` block. Rows are normalised to plain dicts at the boundary —
@@ -52,7 +52,7 @@ def create_emulator_tables(cursor: sqlite3.Cursor) -> None:
     autoincrement behaviour are exactly the DDL that used to be inlined in
     ``DBMod._open_persistent_databases``. No migration runs here: schema
     changes must follow the documented ``PRAGMA user_version`` policy (Q6 in
-    ``docs/database_refactor/README.md``), and this step introduces no schema
+    ``docs/historical/database_refactor/README.md``), and this step introduces no schema
     change.
 
     Args:

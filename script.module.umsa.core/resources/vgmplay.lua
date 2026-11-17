@@ -141,6 +141,7 @@ local total_energy_sum = 0      -- Sum of (rms^2) across all fingerprint windows
 local total_energy_samples = 0  -- Total fingerprint samples (sum of fingerprint_samples per window)
 local peak_energy = 0           -- Peak RMS observed in any fingerprint window
 local peak_sample = 0           -- Largest absolute sample seen (leveling headroom)
+local periodic_calls = 0         -- calls of the periodic callback (RMS_STATS periodic=)
 local fingerprint_count = 0     -- Number of fingerprint windows completed
 -- The same over music windows only (review M9): neither flat nor at or below
 -- LEVEL_NOISE_FLOOR, i.e. the windows the leveling measures. Silence, a frozen
@@ -710,6 +711,7 @@ end
 plan_fade_out()
 
 -- One step of the fade, called from the periodic callback (once per frame).
+local fade_end_logged = false  -- FADE_OUT_END is logged once
 local function update_fade_out(now)
     if fade_len <= 0 or now < fade_start_at then
         return
@@ -732,6 +734,10 @@ local function update_fade_out(now)
         if volume < FADE_MUTE_DB then
             volume = FADE_MUTE_DB
         end
+    elseif not fade_end_logged then
+        fade_end_logged = true
+        log("DEBUG", string.format(
+            "FADE_OUT_END: t=%.3f volume_db=%.2f", now, volume))
     end
     pcall(function()
         manager.machine.sound.volume = volume
@@ -786,13 +792,13 @@ local function emit_final_logs(reason)
     -- final sequence survives with debug logging switched off.
     log("INFO", string.format(
         "RMS_STATS: t=%.3f fingerprint=%.3f avg_rms_so_far=%.6f peak_rms=%.6f windows=%d silence_dips=%d"
-            .. " lock_t=%s lock_gain=%s post_lock_max_db=%s locked_cut_db=%.2f",
+            .. " lock_t=%s lock_gain=%s post_lock_max_db=%s locked_cut_db=%.2f periodic=%d",
         now, diag_last_rms,
         total_energy_samples > 0 and math.sqrt(total_energy_sum / total_energy_samples) or 0,
         peak_energy,
         fingerprint_count,
         silence_dips,
-        lock_t_str, lock_gain_str, post_lock_max_str, level_locked_cut_db
+        lock_t_str, lock_gain_str, post_lock_max_str, level_locked_cut_db, periodic_calls
     ), true)
 
     log("INFO", string.format(
@@ -935,6 +941,7 @@ end
 -- Commands only: the log direction is written by log() and never read here.
 --
 emu.register_periodic(function()
+    periodic_calls = periodic_calls + 1
     -- seconds_to_run pre-exit trigger: emit the final statistics slightly
     -- before MAME reaches its own -seconds_to_run limit (MAME checks the
     -- limit only after the periodic callbacks of this same frame). It never

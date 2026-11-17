@@ -51,7 +51,7 @@ def create_status_tables(cursor: sqlite3.Cursor) -> None:
     behaviour are exactly the DDL that used to be inlined in
     ``DBMod._open_persistent_databases``. No migration runs here: schema
     changes must follow the documented ``PRAGMA user_version`` policy (Q6 in
-    ``docs/database_refactor/README.md``), and this step introduces no schema
+    ``docs/historical/database_refactor/README.md``), and this step introduces no schema
     change.
 
     Args:
