@@ -1,4 +1,4 @@
-"""Subprocess ownership and status helpers."""
+"""Start emulator processes and own one (:class:`ProcessRunner`)."""
 
 import os
 from collections.abc import Mapping, Sequence
@@ -12,7 +12,7 @@ from typing import BinaryIO
 ProcessCommand = str | Sequence[str]
 WorkingDirectory = str | PathLike
 
-# read_output() returns at most this many bytes from the end of each stream
+# read_output() returns at most this many bytes from the end of each stream.
 OUTPUT_TAIL_BYTES = 1024 * 1024
 
 
@@ -35,7 +35,7 @@ class ProcessStatus:
     exit_code: int | None = None
 
 
-# ProcessLaunchError.reason: why a start failed (machine-readable)
+# ProcessLaunchError.reason: why a start failed (machine-readable).
 LAUNCH_WORKING_DIR_MISSING = 'working_dir_missing'
 LAUNCH_PROGRAM_MISSING = 'program_missing'
 LAUNCH_PERMISSION_DENIED = 'permission_denied'
@@ -45,10 +45,9 @@ LAUNCH_FAILED = 'launch_failed'
 class ProcessLaunchError(OSError):
     """Raised when the operating system cannot start a requested process.
 
-    It remains an ``OSError`` so callers that handled ``Popen`` launch failures
-    continue to recognize the exception. ``reason`` is one of the
-    ``LAUNCH_*`` constants, ``path`` the path concerned (working directory or
-    program), when known.
+    An ``OSError``, like the ``Popen`` failure it wraps. ``reason`` is one of
+    the ``LAUNCH_*`` constants, ``path`` the path concerned (working directory
+    or program), when known.
     """
 
     def __init__(self, message, reason=LAUNCH_FAILED, path=None):
@@ -89,7 +88,7 @@ def launch_popen(command: ProcessCommand, cwd: WorkingDirectory | None,
 
 
 def _program(command: ProcessCommand):
-    """The program of ``command`` (its first element)."""
+    """Return the program of ``command`` (its first element)."""
 
     if isinstance(command, (str, bytes, PathLike)):
         return command
@@ -97,23 +96,12 @@ def _program(command: ProcessCommand):
 
 
 class ProcessRunner:
-    """Own one child process and expose its lifecycle without leaking Popen.
+    """Own one child process without exposing ``Popen``; not thread-safe.
 
-    A runner is intended for serialized calls from one owner; it is not
-    thread-safe.
-
-    Calls to ``terminate`` and ``kill`` are no-ops before a successful start
-    and after the owned process exits. A successful start after exit replaces
-    the previous process and its captured output; a rejected or failed start
-    leaves the previous ownership unchanged.
-
-    Captured output goes to two anonymous temporary files, not to pipes: the
-    child never blocks on a full pipe buffer, however much it writes and
-    whenever the owner reads. ``read_output`` returns the last
-    ``OUTPUT_TAIL_BYTES`` of each stream; it never blocks and may be called
-    again, also while the process runs. A process that outlives its owner
-    keeps writing to its own file descriptors; the operating system removes
-    the files once the last descriptor is closed.
+    A successful start after exit replaces the previous process and its
+    output; a failed start keeps the previous one. Captured output goes to
+    anonymous temporary files, not pipes, so the child never blocks on a full
+    pipe buffer; a process that outlives its owner keeps writing to them.
     """
 
     def __init__(self) -> None:
@@ -129,7 +117,12 @@ class ProcessRunner:
         capture_output: bool = False,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        """Start a process, raising ProcessLaunchError if it cannot start."""
+        """Start a process.
+
+        Raises:
+            RuntimeError: If the owned process still runs.
+            ProcessLaunchError: If the process cannot start.
+        """
 
         if self.status().state is ProcessState.RUNNING:
             raise RuntimeError("a process is already running")
@@ -138,7 +131,7 @@ class ProcessRunner:
         stderr_file: BinaryIO | None = None
         try:
             if capture_output:
-                # the runner owns both files beyond this call
+                # The runner owns both files beyond this call.
                 stdout_file = TemporaryFile()  # noqa: SIM115
                 stderr_file = TemporaryFile()  # noqa: SIM115
                 process = launch_popen(
@@ -151,7 +144,7 @@ class ProcessRunner:
             _close_files(stdout_file, stderr_file)
             raise
         except OSError as error:
-            # the capture files could not be created
+            # The capture files could not be created.
             _close_files(stdout_file, stderr_file)
             raise ProcessLaunchError(
                 f"could not start process {command!r}: {error}"
@@ -163,7 +156,7 @@ class ProcessRunner:
         self._stderr_file = stderr_file
 
     def status(self) -> ProcessStatus:
-        """Poll the owned process; no process is represented as UNKNOWN."""
+        """Return the state of the owned process (``UNKNOWN`` without one)."""
 
         if self._process is None:
             return ProcessStatus(ProcessState.UNKNOWN)
@@ -186,11 +179,10 @@ class ProcessRunner:
             self._process.kill()
 
     def read_output(self) -> tuple[bytes, bytes]:
-        """Return the end of the captured stdout and stderr.
+        """Return the last ``OUTPUT_TAIL_BYTES`` of the captured stdout and stderr.
 
-        Each stream is cut to its last ``OUTPUT_TAIL_BYTES``. The call never
-        blocks and can be repeated; while the process runs it returns what
-        has been written so far.
+        Never blocks; while the process runs it returns what was written so
+        far.
         """
 
         if self._process is None or not self._capture_output:
@@ -203,7 +195,7 @@ class ProcessRunner:
 
 
 def _read_tail(stream: BinaryIO) -> bytes:
-    """Read at most the last ``OUTPUT_TAIL_BYTES`` of a captured stream."""
+    """Return at most the last ``OUTPUT_TAIL_BYTES`` of a captured stream."""
 
     size = stream.seek(0, SEEK_END)
     stream.seek(max(0, size - OUTPUT_TAIL_BYTES))

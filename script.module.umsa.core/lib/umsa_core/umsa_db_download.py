@@ -1,16 +1,8 @@
-"""UMSA database download helper.
+"""Download of umsa.db from umsa.info.
 
-This module provides the UMSA database download and extraction functionality.
-It is Kodi-free and uses only standard library dependencies.
-
-The archive is downloaded into memory, only its ``umsa.db`` member is extracted
-into a temporary file next to the live database, checked with
-``PRAGMA integrity_check``, gets the indexes the queries need
-(``umsa_db_indexes``; the archive may come without them) and is then moved
-into place with ``os.replace``. An interrupted or broken download, or a failed
-index build, therefore never touches the existing ``umsa.db``, and the archive
-can not overwrite any other file in the profile directory (for example
-``status.db``).
+Only the ``umsa.db`` member is extracted to a temporary file, checked, given
+its indexes and moved into place with ``os.replace``; a failed download never
+touches the existing ``umsa.db`` or any other file of the profile.
 """
 
 import os
@@ -30,7 +22,7 @@ CHUNK_SIZE = 102400
 
 
 class UmsaDbDownloadError(RuntimeError):
-    """The UMSA database could not be downloaded or validated."""
+    """Raised when the UMSA database cannot be downloaded or validated."""
 
 
 def _content_length(response):
@@ -44,7 +36,11 @@ def _content_length(response):
 
 
 def _download(progress, title):
-    """Read the whole archive; stop on an empty read instead of looping."""
+    """Return the whole archive; an empty read ends the download.
+
+    Raises:
+        UmsaDbDownloadError: If fewer bytes than announced or none arrived.
+    """
 
     data = bytearray()
     with urlopen(UMSA_DB_URL, timeout=10) as response:
@@ -102,7 +98,7 @@ def _build_indexes(path, progress):
     """Build the missing umsa.db indexes on the database file ``path``.
 
     ``progress(index, total)`` is called before every index; an exception it
-    raises (a cancel) propagates unchanged.
+    raises (a cancel) propagates as it is.
     """
 
     try:
@@ -127,12 +123,15 @@ def download_and_update_umsa_db(data_dir, progress, title='Updating UMSA databas
     indexes (``progress`` is called before every index, so it can cancel the
     build by raising), ``os.replace`` onto ``umsa.db``.
 
-    Raises ``UmsaDbDownloadError`` when the download is incomplete, the archive
-    is broken or lacks ``umsa.db``, the database fails its integrity check, or
-    building the indexes fails (an index whose table or column is missing is
-    only skipped); network errors (``OSError``) and exceptions raised by
-    ``progress`` propagate unchanged. In every error case the existing
-    ``umsa.db`` stays untouched and the ``.part`` file is removed.
+    In every error case the existing ``umsa.db`` stays untouched and the
+    ``.part`` file is removed. Network errors (``OSError``) and exceptions
+    raised by ``progress`` propagate as they are.
+
+    Raises:
+        UmsaDbDownloadError: When the download is incomplete, the archive is
+            broken or lacks ``umsa.db``, the integrity check fails or
+            building the indexes fails (an index whose table or column is
+            missing is only skipped).
     """
 
     data_dir = Path(data_dir)

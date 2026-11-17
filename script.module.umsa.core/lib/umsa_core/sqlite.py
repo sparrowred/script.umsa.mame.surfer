@@ -19,10 +19,9 @@ def connect_sqlite(
     database_path: DatabasePath,
     row_factory: RowFactory = None,
 ) -> sqlite3.Connection:
-    """Open a SQLite database, optionally configuring its row factory.
+    """Open (or create) a SQLite database, optionally setting its row factory.
 
-    Connection errors and SQLite's normal create/open behavior are allowed to
-    propagate unchanged to the caller.
+    Connection errors propagate to the caller.
     """
 
     connection = sqlite3.connect(os.fspath(database_path))
@@ -40,7 +39,7 @@ def connect_sqlite_readonly(
     The file must already exist: a missing database raises and is never
     created. ``immutable=1`` is deliberately not used because the file may be
     replaced (for example by a download) while the connection exists.
-    Connection errors are allowed to propagate unchanged to the caller.
+    Connection errors propagate to the caller.
     """
 
     uri = f'file:{pathname2url(os.fspath(database_path))}?mode=ro'
@@ -51,17 +50,11 @@ def connect_sqlite_readonly(
 
 
 def require_row_connection(connection: sqlite3.Connection, owner: str) -> None:
-    """Enforce the repository row-factory contract (roadmap step 4.2b).
+    """Require ``row_factory=sqlite3.Row`` on a connection a repository wraps.
 
     Repositories hand their rows straight back to callers that use both
-    ``row['col']`` and ``row[i]`` access, so they only accept connections
-    configured with ``row_factory=sqlite3.Row``. ``connect_sqlite()``'s
-    default (``None``) is unchanged for callers that deliberately want plain
-    tuples and use no repository.
-
-    Args:
-        connection: The connection a repository is about to wrap.
-        owner: The repository class name, used in the error message.
+    ``row['col']`` and ``row[i]`` access. ``owner`` names the repository in
+    the error message.
 
     Raises:
         ValueError: If ``connection.row_factory`` is not ``sqlite3.Row``.
@@ -80,29 +73,17 @@ def require_row_connection(connection: sqlite3.Connection, owner: str) -> None:
 def write_savepoint(
     connection: sqlite3.Connection, name: str
 ) -> Iterator[sqlite3.Cursor]:
-    """Run the writes of the ``with`` block inside an ownership-aware savepoint.
+    """Run the writes of the ``with`` block in savepoint ``name``; yield a fresh cursor.
 
-    The write convention of every repository (C-L4):
-
-    - a savepoint ``name`` is always opened; when no transaction is active
-      this also starts one;
-    - the block gets a fresh cursor of ``connection``;
-    - on success the savepoint is released and only a transaction this call
-      started is committed, so a standalone write leaves
-      ``connection.in_transaction`` ``False``;
-    - on any exception (``BaseException``, so a ``SystemExit`` raised by a
-      shutting-down Kodi never leaves a dangling savepoint) the block's
-      statements are rolled back to the savepoint, the savepoint is released
-      and the exception propagates;
-    - a caller's outer transaction and its pending changes are never
-      committed and never rolled back; the cursor is always closed.
-
-    Args:
-        connection: The connection to write on.
-        name: The savepoint name, a plain SQL identifier.
+    The write convention of every repository. On success only a transaction
+    this call started is committed, so a standalone write leaves
+    ``in_transaction`` ``False``; a caller's outer transaction is never
+    committed or rolled back. Any ``BaseException`` (also a ``SystemExit`` of
+    a shutting-down Kodi) rolls back to the savepoint, releases it and
+    propagates. The cursor is always closed.
 
     Raises:
-        ValueError: If ``name`` is not a plain identifier (nothing runs).
+        ValueError: If ``name`` is not a plain SQL identifier (nothing runs).
     """
 
     if not _SAVEPOINT_NAME.fullmatch(name):

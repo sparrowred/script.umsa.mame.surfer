@@ -1,29 +1,9 @@
-"""Software search over the set names of ``umsa.db``.
+"""Software search: every word of the term in ``sets.gamename``, in any order.
 
-The search splits the term into words (:func:`tokenize`) and finds every set
-whose ``sets.gamename`` contains each word, in any order. A word ``2`` ...
-``10`` also matches its Roman numeral and the other way round. When the word
-scan finds fewer than :data:`MAX_RESULTS` software, a second scan compares the
-term without separators with the name without spaces, ``-``, ``:``, ``.`` and
-``'`` (``pacman`` finds ``Pac-Man``).
-
-The candidates are ranked in Python (exact name, name prefix, phrase, whole
-words, word prefixes, substring), grouped by software (the best set of each
-software wins) and cut to :data:`MAX_RESULTS` rows. Only when the term finds
-nothing at all, also without the filter, every unknown word is widened by
-similar words of the names (:mod:`difflib`) and the search runs once more
-(:attr:`SearchResult.fuzzy`).
-
-``umsa.db`` has no indexes and is not changed: every scan reads all sets
-(about 25 ms on the full database). The active filter is passed as the
-trusted clauses of :func:`umsa_core.gamelist_filter.define_filter`; every
-value of the term is a bind parameter and every ``LIKE`` escapes ``\\``,
-``%`` and ``_``.
-
-The module is Kodi-independent. It never opens, closes or commits the
-connection it is given (``get_connection`` like
-:class:`~umsa_core.gamelist_filter.Gamelist`, ``sqlite3.Row`` rows) and owns
-only short-lived cursors. Rows are plain dicts.
+``2`` … ``10`` also match their Roman numerals, ``pacman`` finds ``Pac-Man``,
+and a term that finds nothing, also without the filter, is retried with
+similar words (``fuzzy``). The term only goes into bind parameters with
+escaped ``LIKE`` patterns; a scan reads all sets (about 25 ms).
 """
 
 from __future__ import annotations
@@ -54,34 +34,41 @@ _CANDIDATE_COLUMNS = "sets.id, sets.gamename, sets.softwarelink_id, sets.cloneof
 
 @dataclass
 class SearchResult:
-    """Outcome of one software search."""
+    """Outcome of one software search.
 
-    rows: list = field(default_factory=list)  # at most MAX_RESULTS dicts, best first
-    count: int = 0        # all matching software
-    fuzzy: bool = False   # True: nothing matched, similar words were used
+    Attributes:
+        rows: At most ``MAX_RESULTS`` dicts, best first; the best set of each
+            software.
+        count: Number of all matching software.
+        fuzzy: Nothing matched; similar words were used.
+    """
+
+    rows: list = field(default_factory=list)
+    count: int = 0
+    fuzzy: bool = False
 
 
 def tokenize(term) -> list:
-    """Words of ``term``: casefolded runs of letters and digits."""
+    """Return the words of ``term``: casefolded runs of letters and digits."""
 
     return _WORD.findall(term.casefold())
 
 
 def _escape(text):
-    """``text`` for a ``LIKE ... ESCAPE '\\'`` pattern."""
+    """Return ``text`` escaped for a ``LIKE ... ESCAPE '\\'`` pattern."""
 
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _base_variants(word):
-    """The word and its Roman/Arabic twin."""
+    """Return the word and its Roman/Arabic twin."""
 
     twin = _TWINS.get(word)
     return (word, twin) if twin else (word,)
 
 
 def _filter_sql(filter_join, filter_where):
-    """The filter condition, or ``''`` when join or where is empty."""
+    """Return the filter condition, or ``''`` when join or where is empty."""
 
     if filter_join and filter_where:
         return "sets.id IN (SELECT sets.id FROM sets {} WHERE {})".format(
@@ -90,7 +77,11 @@ def _filter_sql(filter_join, filter_where):
 
 
 def _rank(words, variants, name):
-    """Rank 0 (best) to 5 of a set name for the term (see the plan S-1)."""
+    """Return ``(rank, word count)`` of a set name; rank 0 is best.
+
+    0 exact name, 1 name prefix, 2 phrase, 3 whole words, 4 word prefixes,
+    5 substring.
+    """
 
     name_words = tokenize(split_gamename(name)[0])
     joined = " ".join(name_words)
@@ -114,9 +105,13 @@ def _rank(words, variants, name):
 
 
 class SoftwareSearch:
-    """Search over ``sets.gamename``; ``get_connection`` like ``Gamelist``."""
+    """Search over ``sets.gamename`` on the connection ``get_connection()`` returns.
+
+    Never opens, closes or commits that connection.
+    """
 
     def __init__(self, get_connection):
+        """Keep the connection getter; the word list is read on first use."""
         self._get_connection = get_connection
         self._vocabulary_cache = None
         self._vocabulary_connection = None
@@ -125,7 +120,9 @@ class SoftwareSearch:
                filter_where_params=()) -> SearchResult:
         """Search software whose set names contain every word of ``term``.
 
-        ``filter_*`` are the clauses of the active filter (empty: no filter).
+        ``filter_*`` are the trusted clauses of the active filter (empty: no
+        filter). Candidates are grouped by software and cut to
+        ``MAX_RESULTS``.
         """
 
         words = tokenize(term)
@@ -163,10 +160,9 @@ class SoftwareSearch:
             f"{(time.time() - start) * 1000:.0f}ms", level='debug')
         return result
 
-    # scans ---------------------------------------------------------------
-
     @staticmethod
     def _run_candidates(connection, where, params):
+        """Return ``{set id: candidate row}`` of the sets matching ``where``."""
         cursor = connection.cursor()
         try:
             cursor.execute(
@@ -176,7 +172,7 @@ class SoftwareSearch:
             cursor.close()
 
     def _word_scan(self, connection, variants, filter_sql, filter_params):
-        """Sets that contain every word (one of its variants)."""
+        """Return the sets that contain every word (one of its variants)."""
 
         clauses, params = [], []
         for options in variants:
@@ -189,7 +185,7 @@ class SoftwareSearch:
         return self._run_candidates(connection, " AND ".join(clauses), params)
 
     def _squashed_scan(self, connection, squashed, filter_sql, filter_params):
-        """Sets whose name without separators contains ``squashed``."""
+        """Return the sets whose name without separators contains ``squashed``."""
 
         where = f"{_SQUASHED_NAME} LIKE ? ESCAPE '\\'"
         params = [f"%{_escape(squashed)}%"]
@@ -200,13 +196,12 @@ class SoftwareSearch:
 
     @staticmethod
     def _software_ids(candidates):
+        """Return the software ids of the candidates."""
         return {row['softwarelink_id'] for row in candidates.values()
                 if row['softwarelink_id'] is not None}
 
-    # fuzzy ---------------------------------------------------------------
-
     def _vocabulary(self, connection):
-        """Sorted words of all set names, read once per connection object."""
+        """Return the sorted words of all set names, read once per connection object."""
 
         if self._vocabulary_connection is not connection:
             cursor = connection.cursor()
@@ -222,7 +217,7 @@ class SoftwareSearch:
         return self._vocabulary_cache
 
     def _fuzzy_variants(self, connection, words, variants):
-        """Variants widened by similar words; ``None`` when nothing new."""
+        """Return the variants widened by similar words; ``None`` when nothing new."""
 
         vocabulary = self._vocabulary(connection)
         known = set(vocabulary)
@@ -239,9 +234,8 @@ class SoftwareSearch:
             widened.append(tuple(options) + tuple(similar))
         return widened if changed else None
 
-    # ranking and details -------------------------------------------------
-
     def _result(self, connection, words, variants, candidates, fuzzy):
+        """Rank the candidates, keep the best set per software and add the details."""
         best = {}
         for row in candidates.values():
             software_id = row['softwarelink_id']
@@ -276,7 +270,7 @@ class SoftwareSearch:
 
     @staticmethod
     def _details(connection, software_ids):
-        """Name/year/maker and the first series of each software id."""
+        """Return ``(details, series)``: name/year/maker and first series per software."""
 
         if not software_ids:
             return {}, {}

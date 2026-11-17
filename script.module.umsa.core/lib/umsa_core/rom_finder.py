@@ -1,4 +1,4 @@
-"""ROM and non-MAME file discovery."""
+"""Find the ROM zips and CHDs of a set in the MAME rompath or the non-MAME folders."""
 
 import os
 from platform import platform
@@ -21,18 +21,15 @@ EXTENSIONS = {
 
 
 def find_roms(emurun, rom_paths):
-    """Search for ROM ZIPs and CHDs within MAME rompath.
+    """Set ``emurun['zips']`` and ``emurun['chds']`` from the MAME rompath.
 
-    Args:
-        emurun: Emulation run state dict containing swl_name, set_name, set_clone, disks
-        rom_paths: List of MAME rom paths to search
+    ``emurun`` needs ``swl_name``, ``set_name`` and optionally ``set_clone``
+    and ``disks``. MAME CHDs are found by listing the set directories,
+    because umsa.db has no file names for them; software-list CHDs use the
+    disk names of ``emurun['disks']``.
 
     Returns:
-        The first zip path if called with explicit swl_name/set_name (for VGM), otherwise None.
-
-    MAME CHDs are discovered by scanning each set directory because the
-    database does not provide their filenames. Software-list CHDs continue to
-    use the disk names from ``emurun['disks']``.
+        The first zip for a software-list set (VGM uses it), else ``None``.
     """
     zips, chds, all_chds = [], [], []
     swl_name = emurun.get('swl_name')
@@ -40,9 +37,7 @@ def find_roms(emurun, rom_paths):
     set_clone = emurun.get('set_clone')
     disks = emurun.get('disks', []) or []
 
-    # set zip name
     if 'swl_name' in emurun and 'set_name' in emurun and not (swl_name == 'mame' and set_name):
-        # called with explicit swl_name/set_name for VGM
         zip_name = os.path.join(swl_name, set_name + '.zip')
     elif swl_name == 'mame':
         zip_name = set_name + '.zip'
@@ -72,7 +67,6 @@ def find_roms(emurun, rom_paths):
                 except (FileNotFoundError, NotADirectoryError):
                     continue
     else:
-        # Create CHD filenames from software-list disk metadata.
         for i in disks:
             try:
                 disk_name = i['disk']
@@ -83,22 +77,18 @@ def find_roms(emurun, rom_paths):
             all_chds.append(os.path.join(
                 swl_name, set_name,
                 f'{disk_name}.chd'))
-            # Also check parent in case we have merged sets.
+            # Also the parent, for merged sets.
             if set_clone:
                 all_chds.append(os.path.join(
                     swl_name, set_clone,
                     f'{disk_name}.chd'))
 
-    # search filename
     for path in rom_paths:
-        # Software-list CHDs use explicit filenames; MAME CHDs were scanned
-        # directly from the set directories above.
         if swl_name != 'mame' and all_chds:
             for i in all_chds:
                 chd_file = os.path.join(path, i)
                 if os.path.isfile(chd_file):
                     chds.append(chd_file)
-        # check for zip
         zip_file = os.path.join(path, zip_name)
         if os.path.isfile(zip_file):
             zips.append(zip_file)
@@ -106,19 +96,19 @@ def find_roms(emurun, rom_paths):
     emurun['zips'] = zips
     emurun['chds'] = chds
 
-    # For VGM mode, return the first zip found
     if 'swl_name' in emurun and 'set_name' in emurun and not (swl_name == 'mame' and set_name):
         return zips[0] if zips else None
     return None
 
 
 def find_nonmame_roms(emurun, nonmame_paths, exodos_shell=''):
-    """Search for files from other sources than MAME.
+    """Set ``emurun['zips']`` (and for eXoDOS ``emu_exe``) for a non-MAME set.
 
     Args:
-        emurun: Emulation run state dict containing swl_name, set_name, description, publisher
-        nonmame_paths: Dict with keys 'exodos', 'gb64', 'whdload' pointing to root paths
-        exodos_shell: 'shell' or 'alt' for eXoDOS launcher selection
+        emurun: Needs ``swl_name``, ``set_name``; WHDLoad also
+            ``description`` and ``publisher``.
+        nonmame_paths: Roots by ``'exodos'``, ``'gb64'`` and ``'whdload'``.
+        exodos_shell: ``'shell'`` or ``'alt'`` selects the eXoDOS launcher.
     """
     zips, chds = [], []
     filename = ''
@@ -136,16 +126,13 @@ def find_nonmame_roms(emurun, nonmame_paths, exodos_shell=''):
                 if dosext in i and not any(x in i for x in ('install', 'exception')):
                     shellname = i
                     break
-            # set normal or alternate exodos launcher
             if exodos_shell == 'alt':
                 emurun['emu_exe'] = os.path.join(dospath, 'Extras/Alternate Launcher' + dosext)
             elif exodos_shell == 'shell':
                 emurun['emu_exe'] = os.path.join(dospath, shellname)
-            # set zip- and filename
             zipname = os.path.basename(shellname)[:-len(dosext)] + '.zip'
             filename = os.path.join(nonmame_paths.get('exodos', ''), 'eXo/eXoDOS/', zipname)
         else:
-            # folder not found - leave filename empty
             pass
     elif 'gb64_' in swl_name:
         filename = os.path.join(nonmame_paths.get('gb64', ''), 'Games/', set_name + '.zip')
@@ -165,7 +152,7 @@ def find_nonmame_roms(emurun, nonmame_paths, exodos_shell=''):
     if os.path.isfile(filename):
         zips.append(filename)
     else:
-        # file not found - leave zips empty, caller handles warning
+        # Not found: zips stays empty, the caller warns.
         pass
 
     emurun['zips'] = zips

@@ -1,4 +1,4 @@
-"""CHD extraction, cancellation and cleanup."""
+"""Extract a MAME CHD CD-ROM to CUE/BIN or GDI with chdman (cancellable)."""
 
 import os
 import re
@@ -22,7 +22,7 @@ class CHDExtractionError(RuntimeError):
 
 
 def _terminate_and_reap_process(process):
-    """Stop a child process, escalating to kill if it ignores terminate."""
+    """Stop a child process and reap it, killing it if it ignores terminate."""
     if process.poll() is None:
         try:
             process.terminate()
@@ -40,13 +40,13 @@ def _terminate_and_reap_process(process):
         process.wait()
 
 
-# launch files chdman writes for a CD image
+# Launch files chdman writes for a CD image.
 LAUNCH_EXTENSIONS = ('.cue', '.gdi')
 _PROGRESS = re.compile(r'(\d+(?:\.\d+)?)\s*%')
 
 
 def parse_chdman_progress(text):
-    """Last percentage of a chdman progress output, None without one."""
+    """Return the last percentage of a chdman progress output, ``None`` without one."""
 
     found = _PROGRESS.findall(text)
     if not found:
@@ -55,7 +55,7 @@ def parse_chdman_progress(text):
 
 
 def _extracted_files(folder, launch_file):
-    """Files of a finished extraction, the launch file first; [] without one."""
+    """Return the extracted files, launch file first; ``[]`` without one."""
 
     names = sorted(os.listdir(folder))
     if launch_file in names:
@@ -67,50 +67,44 @@ def _extracted_files(folder, launch_file):
 
 
 def extract_chd(emurun, chdman_exe, sleep=None, dialog=None, wait=None):
-    """Extract MAME chd CD-ROM to CUE/BIN.
+    """Extract the first CHD of ``emurun`` into ``emurun['folder']``; return ``''``.
+
+    A finished earlier extraction is reused. ``emurun['extractcd']`` gets the
+    files, launch file first (``.gdi`` for Dreamcast, else ``.cue``). Any
+    failure removes the partial output.
 
     Args:
-        emurun: Emulation run state dict containing chds, folder, swl_name, set_name
-        chdman_exe: Path to chdman executable
-        sleep: Optional legacy sleep callback (milliseconds)
-        dialog: Optional dialog for progress updates
-        wait: Optional abort-aware ``wait(milliseconds) -> bool``; ``True``
-            stops chdman, removes the partial output and raises
-            ``ShutdownRequested``
-
-    Returns:
-        Empty string on success.
+        sleep: Millisecond sleep, used when ``wait`` is ``None``.
+        dialog: Optional dialog for progress and cancel.
+        wait: Abort-aware ``wait(ms) -> bool``; ``True`` stops chdman.
 
     Raises:
-        CHDExtractionCancelled: If user cancels via dialog
-        ShutdownRequested: If the host asks to stop during the extraction
-        CHDExtractionError: If chdman fails
+        CHDExtractionCancelled: If the user cancels via the dialog.
+        ShutdownRequested: If the host asks to stop during the extraction.
+        CHDExtractionError: If chdman fails.
     """
     wait = resolve_wait(wait, sleep)
 
     log("UMSA Emu: starting chd extract", level='info')
     folder = emurun['folder']
     chd_name = os.path.basename(emurun['chds'][0])
-    # dc needs gdi extension
     if emurun['swl_name'] == 'dc':
         file_ext = '.gdi'
     else:
         file_ext = '.cue'
     launch_file = chd_name + file_ext
-    # check if chd is already converted
     if os.path.isdir(folder):
         extracted = _extracted_files(folder, launch_file)
         if extracted:
             emurun['extractcd'] = extracted
             return ""
-        # leftover without a launch file: extract again
+        # Leftover without a launch file: extract again.
         log(f"UMSA Emu: removing incomplete chd folder {folder}", level='warning')
         shutil.rmtree(folder)
 
     proc = None
     try:
-        # the folder gets its name only when chdman finished: a cancel, an
-        # error or a shutdown removes the staging folder
+        # The folder gets its name only when chdman finished.
         with staged_dir(folder) as staging:
             proc = subprocess.Popen(
                 [chdman_exe, 'extractcd', '-i', emurun['chds'][0], '-o',

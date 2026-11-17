@@ -1,23 +1,8 @@
-"""Artwork queries across ``umsa.db`` and the attached ``artwork.db``.
+"""Artwork queries that join the attached ``art`` schema with the game tables.
 
-Everything here joins the scanned artwork (``art.art_set``, the ``art``
-schema attached to the ``umsa.db`` connection) with the game tables
-(``sets``/``swl``/``software``), so it is neither artwork-table CRUD
-(:mod:`umsa_core.artwork_repository`) nor a plain game lookup
-(:mod:`umsa_core.game_repository`):
-
-- random artwork for the screensaver, following the active filter of the
-  :class:`~umsa_core.gamelist_filter.Gamelist`;
-- artwork of a set with the clone/parent fallback (machine cabinets, left
-  picture of the screensaver);
-- the preview picture of a software.
-
-Artwork locations are rows with ``source``, ``root_key``, ``relative_path``
-and ``archive_member``; :func:`umsa_core.artwork.resolve_artwork_path` turns
-them into paths.
-
-The module is Kodi-independent. :class:`ArtworkQueries` never opens, closes
-or commits a connection; ``DBMod`` owns one as ``DBMod.art_queries``.
+Random artwork following the active filter, set artwork with clone/parent
+fallback and a random picture of a software. Rows are artwork locations;
+:func:`umsa_core.artwork.resolve_artwork_path` turns them into paths.
 """
 
 import random
@@ -29,7 +14,7 @@ from .artwork_repository import ArtworkRepository
 from .game_repository import GameRepository
 from .logging import log
 
-# kept candidate lists of get_random_art (artwork types x filter)
+# Kept candidate lists of get_random_art (artwork types x filter).
 _RANDOM_ART_CACHE_SIZE = 8
 
 _ART_COLUMNS = ("id, source, root_key, scan_unit, type, extension, "
@@ -39,23 +24,21 @@ _ART_COLUMNS = ("id, source, root_key, scan_unit, type, extension, "
 class ArtworkQueries:
     """Artwork lookups on the ``umsa.db`` connection with attached ``art``.
 
-    ``get_connection`` returns the current connection (``sqlite3.Row`` rows)
-    and is asked on every call, because ``DBMod.open_db`` replaces the
-    connection after a database update. ``gamelist`` supplies the active
-    filter, ``get_nonmame`` the configured roots of the other collections
-    (``{'exodos': ..., 'gb64': ...}`` or ``None``; the settings can change
-    them while the object lives).
+    ``get_connection`` is asked on every call, because ``DBMod.open_db``
+    replaces the connection. ``gamelist`` supplies the active filter,
+    ``get_nonmame`` the current roots of the other collections
+    (``{'exodos': ..., 'gb64': ...}`` or ``None``). Never opens, closes or
+    commits a connection.
     """
 
     def __init__(self, get_connection, gamelist, get_nonmame):
         self._get_connection = get_connection
         self._gamelist = gamelist
         self._get_nonmame = get_nonmame
-        # candidate ids of get_random_art, see _random_art_candidates
         self._random_art_cache = {}
         self._random_art_token = None
         # (source, root_key) pairs the random selection may pick from;
-        # None = no root filter, see set_source_roots
+        # None = no root filter.
         self._root_filter = None
 
     def _execute(self, statement, params=()):
@@ -79,7 +62,7 @@ class ArtworkQueries:
             for source, path in source_roots.items() if path))
 
     def _root_clause(self):
-        """SQL condition and parameters of the root restriction, or None.
+        """Return the SQL condition and parameters of the root restriction, or None.
 
         Rows without a root key of a configured source are kept: the
         resolver accepts them too.
@@ -95,7 +78,7 @@ class ArtworkQueries:
         return f"({pairs})", params
 
     def _artwork_conditions(self, types_in, types, filtered):
-        """WHERE clause and parameters shared by the random artwork queries."""
+        """Return the WHERE clause and parameters of the random artwork queries."""
 
         gamelist = self._gamelist
         conditions = [f"art.type IN ({types_in})"]
@@ -110,16 +93,10 @@ class ArtworkQueries:
         return " AND ".join(conditions), params
 
     def has_artwork(self, art_types):
-        """Return whether any artwork of the given types can be selected.
+        """Return whether :meth:`get_random_art` can return a row for ``art_types``.
 
-        The check uses the same joined tables, the same artwork database
-        (``art.art_set``) and the same active filter as
-        :meth:`get_random_art`, so a positive answer means the random
-        selection can really return a row. It stops at the first hit and
-        never loads a whole artwork collection.
-
-        ``art_types`` may be empty (the answer is then ``False``) and may
-        contain duplicates.
+        Uses the same tables and filter as the random selection and stops at
+        the first hit. Empty ``art_types`` give ``False``.
         """
 
         types = list(dict.fromkeys(art_types or []))
@@ -128,8 +105,8 @@ class ArtworkQueries:
         types_in = ",".join("?" * len(types))
         gamelist = self._gamelist
 
-        # with the active filter first, like the random selection
-        # (an empty filter would produce an invalid "AND" clause)
+        # Active filter first, like the random selection (an empty filter
+        # would produce an invalid "AND" clause).
         if gamelist.use_filter and gamelist.filter_where:
             where, params = self._artwork_conditions(types_in, types, True)
             statement = (
@@ -138,14 +115,18 @@ class ArtworkQueries:
             if self._execute(statement, params).fetchone():
                 return True
 
-        # and without filter if the filter found nothing
+        # Without the filter if it found nothing.
         where, params = self._artwork_conditions(types_in, types, False)
         statement = ("SELECT 1 FROM art.art_set art JOIN sets ON sets.id = art.id "
                      f"WHERE {where} LIMIT 1")
         return bool(self._execute(statement, params).fetchone())
 
     def get_random_art(self, art_types):
-        """Get 1 random artwork
+        """Return one random artwork of ``art_types`` with set details, or ``None``.
+
+        The dict carries the artwork location (resolved by the caller), set,
+        software and display details, and for eXoDOS/GB64 sets the resolved
+        ``left_pic`` of the screensaver.
 
         TODO
         - check where get_random_art is used and if machine, left is always needed
@@ -154,14 +135,6 @@ class ArtworkQueries:
         - get bottom left, type video/snap/title = cover/flyer
                            type cover/flyer = snap
           needs fetch info for snap from db for aspect ratio
-
-        Takes a list of artwork types
-        Returns a dictonary with informations or None if nothing is found
-
-        The row carries the artwork location (``source``, ``root_key``,
-        ``relative_path``, ``archive_member``); callers resolve it with
-        :func:`umsa_core.artwork.resolve_artwork_path`. The additional left
-        image of the eXoDOS/GB64 sets is resolved here for the screensaver.
         """
 
         rand_art = self._pick_random_art(art_types)
@@ -171,7 +144,6 @@ class ArtworkQueries:
         end_result = {}
         end_result.update(rand_art)
 
-        # get needed infos
         art_info = self._execute(
             "SELECT sets.name, swl.name as swl_name, gamename, \
                     year.name as year, maker.name as maker, softwarelink_id as s_id, \
@@ -187,7 +159,6 @@ class ArtworkQueries:
         end_result.update(
             {'machine_name': games.get_machine_name(end_result['swl_system_id'])[0]})
 
-        # snap/title: get display
         if 'snap' in art_types or 'titles' in art_types:
             if end_result['swl_name'] == 'mame':
                 machine = rand_art['id']
@@ -201,7 +172,6 @@ class ArtworkQueries:
         else:
             end_result.update({'display_rotation': 0, 'display_type': ''})
 
-        # get left pic if swl is nonmame
         if (end_result['swl_name'] == 'exodos') or (end_result['swl_name'].startswith('gb64_')):
             if end_result['type'] in ('snap', 'titles', 'videosnaps'):
                 lefttype = 'covers'
@@ -222,15 +192,11 @@ class ArtworkQueries:
     def _random_art_candidates(self, art_types, filtered):
         """Return the ``art_id`` values ``get_random_art`` may pick from.
 
-        The ids of one artwork type selection (with or without the active
-        filter) are read once and kept, so a random pick no longer sorts the
-        whole joined artwork table (``ORDER BY RANDOM()``) for every picture.
-
+        The ids are read once per type selection and filter and kept, so a
+        pick does not sort the whole joined table with ``ORDER BY RANDOM()``.
         The lists are dropped when ``artwork.db`` changes
-        (``PRAGMA art.data_version`` moves as soon as another connection
-        commits, e.g. an artwork scan of the frontend) and when ``open_db``
-        replaced the ``umsa.db`` connection. The filter clauses are part of
-        the key, so a changed filter gets its own list.
+        (``PRAGMA art.data_version`` moves when another connection commits)
+        and when the ``umsa.db`` connection was replaced.
         """
 
         connection = self._get_connection()
@@ -247,7 +213,7 @@ class ArtworkQueries:
         if filtered:
             signature = (tuple(gamelist.filter_join), tuple(gamelist.filter_where),
                          tuple(gamelist.filter_where_params))
-        # the root restriction is part of the key: other roots, other ids
+        # The root restriction is part of the key: other roots, other ids.
         key = (types, signature, self._root_filter)
         if key in cache:
             return cache[key]
@@ -275,7 +241,7 @@ class ArtworkQueries:
         if not art_types:
             return None
 
-        # an empty filter would produce an invalid "AND" clause
+        # An empty filter would produce an invalid "AND" clause.
         filtered = bool(self._gamelist.use_filter and self._gamelist.filter_where)
         for _attempt in range(2):
             ids = None
@@ -297,11 +263,7 @@ class ArtworkQueries:
         return None
 
     def _art_source_roots(self):
-        """Return configured roots for the non-MAME artwork sources.
-
-        ``get_random_art`` only resolves the additional left image, which is
-        picked from the eXoDOS/GB64 sources whose roots are held here.
-        """
+        """Return the eXoDOS/GB64 roots for the left image of ``get_random_art``."""
 
         nonmame = self._get_nonmame() or {}
         return {
@@ -310,14 +272,11 @@ class ArtworkQueries:
         }
 
     def get_artwork_by_software_id(self, software_id, artwork, source_roots=None):
-        """get artwork by software id
+        """Return ``[art_path, machines]`` for a software.
 
-        fetch given artwork type and all machines for a software id.
-
-        Returns a two element list ``[art_path, machines]`` where ``art_path``
-        is the fully resolved location of a random matching artwork (empty
-        string when none is found) and ``machines`` is a comma separated list
-        of machine abbreviations.
+        ``art_path`` is the resolved path of a random artwork of type
+        ``artwork`` (``''`` if none), ``machines`` a comma-separated list of
+        machine abbreviations.
         """
 
         all_machines = [
@@ -356,7 +315,7 @@ class ArtworkQueries:
             return []
         placeholders = ",".join("?" * len(ids))
         # "+type" keeps SQLite on the id index: the type index would walk
-        # every row of a big artwork type
+        # every row of a big artwork type.
         rows = self._execute(
             f"SELECT {_ART_COLUMNS} FROM art.art_set \
              WHERE id IN ({placeholders}) AND +type = ?",
@@ -367,17 +326,15 @@ class ArtworkQueries:
     def _family_artwork(self, sets, art_type):
         """Return ``{key: [art rows]}`` for sets with clone/parent fallback.
 
-        ``sets`` holds ``(key, set id, set name, cloneof_id)`` tuples. The
-        rows of a key are ordered: the set itself, its parent, the other
-        clones of the family (by name); within each step own artwork comes
-        first. Every row carries ``set_name``, the set the artwork belongs
-        to. umsa.db keeps clones in the software list and software of their
-        parent and has no clones of clones, so the family is the parent and
-        all its clones. Families are only looked up for sets without own
-        artwork of that type.
+        ``sets`` holds ``(key, set id, set name, cloneof_id)`` tuples. Order:
+        the set, its parent, the other clones (by name); own artwork first in
+        each step. ``set_name`` of a row names the set the artwork belongs to.
+        umsa.db has no clones of clones, so the family is the parent and its
+        clones.
         """
 
         def source_rank(row):
+            """Sort own artwork before other sources."""
             return 0 if row["source"] == "own_artwork" else 1
 
         own = {}

@@ -1,37 +1,8 @@
-"""Game database repository.
+"""Read-only queries over the game tables of umsa.db that need no filter state.
 
-This module centralises the single-purpose, read-only queries over the general
-game tables of ``umsa.db`` (``sets``, ``software``, ``swl``, ``year``,
-``maker``, ``category``, ``nplayers``, ``swl_status``, plus the media/device
-tables ``part``, ``part_set``, ``device``, ``device_set``, ``sharedfeature``,
-``sharedfeature_set``) that neither depend on the filter state of the game
-lists (:class:`~umsa_core.gamelist_filter.Gamelist`) nor join into other
-databases.
-It follows the conventions of :mod:`umsa_core.artwork_repository` and
-:mod:`umsa_core.dat_repository`.
-
-The repository operates on an existing SQLite connection supplied by the
-caller; it never opens or closes that connection. All methods are read-only:
-they manage no transactions, never commit, and own only short-lived cursors
-that are closed in a ``finally`` block.
-
-No ``sqlite3.Row`` escapes this repository. Public query methods return plain
-dicts (or the established scalars/tuples/``None``) so the Core-to-add-on
-boundary never leaks SQLite row objects. Connections that do not use
-``sqlite3.Row`` are still rejected at construction (step 4.2b contract,
-decision Q7): the repository reads columns *by name* internally, which only a
-row connection provides. Methods whose public shape was never a row
-(``get_machine_name``'s plain tuple, the scalar counts, ``get_set_name``'s
-bare name, ``get_set_ids_for_software``'s list of ids,
-``get_software_ids_for_name``'s id list, ``get_machines``'s list of plain
-dicts and ``get_info_by_set_and_swl``'s dict) keep that shape.
-
-Row-returning behaviour that is intentionally kept *inside* Core and is
-documented as such: ``get_parts_for_set_id``, ``get_swl_options``,
-``get_machine_id``, ``get_sharedfeat_requirement``, ``get_devices_for_machine``
-and ``get_sets_for_software``. Those are consumed by other Core modules only
-(never by the GUI or screensaver) and keep the native rows for cheap internal
-use.
+Public methods return plain dicts, tuples or scalars; the few methods that
+return ``sqlite3.Row`` say so and are used inside Core only (command line,
+software details).
 """
 
 from __future__ import annotations
@@ -43,51 +14,36 @@ from .data_paths import CoreDataPaths
 from .logging import log
 from .sqlite import connect_sqlite_readonly, require_row_connection
 
-# ids per ``IN (...)`` statement, below SQLite's historical limit of 999
+# Ids per ``IN (...)`` statement, below the 999-variable limit of older SQLite.
 _IN_BLOCK = 500
 
 
 def _dict_or_none(row):
-    """Return ``row`` as a plain dict, or ``None`` when the row is missing.
-
-    Preserves the historical "append whatever ``fetchone()`` gave us" shape for
-    queries whose match is optional, without letting a ``sqlite3.Row`` escape.
-    """
+    """Return ``row`` as a plain dict, or ``None`` when the row is missing."""
     return None if row is None else dict(row)
 
 
 class GameRepository:
-    """Read-only game-table operations on an externally owned connection.
-
-    The repository never opens or closes the supplied connection and never
-    manages transactions; query methods leave both to the caller.
-    """
+    """Read-only game-table queries on a caller-owned connection."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        """Initialise the repository.
-
-        Args:
-            connection: An existing SQLite connection to operate on. The
-                repository does not own this connection.
+        """Wrap a umsa.db connection.
 
         Raises:
-            ValueError: If the connection does not use ``sqlite3.Row``.
+            ValueError: If the connection does not use ``sqlite3.Row``
+                (:func:`umsa_core.sqlite.require_row_connection`).
         """
         require_row_connection(connection, "GameRepository")
         self._conn = connection
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the underlying connection (read-only access)."""
+        """Return the wrapped connection."""
         return self._conn
 
     @staticmethod
     def _as_dicts(rows) -> list:
-        """Return the given rows as plain dicts, never ``sqlite3.Row``.
-
-        Single conversion point for every read that crosses the Core-to-add-on
-        boundary (step 4.8).
-        """
+        """Return the given rows as plain dicts."""
         return [dict(row) for row in rows]
 
     def _fetch_dicts(self, sql: str, params: tuple = ()) -> list:
@@ -100,60 +56,41 @@ class GameRepository:
             cursor.close()
 
     def get_maker(self) -> list:
-        """Return the list of makers (clones excluded), ordered by name.
-
-        Each entry is a plain dict ``{'id', 'name'}`` (``name as id, name``).
-        """
+        """Return the makers (clones excluded) as ``{'id', 'name'}``, ordered by name."""
         return self._fetch_dicts(
             "SELECT name as id, name FROM maker "
             "WHERE cloneof_id IS NULL ORDER BY name"
         )
 
     def get_swl(self) -> list:
-        """Return the list of software lists, ordered by name.
-
-        Each entry is a plain dict ``{'id', 'name'}``
-        (``name as id, description as name``).
-        """
+        """Return the software lists as ``{'id': name, 'name': description}``."""
         return self._fetch_dicts(
             "SELECT name as id, description as name FROM swl ORDER BY name"
         )
 
     def get_source(self) -> list:
-        """Return the distinct source files of the sets, ordered by source.
-
-        Each entry is a plain dict with the single ``source`` key.
-        """
+        """Return the distinct source files of the sets as ``{'source'}`` dicts."""
         return self._fetch_dicts("SELECT DISTINCT source FROM sets ORDER BY source")
 
     def get_year(self) -> list:
-        """Return the list of years, ordered by name.
-
-        Each entry is a plain dict ``{'id', 'name'}``.
-        """
+        """Return the years as ``{'id', 'name'}``, ordered by name."""
         return self._fetch_dicts("SELECT name as id, name FROM year ORDER BY name")
 
     def get_players(self) -> list:
-        """Return the list of player counts, ordered by name.
-
-        Each entry is a plain dict ``{'id', 'name'}``.
-        """
+        """Return the player counts as ``{'id', 'name'}``, ordered by name."""
         return self._fetch_dicts(
             "SELECT name as id, name FROM nplayers ORDER BY name"
         )
 
     def get_categories(self) -> list:
-        """Return the list of categories, ordered by name.
-
-        Each entry is a plain dict ``{'id', 'name'}``.
-        """
+        """Return the categories as ``{'id', 'name'}``, ordered by name."""
         return self._fetch_dicts("SELECT name as id, name FROM category ORDER BY name")
 
     def get_set_name(self, set_id) -> str | None:
         """Return the set name for a set id, or ``None`` for a falsy id.
 
-        A truthy id without a matching set raises ``TypeError`` (the raw
-        ``fetchone()[0]`` contract the callers rely on).
+        Raises:
+            TypeError: If a truthy id matches no set.
         """
         if not set_id:
             return None
@@ -165,10 +102,7 @@ class GameRepository:
             cursor.close()
 
     def get_set_source(self, set_id) -> str | None:
-        """Return the driver source file (``sets.source``) of a set id.
-
-        ``None`` when the set is unknown or has no source.
-        """
+        """Return the driver source file of a set, or ``None`` if unknown or empty."""
         cursor = self._conn.cursor()
         try:
             cursor.execute("SELECT source FROM sets WHERE id = ?", (set_id,))
@@ -180,8 +114,8 @@ class GameRepository:
     def get_machine_name(self, machine_id) -> tuple:
         """Return the ``(name, gamename)`` tuple of a set id.
 
-        The public shape is a plain positional tuple; a missing id raises
-        ``TypeError`` (callers only pass ids obtained from list rows).
+        Raises:
+            TypeError: If the id matches no set.
         """
         cursor = self._conn.cursor()
         try:
@@ -194,11 +128,10 @@ class GameRepository:
             cursor.close()
 
     def get_set_info_by_id(self, set_id) -> dict | None:
-        """Return the info dict for a set by its ID.
+        """Return the info dict of a set, or ``None`` if it does not exist.
 
-        Returns a plain dict with keys: ``software_id``, ``set_id``, ``name``,
-        ``year``, ``maker``, ``label``. Returns ``None`` if the set does not
-        exist. This method is read-only and never commits.
+        Keys: ``software_id``, ``set_id``, ``name``, ``year``, ``maker``,
+        ``label``.
         """
         if not set_id:
             return None
@@ -269,10 +202,9 @@ class GameRepository:
             cursor.close()
 
     def search_single(self, my_search):
-        """Return the first software whose set name starts with a prefix.
+        """Return the first software with a set name starting with ``my_search``.
 
-        Returns a plain dict with ``id``, ``name``, ``year`` and ``maker``, or
-        ``None`` when nothing matches.
+        The dict has ``id``, ``name``, ``year`` and ``maker``; ``None`` if none.
         """
         cursor = self._conn.cursor()
         try:
@@ -293,18 +225,13 @@ class GameRepository:
             cursor.close()
 
     def get_series(self, software_id):
-        """Return the software entries of the series an id belongs to.
+        """Return the entries of the first series the software belongs to.
 
-        Each entry is a plain dict ``{'id', 'name', 'year', 'maker'}``.
-        Returns ``None`` when the software has no series at all. The current
-        N+1 query pattern and the first-series-wins behaviour (a software in
-        several series is resolved against the first one only) are preserved
-        verbatim — optimisation is a separate change. The entries come from
+        ``None`` when the software has no series. See
         :meth:`get_series_entries`.
         """
         cursor = self._conn.cursor()
         try:
-            # check if software has a series attached
             cursor.execute(
                 "SELECT series_id "
                 "FROM series_seq WHERE software_id = ?", (software_id,)
@@ -314,7 +241,6 @@ class GameRepository:
             cursor.close()
         if not series_ids:
             return None
-        # simply use first series
         return self.get_series_entries(series_ids[0]['series_id'])
 
     def get_series_entries(self, series_id):
@@ -324,7 +250,6 @@ class GameRepository:
         """
         cursor = self._conn.cursor()
         try:
-            # get all entries for the series
             all_series = []
             cursor.execute(
                 "SELECT software_id "
@@ -363,19 +288,14 @@ class GameRepository:
             cursor.close()
 
     def check_series(self, software_id) -> int | None:
-        """Return the number of entries in the software's first series.
-
-        Returns ``None`` when the software has no series row.
-        """
+        """Return the number of entries in the software's first series, or ``None``."""
         cursor = self._conn.cursor()
         try:
-            # first check if series exists
             cursor.execute(
                 "SELECT series_id "
                 "FROM series_seq WHERE software_id = ?", (software_id,)
             )
             series_exists = cursor.fetchone()
-            # now count
             if series_exists:
                 cursor.execute(
                     "SELECT COUNT(series_id) "
@@ -415,18 +335,10 @@ class GameRepository:
             cursor.close()
 
     def get_all_dbentries(self, cat):
-        """Return count entries per filter category (dynamic dispatch).
+        """Return ``{'id', 'name', 'count'}`` per entry of a filter category.
 
-        Each entry is a plain dict ``{'id', 'name', 'count'}`` where ``name``
-        is the category label (``description``/``name``, depending on the
-        category) and ``count`` is ``count(distinct s.id)``; ``None`` is
-        returned for an unknown category. The category column name, the join
-        column and the extra ``flag`` predicate are chosen exactly as the
-        historical ``DBMod`` selection did.
-
-        The SQL is deliberately left un-aliased, so the aggregate has no
-        column name and is read positionally (``row[2]``) inside Core only —
-        the caller only ever sees the ``count`` key of the returned dict.
+        ``count`` is the number of distinct software; ``None`` for an unknown
+        category.
         """
         if cat == "Softwarelists":
             select_placeholders = (
@@ -471,12 +383,10 @@ class GameRepository:
     def get_machines(self, swl_name, machine=None):
         """Return ``(machines, pos)`` for a software list.
 
-        The rows are normalised to plain dicts (the public ``DBMod`` shape
-        since the original implementation: ``id``, ``name``, ``label2``,
-        ``setname``, ``detail``, ``fullname``, ``status``, ``filter``,
-        ``year``, ``source`` (driver file) and the historical ``"status,filtr"`` ``maker`` string).
-        ``pos`` is the index whose set name equals ``machine`` (0 when it is
-        never found or ``machine`` is ``None``).
+        Each machine is a dict with ``id``, ``name``, ``label2``, ``setname``,
+        ``detail``, ``fullname``, ``status``, ``filter``, ``year``, ``source``
+        (driver file) and ``maker`` (the string ``"status,filtr"``). ``pos``
+        is the index whose set name equals ``machine``, else 0.
 
         TODO join
         """
@@ -527,13 +437,10 @@ class GameRepository:
             cursor.close()
 
     def get_software_for_sets(self, set_ids) -> dict:
-        """Return ``{set id: software info}`` for a collection of set ids.
+        """Return ``{set id: {'id', 'name', 'year', 'maker'}}`` of each set's software.
 
-        The info is a plain dict with ``id`` (software id), ``name``, ``year``
-        and ``maker`` (developer). Set ids that match no software are missing
-        from the mapping; an empty collection returns an empty mapping. The
-        ids are queried in blocks so the statement stays below SQLite's
-        variable limit.
+        Set ids without software are missing. The ids are queried in blocks
+        below SQLite's variable limit.
         """
         ids = list(set_ids)
         result = {}
@@ -564,13 +471,12 @@ class GameRepository:
             cursor.close()
 
     def get_info_by_set_and_swl(self, setname, swlname) -> dict:
-        """Return the info dict for a set name inside a software list.
+        """Return the info dict of a set name inside a software list.
 
-        Normalised to a plain dict (the public shape: ``software_id``,
-        ``set_id``, ``name``, ``year``, ``maker``, ``label``). A set/software
-        combination that matches no row raises ``TypeError`` (the historical
-        ``db_fetch[4]`` on ``None`` contract — callers pass names obtained
-        from list rows).
+        Same keys as :meth:`get_set_info_by_id`.
+
+        Raises:
+            TypeError: If the combination matches no row.
         """
         cursor = self._conn.cursor()
         try:
@@ -597,13 +503,10 @@ class GameRepository:
             cursor.close()
 
     def get_sets_for_software(self, software_id):
-        """Return every set of a software id with its joined display columns.
+        """Return every set of a software with its joined display columns.
 
-        Intentionally Row-returning (Core-internal contract): the multi-join
-        row shape ``get_all_for_software`` iterates (``sets`` +
-        ``year``/``maker``/``swl``/``category``/``nplayers``), ordered by year,
-        clone parent and gamename. Only Core consumes this; nothing here
-        crosses the add-on boundary.
+        Returns ``sqlite3.Row`` (Core only), ordered by year, clone parent and
+        gamename.
         """
         cursor = self._conn.cursor()
         try:
@@ -633,8 +536,8 @@ class GameRepository:
     def get_software_name(self, software_id) -> str:
         """Return the name of a software id.
 
-        A truthy id without a matching software raises ``TypeError`` (the raw
-        ``fetchone()[0]`` contract the callers rely on).
+        Raises:
+            TypeError: If the id matches no software.
         """
         cursor = self._conn.cursor()
         try:
@@ -654,18 +557,13 @@ class GameRepository:
         finally:
             cursor.close()
 
-    # --- step 4.4: media/parts/device reads feeding the command line --------
+    # --- media/parts/device reads feeding the command line --------
 
     def get_parts_for_set_id(self, set_id) -> list:
-        """Return the parts (media) attached to a set, ordered by part name.
+        """Return the parts (media) of a set, ordered by part name.
 
-        Intentionally Row-returning (Core-internal contract): each row is
-        ``p.name, pv.name, pv.disk`` (media name, interface, optional disk
-        value). A set can have more than one media (two floppies, floppy +
-        cd-rom, ...). Returns an empty list when no parts match — including
-        unknown set ids. The only consumer is ``cmdline.create_cmdline``, which
-        indexes positionally (``part[0]``/``part[1]``); the rows never leave
-        Core.
+        Returns ``sqlite3.Row`` (Core only): ``(media name, interface, disk)``.
+        A set can have several media (two floppies, floppy + cd-rom).
         """
         cursor = self._conn.cursor()
         try:
@@ -679,16 +577,10 @@ class GameRepository:
             cursor.close()
 
     def get_disks(self, swl_name, set_name):
-        """Return the disk values of a set inside a software list, or ``None``.
+        """Return the ``{'disk'}`` dicts of a set inside a software list, or ``None``.
 
-        Two queries by design (set id first, then its ``part_set`` rows): the
-        software-list name and set name must match; a missing set, a missing
-        software list, or a set without ``part_set`` rows all return ``None``.
-
-        Each entry is a plain dict with the single ``disk`` key (consumers use
-        ``entry['disk']``). Nothing is filtered and there is no ``ORDER BY``:
-        every ``part_set`` row of the set comes back in rowid order, including
-        rows whose disk value is ``NULL``.
+        Every ``part_set`` row of the set comes back in rowid order, including
+        ``NULL`` disks. A missing set or a set without parts gives ``None``.
         """
         cursor = self._conn.cursor()
         try:
@@ -709,14 +601,10 @@ class GameRepository:
             cursor.close()
 
     def get_swl_options(self, swl_name):
-        """Return the raw options row of a software list, or ``None``.
+        """Return the ``options`` row of a software list, or ``None`` if unknown.
 
-        Intentionally Row-returning (Core-internal contract): the row carries
-        the single ``options`` column. A ``NULL`` options value stays ``None``
-        inside the row (``cmdline.get_cmd_line_options`` branches on ``row[0]``
-        truthiness); an unknown software list returns ``None`` — the caller
-        then uses no extra options.
-        Only Core consumes this; it never crosses the add-on boundary.
+        Returns ``sqlite3.Row`` (Core only); a ``NULL`` value stays ``None``
+        inside the row.
         """
         cursor = self._conn.cursor()
         try:
@@ -727,14 +615,9 @@ class GameRepository:
             cursor.close()
 
     def get_machine_id(self, machine_name):
-        """Return the machine's set row under the ``mame`` software list.
+        """Return the ``id`` row of a machine in the ``mame`` software list, or ``None``.
 
-        Intentionally Row-returning (Core-internal contract): the row carries
-        the single ``id`` column (the sets id used as the device variant id).
-        Machine rows resolve only under the software list ``mame`` — that name
-        is hardcoded in the query, as it always was inside
-        ``cmdline.get_cmd_line_options``. An unknown machine returns ``None``;
-        the caller then assumes no devices. Only Core consumes this.
+        Returns ``sqlite3.Row`` (Core only); the id is the device variant id.
         """
         cursor = self._conn.cursor()
         try:
@@ -751,12 +634,8 @@ class GameRepository:
     def get_devices_for_machine(self, machine_id) -> list:
         """Return the devices of a machine, ordered by device name.
 
-        Intentionally Row-returning (Core-internal contract): each row is
-        ``d.name, dv.name`` (device, interface list). The interface may hold a
-        comma-separated list (e.g. ``cart64,c128_cart``) which
-        ``cmdline.create_cmdline`` splits. Returns an empty list for a machine
-        without devices. The only consumer indexes positionally
-        (``device[0]``/``device[1]``); the rows never leave Core.
+        Returns ``sqlite3.Row`` (Core only): ``(device, interfaces)``; the
+        interfaces may be a comma-separated list (``cart64,c128_cart``).
         """
         cursor = self._conn.cursor()
         try:
@@ -770,13 +649,10 @@ class GameRepository:
             cursor.close()
 
     def get_sharedfeat_requirement(self, set_id):
-        """Return the raw ``requirement`` shared-feature row of a set, or ``None``.
+        """Return the ``requirement`` shared-feature row of a set, or ``None``.
 
-        Intentionally Row-returning (Core-internal contract): the row carries
-        the single ``sfv.name`` column — normally an ``swl:set`` string that
-        ``cmdline.get_cmd_line_options`` expands into a chained command line.
-        Sets without a requirement (or unknown ids) return ``None``. Only Core
-        consumes this; it never crosses the add-on boundary.
+        Returns ``sqlite3.Row`` (Core only) with one column, normally an
+        ``swl:set`` string.
         """
         cursor = self._conn.cursor()
         try:
@@ -791,13 +667,11 @@ class GameRepository:
 
 
 def parse_recommended_games(rec_text, games):
-    """Parse the 'Rec' dat field into popup entries.
+    """Parse the 'Rec' DAT field into popup entries; return ``(rec_list, pos)``.
 
-    ``games`` is the game repository (``DBMod.games``). Returns
-    ``(rec_list, pos)``. Separator entries (names starting with ``-``)
-    are ``{'name', 'id': 0, 'year', 'maker'}`` and each increments ``pos``;
-    found games are ``{'id', 'name', 'year', 'maker'}``. Names not found in the
-    database are kept as ``None`` (popup_gamelist skips them).
+    Separator entries (names starting with ``-``) are
+    ``{'name', 'id': 0, 'year', 'maker'}`` and each increments ``pos``; found
+    games are ``{'id', 'name', 'year', 'maker'}``; names not found are ``None``.
     """
 
     rec_list = []
@@ -818,12 +692,11 @@ def parse_recommended_games(rec_text, games):
 
 
 def random_vgm_batch(db_path, limit=100):
-    """Return up to ``limit`` random vgmplay entries from a short-lived read-only connection.
+    """Return up to ``limit`` random ``{'name', 'gamename'}`` sets of the vgmplay list.
 
-    ``db_path`` is the Core data directory holding ``umsa.db``. The
-    connection is opened only for this query and closed on every exit
-    path. No filesystem inspection is performed here; callers decide
-    which candidates are actually playable.
+    ``db_path`` is the Core data directory. Uses its own short-lived
+    read-only connection; returns ``[]`` on a database error. Callers check
+    which entries are playable.
     """
 
     db_paths = CoreDataPaths(os.path.abspath(db_path))

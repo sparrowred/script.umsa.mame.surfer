@@ -1,10 +1,8 @@
 """Indexes of umsa.db that the queries of UMSA rely on.
 
-The umsa.db download may come without indexes (a smaller archive); they are
-built on the downloaded file before it replaces the live database
-(``umsa_db_download``), because umsa.db is opened read-only everywhere else.
-The list lives here, next to the queries that need it. Kodi-free, standard
-library only.
+The download may come without indexes (a smaller archive); they are built on
+the downloaded file before it replaces the live database, because umsa.db is
+opened read-only everywhere else.
 """
 
 import time
@@ -48,6 +46,7 @@ UMSA_INDEXES = (
 
 
 def _index_exists(connection, name):
+    """Return whether an index ``name`` exists."""
     return connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
         (name,)).fetchone() is not None
@@ -60,17 +59,19 @@ def _columns(connection, table):
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
             (table,)).fetchone() is None:
         return set()
-    # the table name comes from UMSA_INDEXES, never from the database
+    # The table name comes from UMSA_INDEXES, never from the database.
     return {row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')}
 
 
 def build_indexes(connection, progress=None):
     """Create the missing ``UMSA_INDEXES`` on ``connection`` and analyse.
 
-    Returns ``(built, skipped)``: names of the indexes created, names skipped
-    because their table or column does not exist. ``progress(index, total)``
-    is called before every index (it may raise to cancel). Other
-    ``sqlite3.Error`` propagate. Commits once at the end.
+    ``progress(index, total)`` is called before every index and may raise to
+    cancel; any exception rolls back and propagates. Commits once at the end.
+
+    Returns:
+        ``(built, skipped)``: names of the indexes created and of those skipped
+        because their table or column does not exist.
     """
 
     started = time.monotonic()
@@ -90,8 +91,8 @@ def build_indexes(connection, progress=None):
                     level='debug')
                 skipped.append(name)
                 continue
-            # name, table and expression come from UMSA_INDEXES only, so the
-            # f-string SQL is safe
+            # Name, table and expression come from UMSA_INDEXES only, so the
+            # f-string SQL is safe.
             connection.execute(
                 f'CREATE INDEX IF NOT EXISTS "{name}" ON "{table}" ({expression})')
             built.append(name)

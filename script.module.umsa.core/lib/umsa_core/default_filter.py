@@ -1,18 +1,9 @@
-"""Default filter that is created on the first start.
+"""Default filter that is created once, on the first start.
 
-``default_filter.json`` (next to this module) describes the filter per
-category as an exclusion list of names: every entry of the matching umsa.db
-table is selected except the excluded names. Names instead of ids keep the
-description valid across umsa.db versions; categories missing from the file
-stay empty (unfiltered).
-
-Softwarelists of the other collections (eXoDOS, GameBase64, WHDLoad) whose
-folder is not configured are left out as well (``nonmame_exclusions``).
-
-The filter is written to status.db once (marker ``default_filter_seeded`` in
-``status_meta``), so a filter the user deleted later is not created again.
-Kodi-free; the GUI and the screensaver call it through
-``DBMod.ensure_default_filter``.
+``default_filter.json`` lists excluded names per category (names stay valid
+across umsa.db versions). Softwarelists of collections without a configured
+folder are left out too. The marker ``default_filter_seeded`` in
+``status_meta`` keeps a filter the user deleted from coming back.
 """
 
 import json
@@ -24,7 +15,7 @@ DEFAULT_FILTER_NAME = "default"
 DEFAULT_FILTER_SEEDED_KEY = "default_filter_seeded"
 DEFAULT_FILTER_SPEC_PATH = Path(__file__).with_name("default_filter.json")
 
-# public filter category -> (umsa.db table, extra predicate)
+# Public filter category -> (umsa.db table, extra predicate).
 _CATEGORY_TABLES = {
     "Softwarelists": ("swl", ""),
     "Game Categories": ("category", "WHERE flag = 0"),
@@ -46,6 +37,7 @@ def nonmame_exclusions(nonmame):
     missing = tuple(key for key, path in (nonmame or {}).items() if not path)
 
     def is_excluded(swl_name):
+        """Return whether ``swl_name`` belongs to a collection without a folder."""
         return any(swl_name == key or swl_name.startswith(key + "_") for key in missing)
 
     return is_excluded
@@ -59,12 +51,11 @@ def load_default_filter_spec(path=DEFAULT_FILTER_SPEC_PATH):
 
 
 def resolve_default_filter(connection, spec, nonmame=None):
-    """Return ``{public category: [id strings]}`` for the umsa.db behind ``connection``.
+    """Return ``{public category: [id strings]}`` for the umsa.db of ``connection``.
 
     Each category named in ``spec`` selects all rows of its table except the
-    excluded names; excluded names that do not exist are ignored. All other
-    categories stay empty. With ``nonmame`` given, softwarelists of
-    collections without a folder are excluded too.
+    excluded names; the other categories stay empty (unfiltered). With
+    ``nonmame``, softwarelists of collections without a folder are excluded.
     """
 
     swl_excluded = nonmame_exclusions(nonmame)
@@ -99,9 +90,8 @@ def ensure_default_filter(history, connection, nonmame):
 
     ``history`` is the history repository of ``status.db``, ``connection``
     the ``umsa.db`` connection and ``nonmame`` the configured folders of the
-    other collections. Returns ``True`` when the filter was written now. An existing
-    ``default`` filter is kept; the ``status_meta`` marker prevents that
-    a filter the user deleted later is created again.
+    other collections. Returns ``True`` when the filter was written now; an
+    existing ``default`` filter is kept.
     """
 
     try:
@@ -110,7 +100,7 @@ def ensure_default_filter(history, connection, nonmame):
             return False
         created = False
         if DEFAULT_FILTER_NAME not in repository.list_filter_names():
-            # collections without a folder in the settings start inactive
+            # Collections without a folder in the settings start inactive.
             filter_lists = resolve_default_filter(
                 connection, load_default_filter_spec(), nonmame)
             repository.save_filter_selections(DEFAULT_FILTER_NAME, filter_lists)

@@ -1,7 +1,7 @@
-"""VGM socket transport and Lua log protocol handling.
+"""TCP link to vgmplay.lua: commands to Lua, ``LOG|<LEVEL>|<TEXT>`` frames back.
 
-This module encapsulates the TCP transport lifecycle and Lua log protocol
-between Python and the MAME Lua script (vgmplay.lua).
+The listener binds to 127.0.0.1; a connection is accepted only after the
+``HELLO|<token>`` handshake of the current playback.
 """
 
 import hmac
@@ -15,7 +15,6 @@ from collections.abc import Callable
 from umsa_core import log
 from umsa_core.settings import DEFAULT_VGM_PORT
 
-# Lua log protocol constants
 LUA_LOG_TAG = 'LOG'
 LUA_LOG_LEVELS = {
     'DEBUG': 'debug',
@@ -28,28 +27,29 @@ LUA_LOG_MSG_PREFIX = 'UMSA Emu lua'
 LUA_READ_POLL_TIMEOUT = 0.2
 LUA_READER_JOIN_TIMEOUT = 1.0
 LUA_LOG_MAX_LINE_BYTES = 8192
-# bounds one sendall when vgmplay.lua stops reading (full send buffer, C-L12)
+# Seconds; bounds one sendall when vgmplay.lua stops reading (full send buffer).
 LUA_SEND_TIMEOUT = 1.0
-# token handshake (M4): vgmplay.lua's first bytes are ``HELLO|<token>\n``
+# Token handshake: vgmplay.lua's first bytes are ``HELLO|<token>\n``. A late
+# MAME of an earlier track must not take over the next playback.
 LUA_HELLO_TIMEOUT = 2.0
 LUA_HELLO_MAX_BYTES = 128
 LUA_HELLO_PREFIX = b'HELLO|'
 
-# frames of vgmplay.lua that carry ``gain_db=`` and ``state=`` (end of the
-# music info): playback start, leveling step, leveling lock, manual change
+# Frames of vgmplay.lua that carry ``gain_db=`` and ``state=`` (end of the
+# music info): playback start, leveling step, leveling lock, manual change.
 LUA_LEVEL_TAGS = (
     'LEVEL_INITIAL:', 'LEVEL_ADJ:', 'LEVEL_LOCKED:', 'VGM VOLUME UP:', 'VGM VOLUME DOWN:')
 LUA_GAIN_FIELD = 'gain_db='
 LUA_STATE_FIELD = 'state='
-# auto = leveling adjusts, locked = leveling frozen, manual = user changed it
+# auto = leveling adjusts, locked = leveling frozen, manual = user changed it.
 LUA_LEVEL_STATES = ('auto', 'locked', 'manual')
 
-# one default for the setting, the listener and (as a literal) vgmplay.lua
+# One default for the setting, the listener and (as a literal) vgmplay.lua.
 VGMPLAY_DEFAULT_PORT = DEFAULT_VGM_PORT
 
 
 def _parse_vgmplay_port(value: str | None) -> int | None:
-    """Return a valid VGMPlay port, or None for a set invalid value or unset."""
+    """Return a valid VGMPlay port, or ``None`` for an invalid or unset value."""
     if value is None:
         return None
     if not value.isascii() or not value.isdigit():
@@ -64,11 +64,10 @@ def _parse_vgmplay_port(value: str | None) -> int | None:
 
 
 def parse_lua_log_line(line):
-    """Parse one Lua log frame, pure function, socket independent.
+    """Return ``(level, text)`` of a ``LOG|<LEVEL>|<TEXT>`` frame, else ``None``.
 
-    Returns (level, text) for "LOG|<LEVEL>|<TEXT>" frames and None for
-    anything else (empty lines, commands, binary junk, truncated frames).
-    Splitting stops after two separators, so "|" inside the text is kept.
+    ``|`` inside the text is kept; an unknown level maps to
+    ``LUA_LOG_FALLBACK_LEVEL``.
     """
     if isinstance(line, str):
         line = line.encode('utf-8', errors='replace')
@@ -83,7 +82,7 @@ def parse_lua_log_line(line):
 
 
 def parse_lua_level(text):
-    """Return ``(gain_db, state)`` of a level frame text, else None (pure).
+    """Return ``(gain_db, state)`` of a level frame text, else ``None``.
 
     vgmplay.lua reports the gain it puts on the track and who sets it as
     ``gain_db=<dB> state=<auto|locked|manual>`` in ``LEVEL_INITIAL`` (start),
@@ -102,29 +101,25 @@ def parse_lua_level(text):
                 return None
         elif state is None and token.startswith(LUA_STATE_FIELD):
             state = token[len(LUA_STATE_FIELD):]
-    # inf/nan never reach the label
+    # inf/nan never reach the label.
     if gain is None or not math.isfinite(gain) or state not in LUA_LEVEL_STATES:
         return None
     return gain, state
 
 
 class VgmSocketServer:
-    """Manages the VGM TCP transport lifecycle and Lua log protocol.
+    """Listener, accepted client and reader thread of the vgmplay.lua link.
 
-    Encapsulates:
-    - Listener creation and binding
-    - Port selection and validation
-    - Listener and accepted-client sockets
-    - Connection acceptance with bounded waiting
-    - Sending newline-terminated Python-to-Lua commands
-    - Receiving and buffering Lua-to-Python log frames
-    - LOG|LEVEL|TEXT parsing and log forwarding
-    - Reader-thread creation, shutdown and bounded joining
-    - Client connection cleanup
-    - Listener shutdown and cleanup after errors
+    A daemon reader thread forwards the Lua log frames to the logger and to
+    ``frame_listener``. Sends are bounded by ``LUA_SEND_TIMEOUT`` and never
+    hold the lifecycle lock, so closing the connection never waits for a
+    blocked send.
 
-    Sends are bounded by ``LUA_SEND_TIMEOUT`` and never hold the lifecycle
-    lock, so closing the connection never waits for a blocked send.
+    Args:
+        logger: Logger callback, default :func:`umsa_core.log`.
+        process_exited: Returns ``True`` once the MAME process has exited;
+            ends the wait for a connection early.
+        frame_listener: Gets the text of every Lua log frame (reader thread).
     """
 
     def __init__(
@@ -133,12 +128,7 @@ class VgmSocketServer:
         process_exited: Callable[[], bool] | None = None,
         frame_listener: Callable[[str], None] | None = None,
     ):
-        """
-        Args:
-            logger: Logger callback, defaults to umsa_core.log
-            process_exited: Callable returning True if the child process has exited
-            frame_listener: Optional callable receiving the text of every Lua log frame
-        """
+        """Create an unbound server (see the class docstring)."""
         self._logger = logger or log
         self._process_exited = process_exited or (lambda: False)
         self._frame_listener = frame_listener
@@ -150,12 +140,12 @@ class VgmSocketServer:
         self._port_env: str | None = None
         self._bound_port: int | None = None
         self._lock = threading.Lock()
-        # serialises the senders only (no interleaved lines); taken before
-        # _lock, never by the close paths
+        # Serialises the senders only (no interleaved lines); taken before
+        # _lock, never by the close paths.
         self._send_lock = threading.Lock()
 
     def _log(self, message: str, level: str = 'debug'):
-        """Forward one diagnostic without allowing logger failures to escape."""
+        """Log one message; a failing logger never raises."""
         try:
             self._logger(message, level=level)
         except Exception:
@@ -172,22 +162,17 @@ class VgmSocketServer:
         self._log(f"UMSA VGM: {operation}: {err}", level=level)
 
     def start_server(self, port_env: str | None = None) -> bool:
-        """Create and start the listening socket.
+        """Start listening on 127.0.0.1; return ``False`` when that failed.
 
-        Args:
-            port_env: Optional VGMPLAY_PORT environment variable value
-
-        Returns:
-            True if server started successfully, False if disabled
+        ``port_env`` is the ``VGMPLAY_PORT`` value; ``None`` uses the default
+        port, an invalid value disables the socket.
         """
         with self._lock:
             self._close_all()
             self._port_env = port_env
             if port_env is None:
-                # Use default port when not explicitly configured
                 port = VGMPLAY_DEFAULT_PORT
             else:
-                # Explicit port configuration - must be valid
                 port = _parse_vgmplay_port(port_env)
                 if port is None:
                     self._log("UMSA VGM: socket disabled (invalid port)", level='debug')
@@ -208,19 +193,15 @@ class VgmSocketServer:
 
     def wait_for_connection(self, timeout: float = 30.0,
                             token: str | None = None) -> bool:
-        """Accept a connection from the Lua client with bounded waiting.
+        """Wait for vgmplay.lua to connect; return whether a client was accepted.
 
-        Waits for the Lua client to connect, or for the child process to exit,
-        or for the timeout to expire.
+        The wait ends early when the MAME process exits.
 
         Args:
-            timeout: Maximum time to wait in seconds
-            token: Session token; when set, only a connection whose first
-                line is ``HELLO|<token>`` is accepted, every other one is
-                dropped and the wait goes on. None: no handshake.
-
-        Returns:
-            True if connection accepted, False otherwise
+            timeout: Maximum wait in seconds.
+            token: Session token; only a connection whose first line is
+                ``HELLO|<token>`` is accepted, every other one is dropped and
+                the wait goes on. ``None``: no handshake.
         """
         if not self._listener:
             return False
@@ -289,10 +270,10 @@ class VgmSocketServer:
     def _read_hello(self, conn, token, deadline):
         """Read the first line of a new connection and check the handshake.
 
-        Returns ``(ok, rest)``: ``rest`` are the bytes behind the HELLO line
-        (they belong to the reader). Reads until ``\\n``, at most
-        ``LUA_HELLO_MAX_BYTES`` bytes and ``LUA_HELLO_TIMEOUT`` seconds (and
-        not beyond ``deadline``). The token is never logged.
+        Returns ``(ok, rest)``; ``rest`` are the bytes behind the HELLO line
+        (they belong to the reader). Reads at most ``LUA_HELLO_MAX_BYTES``
+        bytes for at most ``LUA_HELLO_TIMEOUT`` seconds, never beyond
+        ``deadline``. The token is never logged.
         """
         end = min(time.monotonic() + LUA_HELLO_TIMEOUT, deadline)
         buf = b''
@@ -334,7 +315,7 @@ class VgmSocketServer:
         return thread
 
     def _stop_reader(self):
-        """Signal the reader thread to drain and exit, join with bounded timeout."""
+        """Signal the reader thread to drain and exit; join with a bounded timeout."""
         thread = self._reader_thread
         stop = self._reader_stop
         self._reader_thread = None
@@ -360,14 +341,14 @@ class VgmSocketServer:
             self._log("UMSA VGM: reader thread still alive after join", level='debug')
 
     def _forward_buffered_lines(self, buf):
-        """Forward every complete line of ``buf``, return the remainder."""
+        """Forward every complete line of ``buf`` and return the remainder."""
         while b'\n' in buf:
             line, _, buf = buf.partition(b'\n')
             self._forward_log_frame(line)
         return buf
 
     def _reader_loop(self, conn, stop, buf=b''):
-        """Drain LOG frames sent by vgmplay.lua. Never raises into the caller.
+        """Forward the LOG frames sent by vgmplay.lua until stopped; never raises.
 
         ``buf`` holds bytes read behind the HELLO line.
         """
@@ -387,13 +368,11 @@ class VgmSocketServer:
                     self._log_socket_error("reader recv error", err)
                     return
                 if not data:
-                    # Lua closed its side
                     return
                 buf = self._forward_buffered_lines(buf + data)
                 if len(buf) > LUA_LOG_MAX_LINE_BYTES:
                     self._log("UMSA VGM: log line too long, buffer dropped", level='warning')
                     buf = b''
-            # Shutdown requested: last drain
             self._drain_buffer(conn, buf)
         except Exception as err:
             self._log(f"UMSA VGM: reader loop error: {err}", level='warning')
@@ -404,7 +383,7 @@ class VgmSocketServer:
                 self._log_socket_error("reader close error", err)
 
     def _drain_buffer(self, conn, buf=b''):
-        """Read frames already buffered by the kernel, non-blocking and bounded."""
+        """Forward the frames the kernel already buffered; return the count."""
         logged = 0
         while True:
             try:
@@ -429,7 +408,7 @@ class VgmSocketServer:
         return logged
 
     def _forward_log_frame(self, line) -> bool:
-        """Forward one Lua log frame to the application logger."""
+        """Log a Lua log frame and pass it to ``frame_listener``; ``False`` for no frame."""
         parsed = parse_lua_log_line(line)
         if not parsed:
             return False
@@ -443,7 +422,7 @@ class VgmSocketServer:
         return True
 
     def send_command(self, data: bytes) -> bool:
-        """Send a command to the Lua script over the accepted connection.
+        """Send a newline-terminated command to vgmplay.lua; return whether it was sent.
 
         ``sendall`` is bounded by ``LUA_SEND_TIMEOUT`` and runs outside the
         lifecycle lock: a ``close_client`` meanwhile shuts the socket down and
@@ -473,7 +452,7 @@ class VgmSocketServer:
             self._close_client()
 
     def _close_client(self):
-        """Internal: close client connection without lock."""
+        """Close the client connection; the caller holds the lock."""
         try:
             self._stop_reader()
         except Exception as err:
@@ -490,7 +469,7 @@ class VgmSocketServer:
             self._close_all()
 
     def _close_all(self):
-        """Internal: close all sockets without lock."""
+        """Close all sockets; the caller holds the lock."""
         try:
             self._close_client()
         except Exception as err:
@@ -517,5 +496,5 @@ class VgmSocketServer:
 
     @property
     def bound_port(self) -> int | None:
-        """The port the server is bound to."""
+        """Return the port the server is bound to, ``None`` when not listening."""
         return self._bound_port

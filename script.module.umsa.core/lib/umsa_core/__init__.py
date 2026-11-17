@@ -1,4 +1,4 @@
-"""Kodi-independent shared functionality for UMSA add-ons."""
+"""Kodi-free shared logic of the UMSA add-ons; runs without a Kodi runtime."""
 
 from .abort import ShutdownRequested
 from .artwork import (

@@ -15,35 +15,26 @@ def run_scan_with_progress(state, name, scan, progress, title, sleep,
                            wait=None, is_cancelled=None):
     """Run ``scan()`` in a thread while reporting progress.
 
-    ``state`` is the :class:`umsa_core.scans.ScanState` the scan reports to
-    (``Scans.state``), ``scan`` a callable without arguments (for example
-    ``lambda: scans.dats(datdir)``) and ``name`` only names it in the log.
+    The worker takes the scan lock (``state.own``) before the state is set; a
+    competing call runs the scan anyway (the scanners return ``busy``) and
+    leaves the active scan's state alone. Only the owner sends a stop:
+    ``is_cancelled()`` stops the scan at its next unit and the summary is
+    returned as usual; ``wait`` returning ``True`` (shutdown) joins the worker
+    for at most ``SHUTDOWN_JOIN_TIMEOUT`` seconds.
 
-    The poll waits through ``wait(1000)`` (``umsa_core.abort.Wait``, the GUI
-    passes an abort-aware ``Monitor.waitForAbort`` callback); without it the
-    legacy ``sleep`` is invoked as ``sleep(1000)``. ``progress`` is called as
-    ``progress(percent, title, message)``.
+    Args:
+        state: The :class:`umsa_core.scans.ScanState` the scan reports to.
+        name: Names the scan in the log.
+        scan: Callable without arguments, e.g. ``lambda: scans.dats(datdir)``.
+        progress: Called as ``progress(percent, title, message)``.
+        sleep: Fallback poll, called as ``sleep(1000)`` when ``wait`` is ``None``.
+        wait: Abort-aware ``wait(ms) -> bool`` (:data:`umsa_core.abort.Wait`).
 
-    The worker takes the shared scan lock (``state.own``) *before* the state
-    fields are initialised, so only the invocation that genuinely owns the scan
-    may set them. A competing invocation that cannot take the lock calls the
-    scan anyway - the lock-aware scanners return their ``busy`` summary without
-    touching the state - and returns that result without resetting the active
-    scan's progress or cancellation signal.
+    Returns:
+        The scanner summary dictionary, or ``None`` when the worker failed.
 
-    Stopping a scan calls ``state.request_stop()`` (the signal every scanner
-    polls through its ``is_cancelled``), and only when this invocation owns the
-    scan:
-
-    - ``is_cancelled()`` returning ``True`` (the user pressed cancel): the
-      scanner stops at its next unit boundary, the worker is joined and its
-      summary returned as usual;
-    - ``wait`` returning ``True`` (the host shuts down): the worker is joined
-      for at most ``SHUTDOWN_JOIN_TIMEOUT`` seconds, then ``ShutdownRequested``
-      is raised.
-
-    Returns the scan's return value (the scanner summary dictionary), or
-    ``None`` when the worker failed.
+    Raises:
+        ShutdownRequested: When ``wait`` reports a shutdown.
     """
 
     wait = resolve_wait(wait, sleep)
@@ -53,6 +44,7 @@ def run_scan_with_progress(state, name, scan, progress, title, sleep,
     finished = threading.Event()
 
     def worker():
+        """Run the scan under the scan lock and record its result."""
         try:
             with state.own('') as owns:
                 if owns:
@@ -65,6 +57,7 @@ def run_scan_with_progress(state, name, scan, progress, title, sleep,
             finished.set()
 
     def request_stop(reason):
+        """Ask the scan to stop, only when this call owns it."""
         if owner.is_set() and not finished.is_set():
             log(f"UMSA scan: '{name}' {reason}, stopping the scan", level='info')
             state.request_stop()
@@ -92,7 +85,7 @@ def run_scan_with_progress(state, name, scan, progress, title, sleep,
                 cancel_sent = True
             progress(state.percent, title, f'scanning {state.what}')
     finally:
-        # a shutdown joined with a bound already
+        # A shutdown joined with a bound already.
         if not shutting_down:
             scan_thread.join()
     progress(100, title, 'saving')

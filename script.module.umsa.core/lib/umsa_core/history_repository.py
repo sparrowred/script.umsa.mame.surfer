@@ -1,4 +1,7 @@
-"""status.db repository for history, filter selections, and metadata."""
+"""Repository for history, saved filters and metadata in status.db.
+
+Owns the schema of its tables. Writes use :func:`umsa_core.sqlite.write_savepoint`.
+"""
 
 from __future__ import annotations
 
@@ -51,12 +54,12 @@ FILTER_CATEGORY_INTERNAL_ORDER = [
 # that table with no rows for the filter at all.
 FILTER_DEFINITION_CATEGORY = "__filter_definition__"
 
-# Retention bound for the screensaver display history (decision D16/D2): at
-# most this many *distinct* sets are kept, pruned past the newest ones.
+# At most this many *distinct* sets are kept in the screensaver display
+# history, pruned past the newest ones.
 SCREENSAVER_HISTORY_LIMIT = 100
 
 # ``sets.id`` is a positive SQLite rowid; only plain decimal integers count
-# (same token rule as the legacy import, decision D13).
+# (same token rule as the legacy import).
 _SET_ID_RE = re.compile(r"^[0-9]+$")
 
 
@@ -130,17 +133,25 @@ def create_history_tables(cursor: sqlite3.Cursor) -> None:
 
 
 class HistoryRepository:
-    """History and filter persistence operations on status.db."""
+    """History and filter persistence operations on a caller-owned connection."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
+        """Wrap a ``status.db`` connection.
+
+        Raises:
+            ValueError: If the connection does not use ``sqlite3.Row``
+                (:func:`umsa_core.sqlite.require_row_connection`).
+        """
         require_row_connection(connection, "HistoryRepository")
         self._conn = connection
 
     @property
     def connection(self) -> sqlite3.Connection:
+        """Return the wrapped connection."""
         return self._conn
 
     def load_lastgames(self) -> list[int]:
+        """Return the software ids of the last-games list, oldest first."""
         cursor = self._conn.cursor()
         try:
             cursor.execute(
@@ -151,6 +162,7 @@ class HistoryRepository:
             cursor.close()
 
     def save_lastgames(self, software_list: list[int]) -> None:
+        """Replace the last-games list with the newest 100 ids of ``software_list``."""
         ids = list(software_list)[-100:] if software_list else []
         ids_list = list(ids)
 
@@ -163,6 +175,7 @@ class HistoryRepository:
                 )
 
     def list_filter_names(self) -> list[str]:
+        """Return the names of the saved filters, sorted."""
         cursor = self._conn.cursor()
         try:
             cursor.execute(
@@ -173,6 +186,11 @@ class HistoryRepository:
             cursor.close()
 
     def load_filter_selections(self, filter_name: str) -> dict[str, list[str]]:
+        """Return the selections of a filter keyed by public category name.
+
+        Every category of :data:`FILTER_CATEGORY_ORDER` is present; an unknown
+        filter gives empty lists.
+        """
         result: dict[str, list[str]] = {
             "Softwarelists": [],
             "Game Categories": [],
@@ -198,6 +216,11 @@ class HistoryRepository:
     def save_filter_selections(
         self, filter_name: str, filter_lists: dict[str, list[str]]
     ) -> None:
+        """Replace the stored selections of ``filter_name`` in one savepoint.
+
+        ``filter_lists`` is keyed by public category name; missing categories
+        are stored empty. The filter keeps its name even when all are empty.
+        """
         with write_savepoint(self._conn, "umsa_history_write") as cursor:
             cursor.execute(
                 "DELETE FROM filter_selections WHERE filter_name = ?",
@@ -225,28 +248,18 @@ class HistoryRepository:
     def record_screensaver_display(
         self, set_id: Any, software_id: Any = None
     ) -> None:
-        """Record one *successfully displayed* set (decision D16).
+        """Record one *successfully displayed* set.
 
-        ``set_id`` (the ``sets.id`` returned as ``art['id']``) is the identity
-        of the row; ``software_id`` (``art['s_id']``, the context-menu handoff
-        value) is stored alongside and refreshed on every display. Both are
-        normalised first - ``set_id`` through :func:`normalize_set_id`
-        (positive decimal id), ``software_id`` to ``int`` or ``None``.
-
-        Semantics: **one row per distinct set, recency ordered by the
-        monotonic ``id``**, never by ``displayed_at``. An existing row for the
-        set is deleted and re-inserted so the set moves to the newest position
-        with a fresh ``id`` (no duplicate, no growth on re-display); rows past
-        the newest :data:`SCREENSAVER_HISTORY_LIMIT` distinct sets are then
-        pruned. The delete + insert + prune run inside one savepoint, so a
-        failure leaves the history exactly as it was (the caller's transaction,
-        if any, is neither committed nor closed). ``displayed_at`` is written
-        as advisory local time in ``YYYY-MM-DD HH:MM`` form.
+        One row per distinct set, ordered by the monotonic ``id`` (never by
+        ``displayed_at``, advisory local ``YYYY-MM-DD HH:MM``): a known set is
+        re-inserted as the newest; rows past
+        :data:`SCREENSAVER_HISTORY_LIMIT` are pruned, all in one savepoint.
+        ``software_id`` (the context-menu handoff value) is refreshed.
 
         Raises:
-            ValueError: ``set_id`` (or ``software_id``) is not a valid id.
-            sqlite3.Error: the write failed; the savepoint is rolled back
-                first, so no partial update survives.
+            ValueError: If ``set_id`` (:func:`normalize_set_id`) or
+                ``software_id`` is not a valid id.
+            sqlite3.Error: If the write failed; nothing partial survives.
         """
 
         normalized_set_id = normalize_set_id(set_id)
@@ -283,14 +296,12 @@ class HistoryRepository:
         """Return the screensaver display history, **newest first**.
 
         One dict per distinct set (``set_id``, ``software_id``,
-        ``displayed_at``) ordered by the monotonic ``id`` descending -
-        i.e. most recently displayed first - limited to ``limit`` rows
-        (:data:`SCREENSAVER_HISTORY_LIMIT` by default).
+        ``displayed_at``) ordered by the monotonic ``id`` descending, limited
+        to ``limit`` rows (:data:`SCREENSAVER_HISTORY_LIMIT` by default).
 
-        Rows are returned exactly as stored: a ``set_id`` that no longer
-        exists in ``umsa.db`` (the two databases are updated independently)
-        is kept and reported as-is, never substituted with another set's id
-        and never dropped by this reader (decision D16).
+        Rows are returned as stored: a ``set_id`` that no longer exists in
+        ``umsa.db`` (the two databases are updated independently) is reported
+        as-is, never dropped by this reader.
         """
 
         effective_limit = (
@@ -310,6 +321,7 @@ class HistoryRepository:
             cursor.close()
 
     def get_import_marker(self) -> dict[str, Any] | None:
+        """Return the stored legacy-import marker, or ``None`` if unset or not JSON."""
         cursor = self._conn.cursor()
         try:
             cursor.execute(
@@ -326,6 +338,7 @@ class HistoryRepository:
             cursor.close()
 
     def record_import_marker(self, marker: dict[str, Any]) -> None:
+        """Store ``marker`` as JSON as the legacy-import marker."""
         value = json.dumps(marker, ensure_ascii=False)
 
         with write_savepoint(self._conn, "umsa_history_write") as cursor:
@@ -354,6 +367,7 @@ class HistoryRepository:
             )
 
     def clear_import_marker(self) -> None:
+        """Delete the legacy-import marker."""
         with write_savepoint(self._conn, "umsa_history_write") as cursor:
             cursor.execute(
                 "DELETE FROM status_meta WHERE key = 'legacy_import'"

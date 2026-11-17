@@ -132,8 +132,8 @@ local preexit_at = 0       -- emulated time at which the final logs are sent
 -- The flag is a global (like VGMPLAY_SOCKET) so it also protects when a
 -- second script execution or a second registered callback overlaps the first
 -- one: globals survive the autoboot re-execution, locals of an earlier
--- execution do not.
--- VGMPLAY_FINAL_LOGS_SENT = false  -- set by emit_final_logs(), nil until then
+-- execution do not. VGMPLAY_FINAL_LOGS_SENT is nil until emit_final_logs()
+-- sets it.
 
 -- The open control connection lives in the global VGMPLAY_SOCKET so it survives
 -- the autoboot re-execution (see the control socket section). It is
@@ -152,7 +152,7 @@ local peak_sample_early = 0     -- The same within the first LEVEL_PEAK_SKIP_SEC
 local first_sound_time = nil    -- emu.time() of the first sound callback
 local periodic_calls = 0         -- calls of the periodic callback (RMS_STATS periodic=)
 local fingerprint_count = 0     -- Number of fingerprint windows completed
--- The same over music windows only (review M9): neither flat nor at or below
+-- The same over music windows only: neither flat nor at or below
 -- LEVEL_NOISE_FLOOR, i.e. the windows the leveling measures. Silence, a frozen
 -- mixer and the tail before a silence exit stay out.
 local music_energy_sum = 0
@@ -177,7 +177,7 @@ local level_locked = false
 local level_anchor_gain = nil
 local level_anchor_time = 0     -- measured seconds (level_total_valid_sec)
 
--- Diagnostics of the locked phase for the final RMS_STATS (review M2): when
+-- Diagnostics of the locked phase for the final RMS_STATS: when
 -- the lock fell, the gain it froze, the loudest predicted output level seen
 -- by a locked evaluation and the sum of all cuts made while locked.
 local level_lock_time = nil
@@ -221,6 +221,7 @@ local function log10(x)
     return math.log(x) / math.log(10)
 end
 
+-- Linear amplitude to dB; -inf for 0 and below.
 local function linear_to_db(linear)
     if linear <= 0 then
         return -math.huge
@@ -228,12 +229,13 @@ local function linear_to_db(linear)
     return 20.0 * log10(linear)
 end
 
+-- Sets the master volume to baseline + gain (dB, clamped to +-96).
+-- sound.volume is float dB (luaengine.cpp: set_master_gain(db_to_linear(db)));
+-- no rounding - the loop works with fractional gain and would otherwise
+-- limit-cycle around whole dB steps. level_baseline_vol is set when the
+-- script loads, before the first call.
 local function apply_gain(new_gain_db)
-    -- level_baseline_vol is set when the script loads, before the first call
     level_current_gain_db = new_gain_db
-    -- sound.volume is float dB (luaengine.cpp: set_master_gain(db_to_linear(db)));
-    -- no rounding - the loop works with fractional gain and would otherwise
-    -- limit-cycle around whole dB steps
     local target_vol = level_baseline_vol + level_current_gain_db
     if target_vol < -96 then target_vol = -96 end
     if target_vol > 96 then target_vol = 96 end
@@ -243,9 +245,9 @@ local function apply_gain(new_gain_db)
 end
 
 
+-- RMS in dB of the windows of the last LEVEL_ROLL_SEC and their count,
+-- averaged linearly: sqrt(mean(rms_win_i^2)).
 local function compute_recent_rms_db()
-    -- compute recent RMS from rolling window over last LEVEL_ROLL_SEC
-    -- average energies linearly: rms_recent = sqrt(mean(rms_win_i^2))
     local now = emu.time()
     local cutoff = now - LEVEL_ROLL_SEC
     -- Remove expired entries; oldest timestamps are first.
@@ -269,7 +271,7 @@ end
 -- " out_db=<dB>": predicted output level of the recent music at the volume
 -- MAME uses now (sound.volume + measured source level). Empty when there is
 -- no measurement (empty rolling window, no sound hook) or no sound.volume.
--- Read by Python for the music info (review M5).
+-- Read by Python for the music info.
 local function out_db_field()
     local rms_db = compute_recent_rms_db()
     if rms_db == -math.huge then
@@ -291,6 +293,7 @@ local function gain_state_fields(gain_db, state)
     return string.format(" gain_db=%.2f state=%s", gain_db, state)
 end
 
+-- Freezes the leveled gain and logs LEVEL_LOCKED (text) with out_db and gain.
 local function lock_leveling(now, text)
     level_locked = true
     level_lock_time = now
@@ -298,9 +301,10 @@ local function lock_leveling(now, text)
     log("INFO", text .. out_db_field() .. gain_state_fields(level_current_gain_db, "locked"))
 end
 
+-- One leveling step, called after every fingerprint window. No gain change
+-- may follow the final statistics sequence, a manual change or work against
+-- the fade-out.
 local function update_leveling()
-    -- No gain change may follow the final statistics sequence or work
-    -- against the fade-out
     if VGMPLAY_FINAL_LOGS_SENT or level_manual_override or fade_base_vol then
         return
     end
@@ -365,7 +369,7 @@ local function update_leveling()
 
     -- Highest gain allowed: the configured maximum and the sample peak
     -- (baseline + gain + peak <= headroom). The peak of the first
-    -- LEVEL_PEAK_SKIP_SEC (a chip init pop, review M6) is not counted: it plays
+    -- LEVEL_PEAK_SKIP_SEC (a chip init pop) is not counted: it plays
     -- before any boost. The peak only limits a boost: a
     -- source that clips without any gain is not cut for it, so the limit
     -- never falls below 0 dB.
@@ -810,8 +814,7 @@ local function emit_final_logs(reason)
     local avg_dbfs_str = (avg_dbfs == -math.huge) and "-inf" or string.format("%.2f", avg_dbfs)
     local peak_dbfs_str = (peak_dbfs == -math.huge) and "-inf" or string.format("%.2f", peak_dbfs)
 
-    -- Music-only average (review M9): avg_* above keeps every window so it
-    -- stays comparable with the earlier analyses.
+    -- Music-only average; avg_* above keeps every window, silence included.
     local music_rms = 0
     if music_energy_samples > 0 then
         music_rms = math.sqrt(music_energy_sum / music_energy_samples)
@@ -819,7 +822,7 @@ local function emit_final_logs(reason)
     local music_dbfs = linear_to_db(music_rms)
     local music_dbfs_str = (music_dbfs == -math.huge) and "-inf" or string.format("%.2f", music_dbfs)
 
-    -- Locked-phase diagnostics (review M2); empty / -inf without a lock.
+    -- Locked-phase diagnostics; empty / -inf without a lock.
     local lock_t_str = level_lock_time and string.format("%.3f", level_lock_time) or ""
     local lock_gain_str = level_lock_gain and string.format("%.2f", level_lock_gain) or ""
     local post_lock_max_str = (level_post_lock_max_db == -math.huge) and "-inf"
@@ -905,7 +908,7 @@ end
 -- Manual volume change by the user. It switches the leveling off for the rest
 -- of the track; without sound.volume (MAME before 0.278) nothing changes and
 -- the leveling stays on. The frame carries out_db for the music info.
--- Once the fade-out has started the verb is dropped (L9): the fade sets the
+-- Once the fade-out has started the verb is dropped: the fade sets the
 -- volume every frame, a manual step would be overwritten and misreported.
 local function change_volume(step_db, name)
     if fade_base_vol ~= nil then
@@ -929,6 +932,7 @@ local function change_volume(step_db, name)
         .. out_db_field() .. gain_fields)
 end
 
+-- Runs one command line of the socket: exit, volume_up, volume_down.
 local function handle_command(line)
     line = line:gsub("\r$", "")
     line = line:gsub("^%s+", "")
@@ -949,6 +953,8 @@ local function handle_command(line)
     end
 end
 
+-- Buffers socket input and runs every complete line; an overlong buffer
+-- (RX_MAX_BYTES) is dropped.
 local function process_socket_input(data)
     rx = rx .. data
 
@@ -969,6 +975,7 @@ local function process_socket_input(data)
     end
 end
 
+-- Reads pending commands without blocking (once per frame).
 local function poll_socket()
     if exiting or socket == nil then
         return
@@ -976,7 +983,7 @@ local function poll_socket()
 
     local data = socket:read(4096)
 
-    -- L10: read may return nil on a closed peer
+    -- read may return nil on a closed peer
     if type(data) ~= "string" or #data == 0 then
         return
     end
@@ -1015,9 +1022,8 @@ emu.register_periodic(function()
 end)
 
 --
--- Sound callback - measures audio level
+-- Sound callback: measures the audio level
 --
--- Sound callback / fingerprint state
 local fingerprint_start = nil
 local fingerprint_sum = 0
 local fingerprint_samples = 0
@@ -1073,11 +1079,10 @@ local function calculate_callback_rms(channels, now)
     return math.sqrt(sum / count), flat
 end
 
+-- Returns the silence length once SILENCE_SECONDS of unbroken silence (see
+-- the configuration above) are reached, else nil; any audible callback in
+-- between starts the count again. Logs long dips (diagnostics).
 local function update_silence_detection(rms, flat, now)
-    --
-    -- SILENCE_SECONDS of unbroken silence (see the configuration above) end
-    -- the VGM; any audible callback in between starts the count again.
-    --
     if rms >= SILENCE_THRESHOLD and not flat then
         if silence_start and now - silence_start > SILENCE_DIAG_MIN_SEC then
             silence_dips = silence_dips + 1
@@ -1101,6 +1106,8 @@ local function update_silence_detection(rms, flat, now)
     return nil
 end
 
+-- Adds one callback to the current window; true once it is
+-- FINGERPRINT_SECONDS long.
 local function accumulate_fingerprint(rms, now)
     if not fingerprint_start then
         fingerprint_start = now
@@ -1112,6 +1119,7 @@ local function accumulate_fingerprint(rms, now)
     return now - fingerprint_start >= FINGERPRINT_SECONDS
 end
 
+-- RMS of a window from its sum of squared callback RMS values.
 local function calculate_fingerprint_energy(sum, samples)
     if samples > 0 then
         return math.sqrt(sum / samples)
@@ -1120,6 +1128,7 @@ local function calculate_fingerprint_energy(sum, samples)
     end
 end
 
+-- Adds a finished window to the whole-run statistics (RMS_STATS, VGM_VOLUME).
 local function update_audio_statistics(energy)
     total_energy_sum = total_energy_sum + fingerprint_sum
     total_energy_samples = total_energy_samples + fingerprint_samples
@@ -1131,9 +1140,10 @@ local function update_audio_statistics(energy)
     fingerprint_count = fingerprint_count + 1
 end
 
+-- Adds a finished window to the leveling window; false (not measured) for
+-- silence and the noise floor: a pause or a faint intro must not pull the
+-- rolling level down and trigger a boost.
 local function update_level_window(energy, now, duration)
-    -- Silence and the noise floor are not measured: a pause or a faint intro
-    -- must not pull the rolling level down and trigger a boost.
     if linear_to_db(energy) <= LEVEL_NOISE_FLOOR then
         return false
     end

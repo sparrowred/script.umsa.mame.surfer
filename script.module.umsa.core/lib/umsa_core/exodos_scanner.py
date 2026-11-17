@@ -1,18 +1,8 @@
-"""eXoDOS metadata and artwork scanner.
+"""eXoDOS scan: XML metadata into dat.db, then images and videos into artwork.db.
 
-This module owns the eXoDOS import workflow: it loads the eXoDOS set mapping
-from ``umsa.db`` once, reads and parses ``MS-DOS.xml`` from
-``Content/XODOSMetadata.zip`` once, writes the resulting DAT metadata atomically
-through :mod:`umsa_core.dat_repository`, and then indexes the image tree and the
-GameData MP4s. Artwork is persisted per scan unit through
-:mod:`umsa_core.artwork_repository`, so each unit is replaced atomically.
-
-The scanner never imports or touches :class:`DBMod` and owns its own short-lived
-worker connections. All DAT metadata mutations live in the repository; artwork
-mutations live in the artwork repository. A missing/unreadable root, a missing
-mapping or an unreadable/malformed XML aborts before any destructive change, so
-previously published records are preserved. DAT and artwork databases are
-replaced independently: the scan does not claim atomicity across them.
+The metadata is replaced atomically; a missing root, mapping or XML aborts
+before any change. Artwork is replaced per scan unit. The two databases are
+not atomic across each other. Uses its own connections.
 """
 
 from __future__ import annotations
@@ -43,17 +33,14 @@ class ExodosScanner:
     Args:
         db_paths: Resolved Core data paths (needs ``umsa_db``, ``dat_db`` and
             ``artwork_db``).
-        initialize_dat: Optional callable taking the DAT DB cursor; must ensure
-            the ``dat``/``dat_set`` schema exists. Defaults to the repository's
-            authoritative schema helper.
-        initialize_art: Optional callable taking the artwork DB cursor; must
-            ensure the ``art_set``/``art_scan_unit`` schema exists. Defaults to
-            the repository's authoritative schema helper.
-        progress: Optional ``progress(percent, what)`` callback. Either value
-            may be ``None`` to leave it unchanged.
+        initialize_dat: Optional callable taking the DAT DB cursor; default
+            :func:`umsa_core.dat_repository.create_dat_tables`.
+        initialize_art: Optional callable taking the artwork DB cursor;
+            default :func:`umsa_core.artwork_repository.create_artwork_tables`.
+        progress: Optional ``progress(percent, what)`` callback; ``None`` for
+            either value keeps it.
         is_cancelled: Optional predicate returning ``True`` when the host wants
-            the scan to stop. A predicate that raises aborts the scan (it is
-            never mistaken for "not cancelled"), like in the other scanners.
+            the scan to stop; a predicate that raises aborts the scan.
     """
 
     def __init__(self, db_paths, initialize_dat=None, initialize_art=None,
@@ -113,12 +100,7 @@ class ExodosScanner:
     # -- set mapping -----------------------------------------------------
 
     def _load_sets(self):
-        """Load the eXoDOS set mappings from ``umsa.db``.
-
-        Returns ``(exodos_sets, exodos_sets_names)`` where ``exodos_sets`` maps
-        the normalized gamename to the set id and ``exodos_sets_names`` maps the
-        set name to the set id.
-        """
+        """Return ``({normalized gamename: id}, {set name: id})`` of the eXoDOS sets."""
 
         uconn = connect_sqlite_readonly(self._db_paths.umsa_db)
         try:
@@ -146,25 +128,19 @@ class ExodosScanner:
     # -- scan ------------------------------------------------------------
 
     def scan(self, exodos_path, cancel_event=None):
-        """Scan an eXoDOS installation under the shared scan lock.
+        """Scan an eXoDOS installation under the shared scan lock; return the summary.
 
-        This public entry point owns the process-wide scan lock for the whole
-        combined metadata/artwork workflow. When another covered scan is already
-        running it returns immediately with ``busy`` set and leaves all data
-        untouched.
+        When another scan holds the lock, return at once with ``busy`` set.
 
-        Returns a summary whose keys are ``busy``, ``aborted``, ``errors``,
-        ``matched``, ``unmatched``, ``artwork_units``, ``artwork_rows``,
-        ``artwork_errors``, ``artwork_aborted``, ``artwork_unmatched``,
-        ``artwork_image_state`` and ``artwork_videosnap_state``. ``aborted``
-        describes the metadata phase (or a pre-scan failure);
-        ``artwork_aborted`` describes the artwork phase, ``artwork_errors``
-        counts artwork failures and ``artwork_unmatched`` counts GameData
-        archives that could not be mapped to a set. The two ``*_state`` fields
-        distinguish a complete (possibly empty) inventory from a ``missing``,
-        ``inaccessible``, ``not_a_directory``, ``incomplete`` or ``cancelled``
-        one, and are ``skipped`` for a phase that was never attempted. Metadata
-        and artwork are separate databases and are not atomic across each other.
+        Returns:
+            Summary with ``busy``, ``aborted`` (metadata phase or pre-scan
+            failure), ``errors``, ``matched``, ``unmatched``,
+            ``artwork_units``, ``artwork_rows``, ``artwork_errors``,
+            ``artwork_aborted``, ``artwork_unmatched`` (GameData archives
+            without a set) and ``artwork_image_state`` /
+            ``artwork_videosnap_state``: ``complete``, ``missing``,
+            ``inaccessible``, ``not_a_directory``, ``incomplete``,
+            ``cancelled`` or ``skipped`` (phase not attempted).
         """
 
         busy_summary = {
@@ -196,14 +172,7 @@ class ExodosScanner:
             lock_ctx.__exit__(None, None, None)
 
     def _scan_locked(self, exodos_path, cancel_event=None):
-        """Run the eXoDOS scan while the shared lock is held by the caller.
-
-        A missing/unreadable root, a missing mapping or an unreadable/malformed
-        XML aborts before any destructive change. The complete parsed result is
-        written through the repository, which atomically replaces only the
-        eXoDOS origin rows, so previously published records survive a failed
-        scan.
-        """
+        """Run the eXoDOS scan while the caller holds the scan lock."""
 
         summary = {
             'busy': False,
@@ -235,8 +204,8 @@ class ExodosScanner:
             summary['errors'] += 1
             return summary
 
-        # A missing/unreadable umsa.db must abort before anything is touched, so
-        # a failed scan can never look like a valid empty result.
+        # Abort before anything is touched, so a failed scan can never look
+        # like a valid empty result.
         try:
             exodos_sets, exodos_sets_names = self._load_sets()
         except Exception as exc:
@@ -259,7 +228,6 @@ class ExodosScanner:
             dat_repo = DatRepository(dat_conn)
             art_repo = ArtworkRepository(art_conn)
 
-            # Read and parse the XML once, before any destructive change.
             self._report(what='reading MS-DOS.xml from zip')
             try:
                 xml_file = os.path.join(
@@ -282,7 +250,7 @@ class ExodosScanner:
                     level='warning')
             summary['unmatched'] = len(parsed.unmatched)
 
-            # last stop before the eXoDOS metadata is replaced
+            # Last stop before the eXoDOS metadata is replaced.
             try:
                 cancelled = self._cancelled(cancel_event)
             except _ExodosCancellationCheckError:
@@ -294,9 +262,7 @@ class ExodosScanner:
                 summary['errors'] += 1
                 return summary
 
-            # The complete result has been parsed and validated before anything
-            # is deleted. An entirely unmatched/empty result must not wipe the
-            # previously published eXoDOS metadata, so it is skipped.
+            # An empty result must not wipe the stored eXoDOS metadata.
             if parsed.records:
                 dat_repo.replace_origin(ORIGIN_EXODOS, parsed.records)
             else:
@@ -306,16 +272,13 @@ class ExodosScanner:
 
             self._report(percent=100)
 
-            # Index the image tree and GameData MP4s. The helper owns the
-            # one-pass filesystem inventories and neither parses the XML nor
-            # writes the DAT metadata. It persists every unit through the
-            # repository, so its report is folded into the scan summary.
             # A failing predicate stops the artwork phase like a cancel (its
             # checks partly sit under broad except blocks, a raise there could
             # be taken for a unit error) and is counted as an error afterwards.
             predicate_failed = []
 
             def artwork_cancelled():
+                """Return whether to stop; a failing predicate counts as a stop."""
                 try:
                     return self._cancelled(cancel_event)
                 except _ExodosCancellationCheckError:
@@ -327,9 +290,7 @@ class ExodosScanner:
                     exodos_path, exodos_sets, art_repo, self._report,
                     is_cancelled=artwork_cancelled)
             except Exception as exc:
-                # The metadata phase already succeeded and stays committed; an
-                # unexpected artwork failure is reported as a failed artwork
-                # phase so the scan is never mistaken for a complete success.
+                # The metadata stays; the scan must not look complete.
                 log(f"UMSA exodos scan: artwork phase failed: {exc}",
                     level='error')
                 summary['artwork_aborted'] = True
@@ -352,7 +313,7 @@ class ExodosScanner:
                 summary['artwork_errors'] += 1
                 summary['errors'] += 1
 
-            # Persist the metadata phase regardless of the artwork outcome.
+            # The metadata is kept whatever the artwork outcome.
             dat_conn.commit()
         finally:
             if art_conn is not None:

@@ -1,17 +1,6 @@
-"""Parsers for GameBase64 support data.
+"""Pure parsers for GameBase64 data: ``VERSION.NFO`` text and cover file names.
 
-The parsers are pure: they never touch a database, the filesystem or a ZIP
-archive, and never import SQLite. :func:`parse_version_nfo` consumes the raw
-text of a ``VERSION.NFO`` file and returns a :class:`Gb64VersionNfo`;
-:func:`parse_cover_filename` maps a cover image's file name to a title and an
-artwork type. Both can therefore be unit-tested without a Kodi runtime, an
-archive or a database.
-
-The behaviour is a direct extraction of the historical ``scan_gb64_nfo()``
-helper that used to write straight into ``dat``/``dat_set``/``art_set`` from
-``support.py``: the generated metadata text, the cover ``[Back]``/``(…)``
-handling and the ``Screenshot:``/``SID:`` extraction are preserved. Only the
-database access was removed.
+No database, filesystem or archive access.
 """
 
 from __future__ import annotations
@@ -25,18 +14,15 @@ class Gb64VersionNfo:
     """The parsed content of one ``VERSION.NFO`` file.
 
     Attributes:
-        entry: The complete metadata text stored in ``dat.entry``. It joins the
-            ``GAME INFO:``, ``VERSION INFO:`` and ``NOTES:`` sections with the
-            historical separators (a newline between every line and between the
-            sections), even when a section is empty.
-        screenshot: The ``Screenshot:`` value, with backslashes normalised to
-            forward slashes. Empty when the section is absent. It is a reference
-            relative to the ``Screenshots`` directory, not a filesystem path.
-        sid: The ``SID:`` value. Empty when the section is absent. It is kept
-            for completeness even though the DAT/artwork import does not use it.
-        game_info: The raw ``GAME INFO:`` lines, in order.
-        version_info: The raw ``VERSION INFO:`` lines, in order.
-        notes: The raw ``NOTES:`` lines, in order.
+        entry: The metadata text stored in ``dat.entry``: the ``GAME INFO:``,
+            ``VERSION INFO:`` and ``NOTES:`` lines joined by newlines, with a
+            newline between the sections even when one is empty.
+        screenshot: The ``Screenshot:`` value with forward slashes, relative
+            to the ``Screenshots`` directory; empty when absent.
+        sid: The ``SID:`` value (unused by the import); empty when absent.
+        game_info: The raw ``GAME INFO:`` lines.
+        version_info: The raw ``VERSION INFO:`` lines.
+        notes: The raw ``NOTES:`` lines.
     """
 
     entry: str
@@ -50,11 +36,10 @@ class Gb64VersionNfo:
 def parse_version_nfo(nfo_text: str) -> Gb64VersionNfo:
     """Parse GameBase64 ``VERSION.NFO`` text into a :class:`Gb64VersionNfo`.
 
-    Lines containing ``-----`` or ``=====`` are treated as separators and
-    skipped. ``GAME INFO:``/``VERSION INFO:``/``NOTES:`` select the current
-    section; lines before any of them are discarded, matching the historical
-    behaviour. ``Screenshot:`` and ``SID:`` are extracted with
-    ``split(':')[-1].strip()`` and are not added to any section.
+    Lines containing ``-----`` or ``=====`` are separators.
+    ``GAME INFO:``/``VERSION INFO:``/``NOTES:`` select the current section;
+    lines before any of them are discarded. ``Screenshot:`` and ``SID:``
+    lines are not added to any section.
     """
 
     infopart = 'internal'
@@ -102,14 +87,10 @@ def parse_version_nfo(nfo_text: str) -> Gb64VersionNfo:
 def parse_cover_filename(filename: str) -> tuple[str, str, str] | None:
     """Map a cover file name to ``(title, art_type, extension)``.
 
-    ``filename`` is the base name including its extension. The extension is
-    returned without the leading dot (``''`` when there is none). A trailing
-    ``[Back]`` token selects the ``covers - back`` type and is removed; a
-    trailing ``(…)`` parenthesised token is always dropped. The remaining
-    ``_``-separated tokens are joined with spaces to form the title.
-
-    Returns ``None`` when no title token remains (for example a file named only
-    ``[Back].png``), so callers can skip it instead of matching an empty title.
+    The extension has no leading dot. A trailing ``[Back]`` token selects the
+    ``covers - back`` type; a trailing ``(…)`` token is dropped; the remaining
+    ``_``-separated tokens form the title. Returns ``None`` when no title
+    token remains (e.g. ``[Back].png``).
     """
 
     filebase, filext = os.path.splitext(filename)

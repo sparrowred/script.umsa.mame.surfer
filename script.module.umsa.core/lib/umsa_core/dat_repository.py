@@ -1,23 +1,8 @@
-"""DAT database repository.
+"""Repository for the DAT tables of dat.db (``dat``, ``dat_set``, ``dat_source``).
 
-This module centralises SQL access to the DAT tables (``dat``, ``dat_set``,
-``dat_source``) and is the authoritative DAT schema definition, following the conventions of
-:mod:`umsa_core.artwork_repository`.
-
-The repository operates on an existing SQLite connection supplied by the
-caller; it never opens or closes that connection. Query methods leave
-transaction management to the caller. The staging and publication methods
-manage their own short transaction and only commit a transaction they started
-themselves, so they can never flush unrelated caller work.
-
-Connections must use ``sqlite3.Row`` (step 4.2b contract, decision Q7):
-callers consume the returned rows with both named and positional access, so a
-connection with any other row factory is rejected at construction.
-
-``dat.file`` keeps its historical meaning: the visible display category. The
-nullable ``origin`` column is internal bookkeeping that records which import
-produced a row (see :data:`ORIGIN_MAME_SUPPORT`, :data:`ORIGIN_EXODOS` and
-:data:`ORIGIN_GB64`).
+Owns the schema. ``dat.file`` is the visible display category; ``origin``
+records which import produced a row. Writes use
+:func:`umsa_core.sqlite.write_savepoint`.
 """
 
 from __future__ import annotations
@@ -34,12 +19,10 @@ ORIGIN_EXODOS = "exodos"
 ORIGIN_GB64 = "gb64"
 
 def _guard_staging_coordinated():
-    """Refuse uncoordinated staging use while another scan holds the lock.
+    """Raise ``RuntimeError`` when another thread holds the scan lock.
 
-    The scan orchestration layer owns the global scan lock; repository staging
-    operations are internal helpers expected to run inside that locked scope.
-    Using them while a *different* thread owns the lock would corrupt an active
-    scan's staging tables, so it is rejected early with a clear error.
+    Staging from outside the locked scan would corrupt the active scan's
+    staging tables.
     """
 
     if scan_coordinator.is_locked() and not scan_coordinator.owned_by_current_thread():
@@ -52,10 +35,8 @@ def _guard_staging_coordinated():
 def create_dat_tables(db_cursor: sqlite3.Cursor) -> None:
     """Create the DAT tables and upgrade old databases in place.
 
-    This is the authoritative schema definition. It is idempotent: existing
-    tables are never dropped and their contents are never discarded. When the
-    ``origin`` column is missing it is added, and legacy rows are assigned an
-    origin inferred from their ``file`` value.
+    Idempotent; data is never discarded. Missing ``origin``/``driver`` columns
+    are added and rows without an origin get one inferred from ``file``.
     """
 
     db_cursor.execute(
@@ -78,18 +59,18 @@ def create_dat_tables(db_cursor: sqlite3.Cursor) -> None:
         """
     )
     _ensure_origin_column(db_cursor)
-    # lookups by set id, the dat row join and the per-origin cleanup of the
-    # GB64/eXoDOS scans would otherwise scan the whole tables
+    # Lookups by set id, the dat row join and the per-origin cleanup of the
+    # GB64/eXoDOS scans would otherwise scan the whole tables.
     db_cursor.execute(
         "CREATE INDEX IF NOT EXISTS dat_set_id_idx ON dat_set(id)")
     db_cursor.execute(
         "CREATE INDEX IF NOT EXISTS dat_set_dat_id_idx ON dat_set(dat_id)")
     db_cursor.execute(
         "CREATE INDEX IF NOT EXISTS dat_origin_idx ON dat(origin)")
-    # driver WIP lookup by driver name (rows with a NULL driver are the rest)
+    # Driver WIP lookup by driver name (rows with a NULL driver are the rest).
     db_cursor.execute(
         "CREATE INDEX IF NOT EXISTS dat_driver_idx ON dat(driver)")
-    # one row per scanned input file: header version and counters
+    # One row per scanned input file: header version and counters.
     db_cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS dat_source(
@@ -126,11 +107,7 @@ def _ensure_columns(db_cursor: sqlite3.Cursor, table: str, names) -> None:
 
 
 def _backfill_origin(db_cursor: sqlite3.Cursor) -> None:
-    """Assign an origin to legacy rows that do not have one yet.
-
-    Only rows whose ``origin`` is still missing are touched, so an origin that
-    was already assigned is never overwritten.
-    """
+    """Assign an origin to rows without one; an existing origin is never overwritten."""
 
     db_cursor.execute(
         "UPDATE dat SET origin = ? "
@@ -149,40 +126,23 @@ def _backfill_origin(db_cursor: sqlite3.Cursor) -> None:
 
 
 class DatRepository:
-    """DAT database operations on an externally owned connection.
+    """DAT operations on a caller-owned connection.
 
-    The repository never opens or closes the supplied connection. Query
-    methods leave transaction management to the caller; :meth:`publish_staged`
-    manages its own short transaction and only commits one it started.
-    Connections must use ``sqlite3.Row`` (step 4.2b contract, decision Q7):
-    callers consume the returned rows with both named and positional access, so a
-    connection with any other row factory is rejected at construction.
-
-    ``dat.file`` keeps its historical meaning: the visible display category. The
-    nullable ``origin`` column is internal bookkeeping that records which import
-    produced a row (see :data:`ORIGIN_MAME_SUPPORT`, :data:`ORIGIN_EXODOS` and
-    :data:`ORIGIN_GB64`).
-
-    The repository accepts an optional ``schema`` parameter to qualify table
-    names. For scanner-owned connections where dat.db is the ``main`` database,
-    use ``schema="main"`` (the default). For the DBMod connection where dat.db
-    is attached as ``dat``, use ``schema="dat"``. The schema identifier must be
-    from the allowlist ``{"main", "dat"}``.
+    Never opens or closes the connection. Query methods leave transactions to
+    the caller. ``schema`` qualifies the read queries: ``"main"`` for a
+    scanner's own dat.db connection, ``"dat"`` for the attached schema of
+    ``DBMod``.
     """
 
     _ALLOWED_SCHEMAS = frozenset({"main", "dat"})
 
     def __init__(self, connection: sqlite3.Connection, schema: str = "main") -> None:
-        """Wrap an existing connection that uses ``sqlite3.Row``.
-
-        Args:
-            connection: An existing SQLite connection to operate on.
-            schema: The database schema qualifier (``"main"`` or ``"dat"``).
-                Defaults to ``"main"`` for scanner-owned connections.
+        """Wrap a connection for the schema ``"main"`` or ``"dat"``.
 
         Raises:
-            ValueError: If the connection does not use ``sqlite3.Row`` or if
-                ``schema`` is not in the allowlist.
+            ValueError: If the connection does not use ``sqlite3.Row``
+                (:func:`umsa_core.sqlite.require_row_connection`) or
+                ``schema`` is not allowed.
         """
         require_row_connection(connection, "DatRepository")
         if schema not in self._ALLOWED_SCHEMAS:
@@ -194,7 +154,7 @@ class DatRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the underlying connection (read-only access)."""
+        """Return the wrapped connection."""
         return self._conn
 
     @property
@@ -225,11 +185,7 @@ class DatRepository:
             cursor.close()
 
     def get_dat_for_sets(self, set_ids: Iterable[int]) -> dict:
-        """Return ``{set id: {display category: entry text}}`` for many sets.
-
-        Parameterised and safe for an empty list (which returns an empty
-        mapping rather than invalid SQL).
-        """
+        """Return ``{set id: {display category: entry text}}`` for many sets."""
 
         ids = list(set_ids)
         if not ids:
@@ -254,11 +210,7 @@ class DatRepository:
             cursor.close()
 
     def get_driver_wip(self, drivers: Iterable[str]) -> dict:
-        """Return ``{driver name: WIP Driver text}`` for the given drivers.
-
-        Drivers without an entry are missing from the result; an empty input
-        returns an empty mapping.
-        """
+        """Return ``{driver name: WIP Driver text}`` of the drivers that have one."""
 
         names = list(dict.fromkeys(d for d in drivers if d))
         if not names:
@@ -359,12 +311,11 @@ class DatRepository:
         db_cursor: sqlite3.Cursor | None = None,
         driver: str | None = None,
     ) -> int:
-        """Stage one parsed entry and its set relationships.
+        """Stage one parsed entry and its set relationships; return the staging id.
 
-        ``driver`` is the MAME driver name of a ``WIP Driver`` entry (see
-        :attr:`umsa_core.dat_parser.DatEntry.driver`). Returns the staging id. The caller owns the transaction; staging is
-        written to separate tables so it can never collide with the ids of
-        already published ``dat`` rows.
+        ``driver`` is the MAME driver name of a ``WIP Driver`` entry. The
+        caller owns the transaction. Staging tables are separate, so staged
+        ids never collide with published ``dat`` rows.
         """
 
         close = False
@@ -392,19 +343,12 @@ class DatRepository:
     def replace_origin_for_set(
         self, origin: str, set_id: int, file: str, entry: str | None
     ) -> int:
-        """Replace the ``origin`` metadata attached to one set.
+        """Replace the ``origin`` row of one set; return the id of the new row.
 
-        Used by per-set importers (for example GameBase64) that own exactly one
-        metadata row per set and must stay idempotent across repeated scans.
-        In a single short transaction it removes only the ``origin`` rows
-        currently linked to ``set_id`` and then inserts a fresh ``file``/
-        ``entry`` row linked to ``set_id``.
-
-        Rows of other origins are never touched, and a removed row is deleted
-        only when no remaining ``dat_set`` relationship still needs it, so a row
-        shared with another set survives. On any error the transaction is rolled
-        back and the previous valid rows are kept. The caller's connection is
-        never closed. Returns the id of the inserted row.
+        For per-set importers (GameBase64) that must stay idempotent. In one
+        savepoint the ``origin`` rows linked to ``set_id`` are unlinked (and
+        deleted when no other set uses them) and a fresh row is inserted. Rows
+        of other origins are never touched; on error the old rows are kept.
         """
 
         with write_savepoint(self._conn, "umsa_dat_replace_set") as cursor:
@@ -439,31 +383,15 @@ class DatRepository:
 
     def replace_origin(self, origin: str, records,
                        allow_empty: bool = False) -> int:
-        """Atomically replace the complete ``origin`` metadata set.
+        """Replace all rows of ``origin`` in one savepoint; return the number inserted.
 
-        ``records`` is the complete parsed collection. Each record must expose
-        the ``file``, ``entry`` and ``set_ids`` attributes (the same shape as
-        :class:`umsa_core.dat_parser.DatEntry` and
-        :class:`umsa_core.exodos_parser.ExodosMetadata`).
+        Each record exposes ``file``, ``entry`` and ``set_ids`` (optionally
+        ``driver``), like :class:`umsa_core.dat_parser.DatEntry`. Rows of other
+        origins are never touched; on failure the old rows are kept.
 
-        In a single short transaction it removes every ``dat_set`` relationship
-        belonging to existing ``dat`` rows of ``origin``, deletes those ``dat``
-        rows, inserts each new row with its display category and ``origin``, and
-        inserts the corresponding ``dat_set`` relationship per mapped set id.
-
-        Rows of every other origin (``mame_support``, ``gb64``, ...) are never
-        touched. On any failure the transaction is rolled back and the previously
-        published ``origin`` rows are preserved. The caller's connection is
-        never closed, and a transaction started here is the only one committed.
-        Re-running with the same records is idempotent: the old rows are removed
-        first, so no duplicates are created.
-
-        An empty ``records`` collection is rejected by default, so a malformed
-        parse, a missing input or an entirely unmatched scan can never wipe
-        previously published data. Pass ``allow_empty=True`` to explicitly
-        request a deliberate clearing of ``origin``.
-
-        Returns the number of inserted records.
+        Raises:
+            ValueError: If ``records`` is empty and ``allow_empty`` is false,
+                so a failed parse or an unmatched scan never wipes the data.
         """
 
         entries = list(records)
@@ -501,19 +429,13 @@ class DatRepository:
         return published
 
     def publish_staged(self, origin: str, sources=None) -> int:
-        """Atomically replace one origin's published rows with the staged data.
+        """Replace the rows of ``origin`` with the staged data; return the count.
 
-        In a single short transaction it deletes the ``dat_set`` relationships
-        belonging to records of ``origin``, deletes those ``dat`` records,
-        inserts the staged entries (assigning fresh ids) and their
-        relationships, and clears the staging tables. On any error the
-        transaction is rolled back and the previous valid rows are kept.
-
-        ``sources`` (an iterable of dicts keyed by the ``dat_source`` columns
-        except ``origin``) replaces the ``dat_source`` rows of ``origin`` in
-        the same transaction; ``None`` leaves ``dat_source`` untouched.
-
-        Returns the number of published entries.
+        One savepoint: delete the old rows, insert the staged ones with fresh
+        ids, clear the staging tables. On error the old rows are kept.
+        ``sources`` (dicts keyed by the ``dat_source`` columns except
+        ``origin``) replaces the ``dat_source`` rows of ``origin`` in the same
+        savepoint; ``None`` leaves them untouched.
         """
 
         _guard_staging_coordinated()

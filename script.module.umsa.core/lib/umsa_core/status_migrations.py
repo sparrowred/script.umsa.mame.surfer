@@ -1,20 +1,8 @@
-"""Versioned ``status.db`` schema migrations.
+"""Versioned ``status.db`` schema migrations via ``PRAGMA user_version``.
 
-``status.db`` is migrated with SQLite's built-in ``PRAGMA user_version``. A
-single migration entry (version 0 → 1) declares the full current schema: the
-three pre-existing tables through their authoritative repository helpers plus
-the four new history/meta tables through
-:func:`umsa_core.history_repository.create_history_tables`.
-
-The migration body runs in one transaction together with the
-``PRAGMA user_version`` bump, so a failure rolls the whole thing back and the
-exception propagates (never swallowed). A database that is newer than this
-module understands fails explicitly instead of being downgraded.
-
-The module is Kodi-independent and never *opens* a connection: callers hand it
-an existing ``status.db`` connection (``DBMod`` supplies ``self.sdb`` during
-``_open_persistent_databases``). It never touches ``umsa.db``, ``dat.db`` or
-``artwork.db``.
+Each migration runs in one transaction with its version bump; a failure rolls
+it back and propagates. A newer database fails instead of being downgraded.
+Works on a caller-owned connection.
 """
 
 from __future__ import annotations
@@ -42,21 +30,14 @@ def _apply_version_1(connection: sqlite3.Connection) -> None:
 
 
 def apply_migrations(connection: sqlite3.Connection) -> int:
-    """Migrate ``status.db`` up to :data:`CURRENT_VERSION`.
+    """Migrate ``status.db`` up to :data:`CURRENT_VERSION` and return the version.
 
-    Returns the resulting ``user_version``. A version already at (or, for the
-    unsupported-newer case, beyond) :data:`CURRENT_VERSION` is handled as
-    documented:
+    Commits only a transaction it opened itself; an open caller transaction is
+    joined, not committed. A failure rolls back and re-raises.
 
-    - version == CURRENT_VERSION: no-op, returns it unchanged;
-    - version == 0: runs the single migration and the version bump in one
-      transaction, committing when it opened that transaction itself and
-      rolling back + re-raising on any failure;
-    - version > CURRENT_VERSION: raises ``RuntimeError`` (never downgrades).
-
-    The caller keeps ownership of the connection: an already-open caller
-    transaction is not committed here (the migration joins it) and no
-    savepoint or transaction is left open on either path.
+    Raises:
+        RuntimeError: If the database version is newer than
+            :data:`CURRENT_VERSION`.
     """
 
     cursor = connection.cursor()

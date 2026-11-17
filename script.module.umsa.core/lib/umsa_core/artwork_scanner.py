@@ -1,15 +1,8 @@
-"""Artwork folder scanning for the UMSA artwork database.
+"""Artwork folder scan into artwork.db: ``<type>/<software_list>`` scan units.
 
-This module owns the artwork scan algorithm: discovering ``<type>/
-<software_list>`` scan units under each configured root, inventorying each
-unit's files, updating the artwork database atomically, reporting progress,
-honouring cancellation and applying the filesystem retry policy.
-
-It is deliberately Kodi- and ``DBMod``-free. The host supplies the resolved
-database paths, a callback that ensures the artwork tables exist, progress
-and cancellation callbacks and the directory listing callable. Importing
-``database.py`` here would create a circular import, so the scanner takes
-its dependencies explicitly instead.
+Each unit is inventoried and replaced atomically; the scan is resumable,
+cancellable and retries transient filesystem errors. The host passes its
+dependencies in (importing ``database`` here would be circular).
 """
 
 import errno
@@ -24,12 +17,10 @@ from .logging import log
 from .scan_coordinator import ScanBusyError, ScanLockContext, scan_coordinator
 from .sqlite import connect_sqlite, connect_sqlite_readonly
 
-# --- Artwork scan filesystem retry policy -------------------------------------
 # Bounded retry for transient filesystem/network errors while listing artwork
-# directories (for example an SMB share briefly dropping out). Kept small so
-# the UI stays responsive, and centralised so the values are easy to tune.
-# ``_ART_LIST_ATTEMPTS`` counts the first try; each entry in
-# ``_ART_LIST_RETRY_DELAYS`` is the wait before the corresponding retry.
+# directories (for example an SMB share briefly dropping out), kept small so
+# the UI stays responsive. ``_ART_LIST_ATTEMPTS`` counts the first try; each
+# entry of ``_ART_LIST_RETRY_DELAYS`` is the wait in seconds before a retry.
 _ART_LIST_ATTEMPTS = 3
 _ART_LIST_RETRY_DELAYS = (0.5, 1.0)
 
@@ -40,7 +31,7 @@ _ART_LIST_RESOURCE_RECOVERY_DELAY = 0.5
 
 
 def _art_errno_values(*names):
-    """Collect errno values by name, skipping names missing on this platform."""
+    """Return the errno values of ``names``, skipping names missing on this platform."""
 
     return frozenset(
         code for code in (getattr(errno, name, None) for name in names)
@@ -61,10 +52,9 @@ _ART_LIST_TRANSIENT_ERRNOS = _art_errno_values(
 # single short recovery retry is allowed, then the scan aborts cleanly.
 _ART_LIST_RESOURCE_ERRNOS = _art_errno_values("EMFILE", "ENFILE")
 
-# Raw Win32 error codes (``OSError.winerror``). There is no portable module
-# exposing these, so they are named here and only consulted when ``winerror``
-# is present (Windows); ``errno`` is still checked as a fallback. They are kept
-# separate from the POSIX errno sets because the numbering is unrelated.
+# Raw Win32 error codes (``OSError.winerror``); no portable module exposes
+# them. Consulted only when ``winerror`` is present, with ``errno`` as the
+# fallback; the numbering is unrelated to the POSIX errno sets.
 _WINERROR_RESOURCE = frozenset({
     4,     # ERROR_TOO_MANY_OPEN_FILES
     8,     # ERROR_NOT_ENOUGH_MEMORY
@@ -150,7 +140,7 @@ def _format_os_error(exc):
 
 
 def _art_list_retry_delay(attempt):
-    """Delay in seconds before retry ``attempt`` (0-based), clamped to last."""
+    """Return the delay in seconds before retry ``attempt`` (0-based, clamped)."""
 
     delays = _ART_LIST_RETRY_DELAYS
     if attempt < len(delays):
@@ -161,14 +151,9 @@ def _art_list_retry_delay(attempt):
 def _is_dir(path):
     """Return ``(is_directory, error)`` for a filesystem entry.
 
-    A successful check of a non-directory is ``(False, None)``. When the
-    check itself fails (for example file-handle exhaustion), the error is
-    returned so callers can report it instead of silently treating the entry
-    as "not a directory".
-
-    ``os.stat``/``stat.S_ISDIR`` is used instead of ``os.path.isdir`` because
-    the latter swallows access failures and returns ``False``, which would let
-    an unreadable directory masquerade as a plain file.
+    A failed check returns the error, so callers can report it instead of
+    treating the entry as a file. ``os.path.isdir`` is not used because it
+    swallows access failures and returns ``False``.
     """
 
     try:
@@ -180,22 +165,17 @@ def _is_dir(path):
 class ArtworkScanner:
     """Discover and inventory artwork roots into the artwork database.
 
-    The scanner owns the scanning algorithm and its filesystem helpers. It has
-    no knowledge of ``DBMod``; the host passes in the resolved Core data paths,
-    a callback that creates the artwork tables, optional progress/cancellation
-    callbacks and the directory listing callable.
-
     Args:
         db_paths: Resolved Core data paths (needs ``artwork_db`` and
             ``umsa_db``).
         initialize_tables: Callable taking the artwork DB cursor; must ensure
             the ``art_set``/``art_scan_unit`` tables exist.
-        progress: Optional ``progress(percent, what)`` callback. Either value
-            may be ``None`` to leave it unchanged.
+        progress: Optional ``progress(percent, what)`` callback; ``None`` for
+            either value keeps it.
         is_cancelled: Optional predicate that returns ``True`` when the host
             wants the scan to stop.
-        listdir: Optional directory listing callable (defaults to
-            ``os.listdir``).
+        listdir: Directory listing callable (default ``os.listdir``).
+        stat: ``stat`` callable for the unit mtime (default ``os.stat``).
     """
 
     def __init__(self, db_paths, initialize_tables, progress=None,
@@ -304,12 +284,10 @@ class ArtworkScanner:
 
     def scan(self, paths=None, source=None, only_types=None, resume=True,
              cancel_event=None):
-        """Scan artwork folders under the shared scan lock.
+        """Scan artwork folders under the shared scan lock; return the summary.
 
-        This is the public entry point. It acquires the process-wide scan lock
-        for the whole workflow (discovery, per-unit inventory, database writes
-        and status updates). When another covered scan is already running it
-        returns immediately with ``busy`` set and leaves all data untouched.
+        When another scan holds the lock, return at once with ``busy`` set.
+        See :meth:`_scan_locked` for the arguments and the summary.
         """
 
         summary = {
@@ -336,7 +314,6 @@ class ArtworkScanner:
         try:
             result = self._scan_locked(
                 paths, source, only_types, resume, cancel_event)
-            # Attach the busy flag to the scanner's own summary dict.
             result['busy'] = False
             return result
         finally:
@@ -344,51 +321,36 @@ class ArtworkScanner:
 
     def _scan_locked(self, paths=None, source=None, only_types=None, resume=True,
                      cancel_event=None):
-        """Scan artwork folders, unit-based and resumable.
+        """Scan ``<root>/<type>/<software_list>/<set>.<ext>`` (MAME: ``<type>/<type>``).
 
-        Directory layout is ``<root>/<type>/<software_list>/<set>.<ext>``.
-        The only exception is the MAME software list, which nests the type
-        again: ``<root>/<type>/<type>/<set>.<ext>``.
+        Every ``<type>/<software_list>`` pair is one scan unit. A later scan
+        skips a ``done`` unit only while its directory mtime still matches
+        (equality only, so a skewed share clock does not matter). After a scan
+        that was not cancelled, units of a completely listed root whose
+        directory vanished are deleted.
 
-        Every ``<type>/<software_list>`` pair forms one scan unit. Discovered
-        units are stored in ``art_scan_unit`` together with the mtime of their
-        directory, and matching files are recorded in ``art_set``. A later
-        scan skips a ``done`` unit only while its directory mtime is unchanged
-        (only equality counts, so a skewed share clock does not matter), so
-        added, removed or renamed files are picked up and an interrupted run
-        still resumes. After a scan that was not cancelled, units of a
-        completely listed root whose directory vanished are deleted.
+        Each unit is replaced and marked ``done`` in one transaction. A unit
+        whose software list is unknown or whose directory cannot be listed
+        keeps its records and is marked ``error``. File-handle exhaustion
+        (``EMFILE``/``ENFILE`` or the Windows codes) gets one recovery retry,
+        then aborts the scan (``aborted``), keeping committed units; a raising
+        cancellation predicate aborts too.
 
-        paths -- a single path or a sequence of paths.
-        source -- artwork source name; defaults to ``progettosnaps`` for the
-            first path and ``own_artwork`` for the rest.
-        only_types -- optional restriction to a set of artwork types.
-        resume -- skip ``done`` units whose directory is unchanged; ``False``
-            scans every unit again.
-        cancel_event -- optional ``threading.Event`` used to stop the scan and
-            to interrupt retry waits.
+        Args:
+            paths: A single path or a sequence of paths. An empty entry is
+                skipped without shifting the source of the following roots.
+            source: Artwork source name; default ``progettosnaps`` for the
+                first path and ``own_artwork`` for the rest.
+            only_types: Optional restriction to a set of artwork types.
+            resume: Skip ``done`` units whose mtime still matches; ``False``
+                scans all again.
+            cancel_event: Optional ``threading.Event`` that stops the scan and
+                interrupts retry waits.
 
-        A ``None`` or empty path is skipped without shifting the source
-        identity onto the following root: identity follows the original path
-        position, so the second root stays ``own_artwork`` even when the first
-        is unconfigured.
-
-        Each successfully inventoried unit is updated atomically: its prior
-        ``art_set`` rows are replaced and its ``art_scan_unit`` status becomes
-        ``done`` in a single transaction. A unit whose software list cannot be
-        resolved, or whose directory cannot be listed, keeps its existing
-        records and is marked ``error`` (never ``done``). Discovery and unit
-        failures are counted in the returned summary, whose keys are
-        ``discovered``, ``processed``, ``skipped``, ``inserted``, ``errors``,
-        ``cancelled``, ``aborted`` and ``discovery_incomplete``.
-
-        Transient filesystem/network errors are retried a few times. File-handle
-        exhaustion (``EMFILE``/``ENFILE``, or the Windows equivalents) gets a
-        single short recovery retry and then aborts the whole scan cleanly
-        (``aborted`` is set): records already committed are kept, and the
-        unfinished unit is left not-``done`` so a later scan retries it. A
-        cancellation predicate that raises also aborts (``aborted``), rather
-        than being mistaken for "not cancelled".
+        Returns:
+            Summary with ``discovered``, ``processed``, ``skipped``,
+            ``inserted``, ``errors``, ``cancelled``, ``aborted`` and
+            ``discovery_incomplete``.
         """
 
         if isinstance(paths, str):
@@ -412,13 +374,10 @@ class ArtworkScanner:
         listdir = self._listdir
 
         def listing(path, what):
-            """List a directory, retrying transient errors.
+            """List a directory, retrying transient errors; ``None`` when it failed.
 
-            Returns the entries on success, or ``None`` when the listing
-            genuinely failed (a failure is never reported as an empty
-            directory). Raises ``_ArtworkScanResourceError`` when file handles
-            stay exhausted, so the caller can abort the scan instead of opening
-            yet more paths.
+            A failure is never reported as an empty directory. Raises
+            ``_ArtworkScanResourceError`` when file handles stay exhausted.
             """
 
             last_exc = None
@@ -480,10 +439,8 @@ class ArtworkScanner:
 
         log(f"UMSA artwork scan: start paths={path_list} source={source} resume={resume}")
 
-        # Discovery error tracking starts before the first filesystem access so
-        # an unreadable path can never be mistaken for an empty one. The
-        # counters are initialised up front so the summary can still be
-        # produced if the scan aborts early.
+        # Initialised before the first filesystem access, so an early abort
+        # still produces a summary.
         errors = 0
         discovery_incomplete = False
         aborted = False
@@ -493,7 +450,7 @@ class ArtworkScanner:
         cancelled = False
 
         def finish():
-            """Log the scan result and build the summary returned to callers."""
+            """Log the scan result and return the summary."""
 
             self._report(100, None)
             log(f"UMSA artwork scan: finished units={total} processed={processed} "
@@ -537,20 +494,16 @@ class ArtworkScanner:
 
             self._report(0, 'discovering')
 
-            # Discover scan units (type/software_list) without reading files yet.
             units = []
-            # roots listed without any error: only their vanished units are
-            # removed after the scan
+            # Roots listed without any error: only their vanished units are
+            # removed after the scan.
             complete_roots = []
-            # every configured root, listed or not: rows of other roots of a
-            # source belong to a moved folder
+            # Every configured root, listed or not: rows of other roots of a
+            # source belong to a moved folder.
             configured_roots = []
             for idx, path in enumerate(path_list):
-                # Source identity is positional: the first root is always
-                # 'progettosnaps' and later roots 'own_artwork'. An empty or
-                # unconfigured path must be skipped without shifting the
-                # identity onto the next root, and must never fall back to
-                # listing the current working directory.
+                # The source is positional. An empty path is skipped without
+                # shifting it and never lists the current directory.
                 source_name = source or ('progettosnaps' if idx == 0 else 'own_artwork')
                 if not path:
                     log(f"UMSA artwork scan: empty path for source "
@@ -576,9 +529,6 @@ class ArtworkScanner:
                     if ok:
                         art_types.append(d)
                     elif err is not None:
-                        # A directory check that failed is not a plain
-                        # non-directory: report it so discovery is not assumed
-                        # complete.
                         errors += 1
                         discovery_incomplete = True
                         log(f"UMSA artwork scan: could not determine whether "
@@ -596,9 +546,6 @@ class ArtworkScanner:
                     art_type_path = os.path.join(path, art_type)
                     entries = listing(art_type_path, art_type)
                     if entries is None:
-                        # A type directory that cannot be read hides an unknown
-                        # number of units: report it and never treat it as an
-                        # empty directory.
                         errors += 1
                         discovery_incomplete = True
                         log(f"UMSA artwork scan: type directory "
@@ -633,10 +580,10 @@ class ArtworkScanner:
             total = len(units)
             log(f"UMSA artwork scan: discovered {total} units")
 
-            # C-M11: the same software list appears under every artwork type.
-            # `sets` has no index on swllink_id, so each lookup reads the whole
-            # table: process the units grouped by software list (stable sort,
-            # discovery order inside a list) and keep only the current list.
+            # The same software list appears under every artwork type, and a
+            # lookup of its sets reads the whole table: process the units
+            # grouped by software list (stable sort) and keep only the current
+            # list.
             cached_swl_name = None
             cached_softlist = (None, {})
             for i, (src, rkey, rpath, urel, swl_name, atype) in enumerate(
@@ -647,9 +594,8 @@ class ArtworkScanner:
                     break
                 self._report(int((i / total) * 100) if total else 100, urel)
 
-                # mtime of the unit directory before it is listed: a finished
-                # unit is skipped only while its directory is unchanged (files
-                # added, removed or renamed change the directory mtime).
+                # Taken before the listing: added, removed or renamed files
+                # change the directory mtime.
                 unit_path = os.path.join(rpath, urel)
                 dir_mtime = self._unit_mtime(unit_path)
                 if resume and dir_mtime is not None:
@@ -658,10 +604,8 @@ class ArtworkScanner:
                         skipped += 1
                         continue
 
-                # Resolve the software list before touching any artwork. A
-                # software list missing from the UMSA database (mame included)
-                # must never lead to deleting the unit's existing records or
-                # marking it done.
+                # An unknown software list must never delete the unit's
+                # records or mark it done.
                 if swl_name != cached_swl_name:
                     cached_softlist = self._load_softlist(gdbc, swl_name)
                     cached_swl_name = swl_name
@@ -680,8 +624,8 @@ class ArtworkScanner:
                             f"for unit '{urel}': {status_exc}", level='error')
                     continue
 
-                # Mark the unit running before the inventory starts so an
-                # interrupted process can be identified on resume.
+                # Marked before the inventory, so an interrupted run is found
+                # on resume.
                 try:
                     repo.set_scan_unit_running(src, rkey, urel, db_cursor=dbc)
                 except Exception as status_exc:
@@ -706,9 +650,7 @@ class ArtworkScanner:
                             f"for unit '{urel}': {status_exc}", level='error')
                     continue
 
-                # Enumerate the unit completely before opening the write
-                # transaction, so no database lock is held while reading the
-                # directory.
+                # No database lock is held while the directory is read.
                 matched_rows = []
                 interrupted = False
                 for f in files:
@@ -728,9 +670,6 @@ class ArtworkScanner:
                     log(f"UMSA artwork scan: cancelled during unit '{urel}'")
                     break
 
-                # Replace the unit's artwork and mark it done in a single
-                # transaction, so a crash cannot leave fresh artwork with a
-                # stale status (or a done status with old artwork).
                 try:
                     repo.replace_scan_unit(src, rkey, urel, matched_rows,
                                            dir_mtime=dir_mtime)
@@ -755,9 +694,6 @@ class ArtworkScanner:
                 self._remove_old_roots(repo, configured_roots, complete_roots)
             return finish()
         except _ArtworkScanResourceError as exc:
-            # The filesystem ran out of file handles and a single recovery
-            # retry did not help. Stop opening more paths, keep every record
-            # already committed, and leave the unfinished unit for a retry.
             aborted = True
             abort_reason = "the filesystem ran out of file handles"
             errors += 1

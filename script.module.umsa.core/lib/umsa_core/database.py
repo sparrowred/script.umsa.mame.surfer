@@ -1,42 +1,13 @@
-"""Connections and lifecycle of the UMSA databases.
+"""Connections and lifecycle of the UMSA databases (:class:`DBMod`).
 
-``DBMod`` owns the persistent connections and nothing else of the data
-access:
-
-- ``umsa.db``, the downloaded game metadata (read-only), with ``artwork.db``
-  and ``dat.db`` attached as the read-only schemas ``art`` and ``dat``. Both
-  are the authoritative sources of scanned artwork and DAT texts; no data is
-  copied into ``umsa.db``. ``open_db()`` reopens this connection after a
-  database update.
-- ``status.db`` with play status, emulator configuration, history and saved
-  filters; its schema is migrated when ``DBMod`` opens it.
-
-Everything else is reached through the accessors of ``DBMod``:
-
-==================  ====================================================
-``games``           :class:`~umsa_core.game_repository.GameRepository`
-``artwork``         :class:`~umsa_core.artwork_repository.ArtworkRepository`
-``dats``            :class:`~umsa_core.dat_repository.DatRepository`
-``status``          :class:`~umsa_core.status_repository.StatusRepository`
-``emulators``       :class:`~umsa_core.emulator_repository.EmulatorRepository`
-``history``         :class:`~umsa_core.history_repository.HistoryRepository`
-``software``        :class:`~umsa_core.software_details.SoftwareDetails`
-``gamelist``        :class:`~umsa_core.gamelist_filter.Gamelist` (filter state)
-``art_queries``     :class:`~umsa_core.artwork_queries.ArtworkQueries`
-==================  ====================================================
-
-Repositories and ``software`` are built on every access, so they can never
-hold a connection that ``open_db()`` has replaced; ``gamelist`` and
-``art_queries`` keep state and ask for the connection on every call. New
-queries belong into those modules, not into ``DBMod``
-(``tests/arch/test_dbmod_surface.py``).
-
-Scans are not part of ``DBMod``: :class:`umsa_core.scans.Scans` runs them
-with their own connections and holds the progress of the active scan.
+``umsa.db`` is read-only, with ``artwork.db`` and ``dat.db`` attached
+read-only as ``art`` and ``dat``; ``status.db`` is migrated when it is opened.
+``DBMod`` owns only connections; queries live in the repositories behind its
+accessor properties, scans in :class:`umsa_core.scans.Scans`.
 """
 
 import os
-import sqlite3  # connect, Row, OperationalError
+import sqlite3
 from urllib.request import pathname2url
 
 from .artwork_queries import ArtworkQueries
@@ -63,7 +34,7 @@ def _core_data_paths(db_path):
 
 
 class DBMod:
-    """Database class for umsa.info sqlite3 database"""
+    """Persistent connections to umsa.db and status.db and their accessors."""
 
     def __init__(self, db_path, nonmame=None, filter_lists=None, pref_country='US'):
 
@@ -105,15 +76,13 @@ class DBMod:
 
         self.gamelist.define_filter(filter_lists)
 
-        # Migrate status.db via repositories in one transaction; failure propagates.
+        # One transaction; a failure propagates.
         apply_migrations(self.sdb)
 
     def open_db(self, db_path):
-        """Reopen umsa database, needed after update of umsa.db
+        """Reopen umsa.db read-only after a download and reattach art/dat.
 
-        Reconnect to the downloaded umsa.db read-only and reattach the
-        current artwork.db and dat.db as read-only schemas. The persistent
-        status.db connection is left untouched. Any previous umsa.db
+        The status.db connection is left untouched. Any previous umsa.db
         connection is closed first so it can never be silently overwritten.
         No artwork/DAT data is copied into umsa.db.
 
@@ -242,11 +211,7 @@ class DBMod:
             self._status_closed_handles = (sdbc, sdb)
 
     def _ensure_source_databases(self):
-        """Ensure artwork.db and dat.db exist with authoritative schemas.
-
-        Creates missing schemas and upgrades existing artwork.db and dat.db
-        schemas without truncating or repopulating existing data.
-        """
+        """Create or upgrade the artwork.db and dat.db schemas, keeping their data."""
 
         for path, create_tables in (
                 (self.db_paths.artwork_db, create_artwork_tables),
@@ -259,11 +224,11 @@ class DBMod:
                 conn.close()
 
     def _source_attach_statements(self):
-        """Return (alias, statement, params) attaching artwork.db/dat.db read-only.
+        """Return ``(alias, statement, params)`` attaching artwork.db/dat.db read-only.
 
         The URI is a bound parameter (the umsa.db connection is opened with
-        ``uri=True``, so ``mode=ro`` applies); only the constant alias is part
-        of the statement text, because identifiers cannot be bound.
+        ``uri=True``, so ``mode=ro`` applies); the alias is part of the
+        statement text because identifiers cannot be bound.
         """
 
         statements = []

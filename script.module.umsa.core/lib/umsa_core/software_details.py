@@ -1,18 +1,8 @@
-"""Software details composed from several databases.
+"""Software details composed from umsa.db, status.db, dat.db and artwork.db.
 
-What the frontend shows for one software needs ``umsa.db`` (sets, machines),
-``status.db`` (play status), ``dat.db`` (texts) and ``artwork.db`` together.
-The single-database reads live in the repositories; this module composes
-them:
-
-- :meth:`SoftwareDetails.get_all_for_software`: all sets of a software,
-  grouped by machine, with play status, DAT texts and artwork;
-- :meth:`SoftwareDetails.get_last_played`: the play status list;
-- :func:`best_machine_for_set`: the machine MAME starts a software-list set on.
-
-The module is Kodi-independent and holds no connection: ``DBMod`` builds a
-:class:`SoftwareDetails` from its repositories on every access of
-``DBMod.software``.
+The single-database reads live in the repositories; this module combines them
+(sets grouped by machine, the play status list, the machine of a
+software-list set) and holds no connection.
 """
 
 import sqlite3
@@ -36,7 +26,7 @@ COUNTRIES = {
 
 
 def status_dict(i):
-    """Return the play status dict of a status row (``None`` stays ``None``)"""
+    """Return the play status dict of a status row (``None`` stays ``None``)."""
 
     if not i:
         return None
@@ -55,7 +45,7 @@ def status_dict(i):
 
 
 def best_machine_for_set(machines, swl_name, detail, swl_machine_id):
-    """Determine which machine to take for MAME emulation
+    """Return the machine MAME starts a software-list set on, or ``None``.
 
     ``machines`` is the machine list of the software list
     (``GameRepository.get_machines(swl_name)[0]``), ``detail`` the detail
@@ -67,43 +57,35 @@ def best_machine_for_set(machines, swl_name, detail, swl_machine_id):
     - but machine_id into return
     """
 
-    # no machine found
     if len(machines) == 0:
         return None
-    # only 1 machine
     if len(machines) == 1:
         return machines[0]
-    # only 1 original
     if (machines[0]['status'] == "original" and
             machines[1]['status'] == "compatible"
        ):
         return machines[0]
 
     best_machine = None
-    # check if swl_machine is in machines
     for machine in machines:
         if machine['id'] == swl_machine_id:
             best_machine = machine
 
-    # no hit until now, set first machine
     if not best_machine:
         best_machine = machines[0]
-    # exception for famicom_flop
     # TODO famicom should be disconnected in mame source
     if swl_name == "famicom_flop":
         best_machine = machines[1]
 
-    # get country from detail (NULL in umsa.db for some sets)
+    # The detail is NULL in umsa.db for some sets.
     detail_text = (detail or '').lower()
     for country_sorted in sorted(COUNTRIES.keys()):
         for country in COUNTRIES[country_sorted]:
             if country in detail_text:
-                # check gamename of machines for country from detail
-                # first try actual best
+                # The current best machine wins if its name has the country.
                 for country2 in COUNTRIES[country_sorted]:
                     if country2 in (best_machine['fullname'] or '').lower():
                         return best_machine
-                # now check all machines
                 for machine in machines:
                     for country2 in COUNTRIES[country_sorted]:
                         if country2 in (machine['fullname'] or '').lower():
@@ -115,9 +97,10 @@ def best_machine_for_set(machines, swl_name, detail, swl_machine_id):
 def add_driver_wip(dats, all_dat, set_drivers):
     """Add the ``WIP Driver`` text of each set's driver to ``all_dat``.
 
-    ``dats`` is the DAT repository. ``set_drivers`` maps a set id to its driver source (``sets.source``,
-    e.g. ``snk/lasso.cpp``); the DATs name a driver by its file name and
-    only use the path for ambiguous names, so both are tried.
+    ``dats`` is the DAT repository. ``set_drivers`` maps a set id to its
+    driver source (``sets.source``, e.g. ``snk/lasso.cpp``); the DATs name a
+    driver by its file name and only use the path for ambiguous names, so
+    both are tried.
     """
 
     keys = {set_id: driver_lookup_keys(src)
@@ -128,7 +111,7 @@ def add_driver_wip(dats, all_dat, set_drivers):
     try:
         wip = dats.get_driver_wip(wanted)
     except sqlite3.OperationalError as exc:
-        # dat.db from before the driver column: no driver WIP until rescan
+        # A dat.db without the driver column: no driver WIP until a rescan.
         log(f"UMSA database: driver WIP unavailable: {exc}", level='debug')
         return
     for set_id, set_keys in keys.items():
@@ -147,24 +130,25 @@ class SoftwareDetails:
     """
 
     def __init__(self, games, status, dats, artwork):
+        """Keep the repositories; no connection is opened."""
         self._games = games
         self._status = status
         self._dats = dats
         self._artwork = artwork
 
     def get_status_for_set(self, set_id):
-        """Return play status for a set id"""
+        """Return the play status dict of a set id, or ``None``."""
 
         return status_dict(self._status.get_status_for_set(set_id))
 
     def get_latest_by_software(self, software_id):
-        """Return id of latest played set for a software id"""
+        """Return the id of the latest played set of a software, or ``None``."""
 
         sets = self._games.get_set_ids_for_software(software_id)
         return self._status.get_latest_by_set_ids(sets)
 
     def get_last_played(self, order):
-        """Return the play status list ``(results, pos)``, best first
+        """Return the play status list ``(results, pos)``, best first.
 
         ``order`` is one of ``PLAY_STATUS_ORDERS`` (``time_played``,
         ``last_played``, ``play_count``); any other value falls back to
@@ -180,14 +164,11 @@ class SoftwareDetails:
                 f"using {PLAY_STATUS_DEFAULT}", level='warning')
             order = PLAY_STATUS_DEFAULT
 
-        # get status for sets
         status_rows = self._status.get_played_sets(order)
-        # get software info for all sets in one query
         software_by_set = self._games.get_software_for_sets(
             i['id'] for i in status_rows)
         for i in status_rows:
             software = software_by_set.get(i['id'])
-            # put in dict to summarize sets
             if software and software['id'] in software_dict:
                 software_dict[software['id']]["play_count"] += i['play_count']
                 software_dict[software['id']]["time_played"] += i['time_played']
@@ -201,7 +182,6 @@ class SoftwareDetails:
                     "year": software['year'],
                     "maker": software['maker'],
                 }
-        # sort dict after value in var order and create list for return
         ordered = sorted(software_dict.items(), key=lambda t: t[1][order])
         for software_id, status in ordered[::-1]:
 
@@ -231,18 +211,14 @@ class SoftwareDetails:
         return results, 0
 
     def get_all_for_software(self, software_id, set_id=None):
-        """get all infos for software
+        """Return all sets of a software and of software with the same name.
 
-        get all sets nicely sorted (last played, prefered history, year)
-        includes a best machine to use for swl set
-
-        ``pos_machine``/``pos_set`` point to ``set_id`` when it is given and
-        one of the sets (search result), else to the latest played set, else
-        to the first one. An unknown ``set_id`` changes nothing.
-
-        all_sets.append is used instead of .extend
-        so we have all_sets[software_with_same_name][sets] = {infos}
-        and not all_sets[[software1],[software2]]
+        Returns ``(machines, pos_machine, pos_set, all_dat, all_art)``:
+        ``machines`` is a list per machine (sorted by year) of set dicts with
+        play status and the machine to start on; ``all_dat`` and ``all_art``
+        map set ids to DAT texts and artwork. ``pos_machine``/``pos_set``
+        point to ``set_id`` when it is one of the sets (search result), else
+        to the latest played set, else to the first one.
 
         TODO:
         - better document this function
@@ -260,33 +236,27 @@ class SoftwareDetails:
         pos_set = 0
         all_sets = []
 
-        # every read below goes through a repository; this method only
-        # composes the game rows with the status/dat/artwork data
         repo = self._games
 
-        # get all sets for software id
+        # One list per software: all_sets[software][set].
         all_sets.append(repo.get_sets_for_software(software_id))
 
-        # check if we have other software by this name
-        # get software name
         software_name = repo.get_software_name(software_id)
-        # get all software ids for software name
         for other_id in repo.get_software_ids_for_name(software_name):
-            if software_id == other_id:  # is the original
+            if software_id == other_id:
                 continue
             all_sets.append(repo.get_sets_for_software(other_id))
 
-        # play status of all sets in one query
         status_rows = self._status.get_status_for_sets(
             machine['id'] for diff_software in all_sets
             for machine in diff_software)
-        # machine list per software list and name per system, read once each
+        # Machine list per software list and name per system, read once each.
         swl_machines = {}
         machine_names = {}
 
         diff_machines = {}
         set_ids = []
-        # set id -> driver source whose WIP is shown as "WIP Driver"
+        # Set id -> driver source whose WIP is shown as "WIP Driver".
         set_drivers = {}
         system_sources = {}
         count = 1
@@ -295,16 +265,14 @@ class SoftwareDetails:
 
                 set_ids.append(str(machine['id']))
                 resulting_machine = ''
-                # get last_played
                 last_played = status_dict(status_rows.get(machine['id']))
 
                 if machine['system_id'] == 270257: # mame
-                    # resulting_machine is the parent
+                    # Arcade sets are grouped by their parent.
                     if machine['cloneof_id']:
                         resulting_machine = machine['cloneof_id']
                     else:
                         resulting_machine = machine['id']
-                    # resulting_machine = machine['category'] use category
                     best_machine = None
                     machine_name = 'mame'
                     if machine['category_flag']: # ismachine
@@ -314,10 +282,8 @@ class SoftwareDetails:
                         machine_label = 'Arcade'
                     set_drivers[machine['id']] = machine['source']
                 else: # swl
-                    # diff machine is swl machine
                     # TODO: to test used machine name from swl
                     resulting_machine = str(machine['system_id'])
-                    # get best machine
                     if machine['swl'] not in swl_machines:
                         swl_machines[machine['swl']] = (
                             repo.get_machines(machine['swl'])[0])
@@ -333,8 +299,8 @@ class SoftwareDetails:
                                 repo.get_machine_name(machine['system_id']))
                         machine_name, machine_label = (
                             machine_names[machine['system_id']])
-                    # driver of the machine the set runs on, else of the
-                    # default system of the software list
+                    # Driver of the machine the set runs on, else of the
+                    # default system of the software list.
                     driver = best_machine.get('source') if best_machine else None
                     if not driver and machine['system_id']:
                         if machine['system_id'] not in system_sources:
@@ -343,7 +309,6 @@ class SoftwareDetails:
                         driver = system_sources[machine['system_id']]
                     set_drivers[machine['id']] = driver
 
-                # create key in diff_machines
                 if resulting_machine not in diff_machines:
                     diff_machines[resulting_machine] = {
                         'id'      : count,
@@ -351,7 +316,7 @@ class SoftwareDetails:
                         'setlist' : []
                     }
                     count += 1
-                # remember earliest year for later sort
+                # The earliest year sorts the machine.
                 else:
                     diff_machines[resulting_machine]['year'] = min(diff_machines[resulting_machine]['year'], machine['year'])
 
@@ -379,15 +344,11 @@ class SoftwareDetails:
                     'last_played': last_played,
                 })
 
-        # create list to return
         return_list = []
-        # sort by year
         for i in sorted(diff_machines.items(), key=lambda t: t[1]['year']):
             return_list.append(i[1]['setlist'])
-        # get absolut latest played
         # TODO search for pref. country when not last played
         latest_set_id = self.get_latest_by_software(software_id)
-        # find latest in return_list
         if latest_set_id:
             for count1, i in enumerate(return_list):
                 for count2, j in enumerate(i):
@@ -395,7 +356,7 @@ class SoftwareDetails:
                         pos_machine = count1
                         pos_set = count2
                         break
-        # a requested set (search result) wins over the latest played one
+        # A requested set (search result) wins over the latest played one.
         if set_id is not None:
             for count1, i in enumerate(return_list):
                 for count2, j in enumerate(i):

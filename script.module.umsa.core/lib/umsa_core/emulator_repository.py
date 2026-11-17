@@ -1,40 +1,8 @@
-"""status.db repository for emulator configuration (``emu``/``emu_conn``).
+"""Repository for the emulator configuration in status.db (``emu``, ``emu_conn``).
 
-This module centralises SQL access to the ``status.db`` ``emu`` and
-``emu_conn`` tables (emulator configuration and its source/software-list
-connections) and is the authoritative definition of their schema, following
-the conventions of :mod:`umsa_core.status_repository` and
-:mod:`umsa_core.dat_repository`. Emulator configuration is a distinct domain
-from play history, so it lives in its own repository class rather than in
-``StatusRepository`` (roadmap step 4.6).
-
-The repository operates on an existing SQLite connection supplied by the
-caller; it never opens or closes it, never caches a different connection and
-never manages the lifetime of the caller's connection. Connections must use
-``sqlite3.Row`` (step 4.2b contract, decision Q7) and are rejected otherwise.
-
-Write methods run their statements inside a savepoint (the ownership-aware
-transaction convention of :func:`umsa_core.sqlite.write_savepoint`):
-
-- a standalone successful write commits the transaction the savepoint
-  started, so ``connection.in_transaction`` is ``False`` afterwards;
-- a failure rolls back exactly the repository operation's statements;
-- a caller-owned outer transaction is never committed (and unrelated pending
-  caller changes survive a repository failure);
-- no savepoint or transaction is left open on either path.
-
-``save_emulator`` keeps the historical two-phase sequence: the ``emu`` row is
-written and committed first, and only then (when ``reconfigure`` is false) is
-the connection created — a failing connection insert therefore leaves the
-saved emulator in the database. ``delete_emulator`` likewise keeps the
-historical order and commit boundaries: the ``emu_conn`` rows are deleted and
-committed before the ``emu`` row delete is attempted, so a failed emulator
-delete leaves the connections removed (intentionally unchanged failure
-atomicity, documented in ``docs/historical/database_refactor``).
-
-Reads never commit and own only short-lived cursors that are closed in a
-``finally`` block. Rows are normalised to plain dicts at the boundary —
-``dict`` is the public shape of all six methods.
+Owns the table schema. Writes use :func:`umsa_core.sqlite.write_savepoint`.
+``save_emulator`` and ``delete_emulator`` commit in two steps, so a failure in
+the second step leaves the first one applied.
 """
 
 from __future__ import annotations
@@ -46,18 +14,7 @@ from .sqlite import require_row_connection, write_savepoint
 
 
 def create_emulator_tables(cursor: sqlite3.Cursor) -> None:
-    """Create the ``status.db`` ``emu``/``emu_conn`` tables (schema, unchanged).
-
-    Column names, order, declared types, defaults, primary keys and
-    autoincrement behaviour are exactly the DDL that used to be inlined in
-    ``DBMod._open_persistent_databases``. No migration runs here: schema
-    changes must follow the documented ``PRAGMA user_version`` policy (Q6 in
-    ``docs/historical/database_refactor/README.md``), and this step introduces no schema
-    change.
-
-    Args:
-        cursor: Any cursor on the ``status.db`` connection.
-    """
+    """Create the ``emu`` and ``emu_conn`` tables if they do not exist."""
 
     cursor.execute(
         """
@@ -86,20 +43,15 @@ def create_emulator_tables(cursor: sqlite3.Cursor) -> None:
 class EmulatorRepository:
     """Emulator-configuration operations on a caller-owned connection.
 
-    The repository never opens or closes the supplied connection and never
-    caches a different one; :class:`umsa_core.database.DBMod` builds one per
-    access of ``DBMod.emulators`` so it can never pin a connection that later code has replaced.
+    Never opens or closes the connection; rows are returned as plain dicts.
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        """Initialise the repository.
-
-        Args:
-            connection: The existing ``status.db`` connection to operate on.
-                The repository does not own this connection.
+        """Wrap a ``status.db`` connection.
 
         Raises:
-            ValueError: If the connection does not use ``sqlite3.Row``.
+            ValueError: If the connection does not use ``sqlite3.Row``
+                (:func:`umsa_core.sqlite.require_row_connection`).
         """
 
         require_row_connection(connection, "EmulatorRepository")
@@ -107,18 +59,15 @@ class EmulatorRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the underlying connection (read-only access)."""
+        """Return the wrapped connection."""
         return self._conn
 
     def get_emulators(self, source=None, swl_name=None) -> list[dict]:
-        """Return emulators based on source or software list.
+        """Return the emulators of a source or software list, ordered by name.
 
-        Preserves the historical filter precedence: ``source`` wins when it
-        is truthy, then ``swl_name``, otherwise every emulator is returned.
-        The filtered queries join ``emu_conn`` and expose the connection id as
-        ``emu_conn_id``; the unfiltered query returns only the ``emu``
-        columns. Rows are ordered by emulator name and returned as plain
-        dicts; no match yields an empty list.
+        A truthy ``source`` wins over ``swl_name``; with neither, every
+        emulator is returned. The filtered queries add the connection id as
+        ``emu_conn_id``.
         """
 
         cursor = self._conn.cursor()
@@ -144,12 +93,9 @@ class EmulatorRepository:
         return [dict(row) for row in rows] if rows else []
 
     def get_emulator(self, emu_id=None, emu_conn_id=None) -> dict | None:
-        """Return information about one saved emulator, or ``None``.
+        """Return one emulator by ``emu_id`` or ``emu_conn_id``, or ``None``.
 
-        Preserves the historical lookup precedence: a truthy ``emu_id``
-        matches the ``emu`` row directly, a truthy ``emu_conn_id`` resolves
-        through ``emu_conn``, otherwise (no caller reaches this state) no
-        query runs and ``None`` is returned.
+        A truthy ``emu_id`` wins; with neither, no query runs.
         """
 
         cursor = self._conn.cursor()
@@ -170,23 +116,12 @@ class EmulatorRepository:
         return dict(row) if row is not None else None
 
     def save_emulator(self, emu_info, reconfigure, source=None, swl_name=None) -> None:
-        """Save an emulator and connect it if needed.
+        """Insert or update an emulator and, unless ``reconfigure``, connect it.
 
-        Keeps the observable sequence of the historical ``DBMod`` method:
-
-        1. insert or update the ``emu`` row (inside its own savepoint);
-        2. commit that emulator-row change;
-        3. if ``reconfigure`` is false, create the requested connection via
-           :meth:`connect_emulator` — a separate unit with its own commit.
-
-        For a new emulator the generated id is read from the insert cursor
-        immediately after the INSERT, before any later write can move
-        ``lastrowid``. For an update the emulator id comes from
-        ``emu_info['id']`` (never from a stale ``lastrowid``); the
-        update-plus-``reconfigure=False`` combination is unreachable from
-        every existing caller — ``gui.py`` always passes ``reconfigure=True``
-        when ``emu_info`` comes from ``get_emulator`` — and is pinned by a
-        test. Observable return value: ``None``.
+        The ``emu`` row is committed first; the connection is created
+        afterwards by :meth:`connect_emulator` in its own unit, so a failing
+        connection insert leaves the saved emulator in place. An update takes
+        the id from ``emu_info['id']``.
         """
 
         if "id" in emu_info:
@@ -203,8 +138,7 @@ class EmulatorRepository:
                     "INSERT INTO emu (name, exe, dir, zip, mode) VALUES (?, ?, ?, ?, ?)",
                     (emu_info["name"], emu_info["exe"], emu_info["dir"],
                      emu_info["zip"], emu_info["mode"]))
-                # read the generated id from the insert cursor immediately,
-                # before any subsequent write could change lastrowid
+                # Read it now, before a later write can change lastrowid.
                 emu_id = cursor.lastrowid
 
         if not reconfigure:
@@ -213,10 +147,8 @@ class EmulatorRepository:
     def connect_emulator(self, emu_id, source=None, swl_name=None) -> None:
         """Connect an emulator to a source or software list.
 
-        Preserves the historical precedence: a truthy ``source`` wins over a
-        truthy ``swl_name``; when neither is supplied nothing is inserted and
-        the historical debug-level message is logged. Observable return
-        value: ``None``.
+        A truthy ``source`` wins over ``swl_name``; with neither, nothing is
+        inserted and a debug message is logged.
         """
 
         if source:
@@ -235,32 +167,24 @@ class EmulatorRepository:
     def delete_emulator_connection(self, emu_conn_id):
         """Delete one emulator connection to a software list or source.
 
-        The read and the delete run in one unit so the decision about
-        whether the emulator is still connected is made consistently with
-        the deletion. Returns the emulator id only when the deleted
-        connection was that emulator's final connection, otherwise ``None``.
+        The read and the delete run in one unit. Returns the emulator id only
+        when the deleted connection was its last one, otherwise ``None``.
         """
 
         with write_savepoint(self._conn, "umsa_emu_write") as cursor:
-            # get emu.ids for emu_conn.id before deleting
             cursor.execute(
                 "SELECT emu_id FROM emu_conn WHERE emu_id IN "
                 "(SELECT emu_id FROM emu_conn WHERE id = ?)", (emu_conn_id,))
             connected_emus = cursor.fetchall()
-            # delete emu_conn.id
             cursor.execute("DELETE FROM emu_conn WHERE id = ?", (emu_conn_id,))
-        # return it if only 1
         return connected_emus[0][0] if len(connected_emus) == 1 else None
 
     def delete_emulator(self, emu_id) -> None:
         """Delete an emulator and all of its connections.
 
-        Preserves the historical order and commit boundaries: the connection
-        rows are deleted and committed first, then the emulator row is
-        deleted in its own unit — a failed emulator delete therefore leaves
-        the connections removed (intentionally unchanged failure atomicity
-        from the two-commit historical implementation). Observable return
-        value: ``None``.
+        The connection rows are deleted and committed first, the emulator row
+        in a second unit, so a failed emulator delete leaves the connections
+        removed.
         """
 
         with write_savepoint(self._conn, "umsa_emu_write") as cursor:

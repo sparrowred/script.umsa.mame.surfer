@@ -1,4 +1,7 @@
-"""Kodi adapter for resolving the UMSA Core add-on profile and shared settings."""
+"""Kodi adapter of Core: profile paths, settings, shared window properties, notifications.
+
+The only module of the Core add-on that imports Kodi.
+"""
 
 import dataclasses
 import os
@@ -28,15 +31,14 @@ VGM_ACTION_METHOD = "UMSA.VGM.Action"
 SOFTWARE_OPEN_METHOD = "UMSA.Software.Open"
 FRONTEND_CLOSE_METHOD = "UMSA.Frontend.Close"
 
-# used for extracted ROMs/CHDs when the rom_temp_dir setting is empty
+# Used for extracted ROMs/CHDs when the rom_temp_dir setting is empty.
 DEFAULT_ROM_TEMP_DIR = "special://temp/umsa"
 
 
 def _recompute_screensaver_inhibition() -> None:
-    """Recompute global screensaver inhibition from active reasons.
+    """Inhibit Kodi's screensaver while an emulator or a manual UMSA screensaver runs.
 
-    Calls Kodi's InhibitScreensaver(true) if any reason is active,
-    InhibitScreensaver(false) only when no reasons remain.
+    ``InhibitScreensaver(false)`` is sent only when no reason remains.
     """
     window = xbmcgui.Window(SHARED_WINDOW_ID)
     emulator_active = window.getProperty(EMULATOR_RUNNING_PROPERTY) == "true"
@@ -49,11 +51,7 @@ def _recompute_screensaver_inhibition() -> None:
 
 
 def set_emulator_running(running: bool) -> None:
-    """Set/clear the external emulator running state and recompute inhibition.
-
-    This property is shared with screensaver.umsa.mame.surfer; both add-ons
-    must use the identical property name.
-    """
+    """Set or clear the emulator-running property and recompute the inhibition."""
     window = xbmcgui.Window(SHARED_WINDOW_ID)
     if running:
         window.setProperty(EMULATOR_RUNNING_PROPERTY, "true")
@@ -63,15 +61,15 @@ def set_emulator_running(running: bool) -> None:
 
 
 def is_emulator_running() -> bool:
-    """Return True if an external emulator is currently running."""
+    """Return whether an external emulator is running."""
     return xbmcgui.Window(SHARED_WINDOW_ID).getProperty(EMULATOR_RUNNING_PROPERTY) == "true"
 
 
 def set_screensaver_manual(manual: bool) -> None:
-    """Set/clear the manually started UMSA screensaver state and recompute inhibition.
+    """Set or clear the manual-screensaver property and recompute the inhibition.
 
-    This property indicates an explicit user-initiated screensaver invocation
-    (via RunScript with a request token), not Kodi's automatic idle screensaver.
+    Manual means started by the user via ``RunScript``, not Kodi's idle
+    screensaver. Only the screensaver itself sets it.
     """
     window = xbmcgui.Window(SHARED_WINDOW_ID)
     if manual:
@@ -109,7 +107,7 @@ def clear_stale_screensaver_state() -> None:
 
 
 def get_core_data_paths(create: bool = True) -> CoreDataPaths:
-    """Resolve the shared Core profile directory in Kodi."""
+    """Return the paths of the shared Core profile directory."""
 
     addon = xbmcaddon.Addon(id=CORE_ADDON_ID)
     profile_path = xbmcvfs.translatePath(addon.getAddonInfo("profile"))
@@ -117,7 +115,7 @@ def get_core_data_paths(create: bool = True) -> CoreDataPaths:
 
 
 def get_core_vgmplay_script() -> str:
-    """Resolve the VGM MAME script bundled with the Core add-on."""
+    """Return the path of ``resources/vgmplay.lua`` of the Core add-on."""
 
     addon = xbmcaddon.Addon(id=CORE_ADDON_ID)
     addon_path = xbmcvfs.translatePath(addon.getAddonInfo("path"))
@@ -125,7 +123,7 @@ def get_core_vgmplay_script() -> str:
 
 
 def get_core_settings() -> SharedSettings:
-    """Read all UMSA settings (they are owned by the Core add-on).
+    """Return all UMSA settings (they are owned by the Core add-on).
 
     An empty ``rom_temp_dir`` is replaced by the Kodi temp folder.
     """
@@ -159,14 +157,14 @@ def set_frontend_running(running: bool) -> None:
 
 
 def is_frontend_running() -> bool:
-    """Return True while the frontend window is open."""
+    """Return whether the frontend window is open."""
 
     return xbmcgui.Window(SHARED_WINDOW_ID).getProperty(
         FRONTEND_RUNNING_PROPERTY) == "true"
 
 
 def is_screensaver_running() -> bool:
-    """Return True while the UMSA screensaver runs."""
+    """Return whether the UMSA screensaver runs."""
 
     return bool(xbmcgui.Window(SHARED_WINDOW_ID).getProperty(
         SCREENSAVER_RUNNING_PROPERTY))
@@ -179,16 +177,16 @@ def request_frontend_close() -> None:
 
 
 def is_frontend_close_method(method: str) -> bool:
-    """Return True if an onNotification method is the frontend close request."""
+    """Return whether an ``onNotification`` method is the frontend close request."""
 
     return method.endswith(FRONTEND_CLOSE_METHOD)
 
 
 def publish_vgm_info(text: str, show: bool = True) -> None:
-    """Publish the current VGM info for all add-ons on the shared window.
+    """Publish the VGM info text and the playing flag on the shared window.
 
-    The playing flag is always set so consumers (e.g. the screensaver) can
-    react to VGM control keys even when the info text is hidden by settings.
+    The playing flag is always set, so the screensaver reacts to the VGM
+    control keys also when the setting hides the text.
     """
 
     window = xbmcgui.Window(VGM_WINDOW_ID)
@@ -208,7 +206,7 @@ def clear_vgm_info() -> None:
 
 
 def vgm_active() -> bool:
-    """Return whether a VGM playback is currently active."""
+    """Return whether a VGM playback is active."""
 
     return xbmcgui.Window(VGM_WINDOW_ID).getProperty(VGM_PLAYING_PROPERTY) == "true"
 
@@ -216,16 +214,16 @@ def vgm_active() -> bool:
 def send_vgm_action(action: str) -> None:
     """Ask the add-on owning the VGM process to run a control action.
 
-    NotifyAll(sender, message) announces the message as "Other.<message>",
-    so the action is appended to the shared method name and parsed back by
-    the owning add-on with parse_vgm_action_method().
+    ``NotifyAll(sender, message)`` announces the message as
+    ``Other.<message>``, so the action is appended to the method name and
+    parsed back with :func:`parse_vgm_action_method`.
     """
 
     xbmc.executebuiltin(f"NotifyAll({VGM_SENDER},{VGM_ACTION_METHOD}.{action})")
 
 
 def parse_vgm_action_method(method: str):
-    """Return the VGM action carried by an onNotification method, else None."""
+    """Return the VGM action of an ``onNotification`` method, else ``None``."""
 
     marker = f"{VGM_ACTION_METHOD}."
     index = method.find(marker)
@@ -237,9 +235,8 @@ def parse_vgm_action_method(method: str):
 def send_software_open(software_id: int) -> None:
     """Ask a running frontend to select and display a software item.
 
-    Uses the same notification channel as the VGM control actions: the
-    message is announced as "Other.<method>.<id>" and parsed back by the
-    owning add-on with parse_software_open_method().
+    Announced as ``Other.<method>.<id>`` and parsed back with
+    :func:`parse_software_open_method`.
     """
 
     xbmc.executebuiltin(
@@ -247,7 +244,7 @@ def send_software_open(software_id: int) -> None:
 
 
 def parse_software_open_method(method: str):
-    """Return the software id carried by an onNotification method, else None."""
+    """Return the software id of an ``onNotification`` method, else ``None``."""
 
     marker = f"{SOFTWARE_OPEN_METHOD}."
     index = method.find(marker)
@@ -264,14 +261,15 @@ def make_abort_wait(monitor=None):
     """Return an abort-aware ``wait(milliseconds) -> bool`` for Core loops.
 
     The callback waits through ``Monitor.waitForAbort`` and returns ``True``
-    as soon as Kodi asks the script to end (``umsa_core.abort.Wait``). Pass
-    the caller's own monitor; without one a new ``xbmc.Monitor`` is used.
+    as soon as Kodi asks the script to end (:data:`umsa_core.abort.Wait`).
+    Pass the caller's own monitor; without one a new ``xbmc.Monitor`` is used.
     """
 
     if monitor is None:
         monitor = xbmc.Monitor()
 
     def wait(milliseconds):
+        """Wait up to ``milliseconds``; return ``True`` when Kodi aborts."""
         return bool(monitor.waitForAbort(max(0, milliseconds) / 1000.0))
 
     return wait

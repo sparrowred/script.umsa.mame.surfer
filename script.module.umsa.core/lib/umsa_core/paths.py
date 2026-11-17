@@ -1,15 +1,11 @@
-"""Path mapping utilities."""
+"""Batocera folder mapping of MAME drivers and software lists."""
 
 
 def load_batocera_mapping(mapping_file: str) -> dict[str, str]:
-    """Load Batocera directory structure mapping from file.
+    """Return ``{driver source or '<swl>.xml': Batocera folder}`` from the mapping file.
 
-    Args:
-        mapping_file: Path to batocera-dir-struct-map.txt
-
-    Returns:
-        Dict mapping MAME source/swl names to Batocera directory names.
-        Format: {'mame_source': 'batocera_dir', 'swl_name.xml': 'batocera_dir'}
+    Lines are ``<folder>:<name>,<name>…``; the first mapping of a name wins.
+    A missing or unreadable file gives ``{}``.
     """
     mapping: dict[str, str] = {}
     try:
@@ -26,6 +22,5 @@ def load_batocera_mapping(mapping_file: str) -> dict[str, str]:
                     if mame_name and mame_name not in mapping:
                         mapping[mame_name] = bato.strip()
     except OSError:
-        # File not found or unreadable - return empty mapping
         pass
     return mapping

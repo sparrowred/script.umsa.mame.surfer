@@ -1,9 +1,7 @@
 """Versioned launch request for manual screensaver starts.
 
-The frontend encodes the request (``encode_request``) and passes the token as
-the single ``RunScript`` argument; the screensaver decodes and validates it
-(``decode_request``). Both add-ons share this module through Core, so neither
-imports the other. Kodi-free.
+The frontend encodes it as the single ``RunScript`` argument, the screensaver
+decodes and validates it; both use this module, so neither imports the other.
 """
 
 import base64
@@ -29,7 +27,12 @@ def _validate_art_types(art_types):
 
 
 def encode_request(mode, art_types=None):
-    """Encode a validated launch request as one shell-safe argument."""
+    """Encode a launch request as one shell-safe argument.
+
+    Raises:
+        ValueError: For an unknown mode, invalid artwork types or a token
+            longer than ``MAX_ARGUMENT_LENGTH``.
+    """
 
     if mode not in MODES:
         raise ValueError("Unsupported screensaver mode")
@@ -45,7 +48,11 @@ def encode_request(mode, art_types=None):
 
 
 def decode_request(arguments):
-    """Decode and validate a single versioned launch argument."""
+    """Return ``{'mode', 'art_types'}`` of the single launch argument.
+
+    Raises:
+        ValueError: For anything but one valid version-1 token.
+    """
 
     if len(arguments) != 1:
         raise ValueError("Expected one screensaver request argument")

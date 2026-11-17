@@ -1,24 +1,9 @@
-"""Explicit-state gamelist filter and query composition.
+"""Game list queries: filter, selector, order and the Prev/Next windowing.
 
-This module holds the query *engine* of the frontend gamelist (the filter
-definition :func:`define_filter`, the per-selector query state of the
-``*_query`` functions and the list fetch/windowing of
-:func:`execute_statement`) and its state holder :class:`Gamelist`.
-
-The engine functions read no mutable state: each one receives the
-caller-owned SQLite connection and an explicit :class:`GamelistFilter` state
-value. :class:`Gamelist` keeps the active filter, the list order and the
-selector of the last list; ``DBMod`` owns one as ``DBMod.gamelist``.
-
-All values that originate from outside the module (category/year/player/swl/
-source/maker names, filter id lists, software names, art types, id lists) are
-passed as SQL bind parameters. Only fixed column/join/order fragments are
-interpolated. Each clause therefore carries its own ``(sql, params)`` pair so
-the parameter order survives the way the historical code concatenated clauses.
-
-The module is Kodi-independent and imports no GUI/screensaver module. It never
-opens, closes or commits the connection it is given and owns only short-lived
-cursors that are closed deterministically.
+The engine functions take the connection and an explicit
+:class:`GamelistFilter`; :class:`Gamelist` keeps that state between calls.
+Every outside value is a bind parameter; only fixed column/join/order
+fragments are interpolated. The connection is never closed or committed.
 """
 
 from __future__ import annotations
@@ -32,8 +17,8 @@ from dataclasses import dataclass, field
 from .logging import log
 from .software_search import SoftwareSearch
 
-# candidate lists kept by Gamelist.get_random_id (filtered + unfiltered,
-# a few filter variants)
+# Candidate lists kept by Gamelist.get_random_id (filtered + unfiltered,
+# a few filter variants).
 _RANDOM_ID_CACHE_SIZE = 4
 
 _ORDER_SQL = {
@@ -42,13 +27,13 @@ _ORDER_SQL = {
     "publisher": "maker.name, software.name",
 }
 _ORDER_FALLBACK = "software.name"
-# sort key columns per order; Prev/Next pages along exactly these columns
+# Sort key columns per order; Prev/Next pages along exactly these columns.
 _ORDER_KEYS = {
     "name": ("software.name",),
     "year": ("year.name", "software.name"),
     "publisher": ("maker.name", "software.name"),
 }
-# rows per Prev/Next page
+# Rows per Prev/Next page.
 PAGE_SIZE = 100
 
 
@@ -75,21 +60,23 @@ def _page_condition(keys, values, direction, inclusive=True):
 
 
 def _placeholders(values) -> str:
+    """Return ``?,?,…`` for ``values``."""
     return ",".join("?" * len(values))
 
 
 @dataclass
 class GamelistFilter:
-    """Explicit filter/query state for one gamelist statement.
+    """Snapshot of the :class:`Gamelist` state for one list query.
 
-    Snapshot of the :class:`Gamelist` state:
-
-    - ``join``/``where``: the per-selector state set by the ``get_by_*``
-      family (empty for the complete list); ``where_params`` binds its values.
-    - ``order``: one of ``name``, ``year``, ``publisher``.
-    - ``use_filter``: whether the active ``filter_*`` clauses are applied.
-    - ``filter_join``/``filter_where``: the clauses built by
-      :func:`define_filter`; ``filter_where_params`` binds ``filter_where``.
+    Attributes:
+        join: Selector join set by the ``get_by_*`` family (empty for the
+            complete list).
+        where: Selector condition; ``where_params`` binds its values.
+        order: ``name``, ``year`` or ``publisher``.
+        use_filter: Whether the ``filter_*`` clauses are applied.
+        filter_join: Joins built by :func:`define_filter`.
+        filter_where: Conditions built by :func:`define_filter`;
+            ``filter_where_params`` binds them.
     """
 
     join: str = ""
@@ -103,16 +90,17 @@ class GamelistFilter:
 
 
 def _fetch_scalar(cursor: sqlite3.Cursor) -> int:
+    """Return the first column of the next row."""
     return cursor.fetchone()[0]
 
 
 def define_filter(connection: sqlite3.Connection, filter_lists: dict):
     """Build the filter clauses for ``filter_lists``.
 
-    Returns ``(state, display_string)`` where ``state`` carries the new
-    ``filter_join``/``filter_where``/``filter_where_params`` clauses and
-    ``display_string`` is the historical ``"count (percent%)"`` label. A join is
-    skipped when every value in that category is selected.
+    Returns ``(state, display_string)``: ``state`` carries the
+    ``filter_join``/``filter_where``/``filter_where_params`` clauses,
+    ``display_string`` the ``"count (percent%)"`` label. A category with every
+    value selected adds no join.
     """
 
     filter_join = []
@@ -120,7 +108,6 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
     filter_where_params = []
     cursor = connection.cursor()
     try:
-        # swl
         if filter_lists.get('Softwarelists'):
             cursor.execute("SELECT COUNT(id) FROM swl")
             swl_count = _fetch_scalar(cursor)
@@ -131,7 +118,6 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
                 filter_where_params.extend(filter_lists['Softwarelists'])
             else:
                 log("UMSA datbase define_filter: all swls, no filter used", level='debug')
-        # game categories, machines
         if ((filter_lists.get('Game Categories')) or
                 (filter_lists.get('Machine Categories'))):
             cursor.execute("SELECT COUNT(id) FROM category")
@@ -148,7 +134,6 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
             else:
                 log("UMSA database: define_filter: all categories, no filter used",
                     level='debug')
-        # players
         if filter_lists.get('Players'):
             cursor.execute("SELECT COUNT(id) FROM nplayers")
             players_count = _fetch_scalar(cursor)
@@ -162,7 +147,6 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
             else:
                 log("UMSA database: define_filter: all players, no filter used",
                     level='debug')
-        # years
         if filter_lists.get('Years'):
             cursor.execute("SELECT COUNT(id) FROM year")
             year_count = _fetch_scalar(cursor)
@@ -174,7 +158,6 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
             else:
                 log("UMSA database: define_filter: all years, no filter used",
                     level='debug')
-        # count
         filter_where_clause = ''
         count_params = []
         if filter_join and filter_where:
@@ -203,13 +186,13 @@ def define_filter(connection: sqlite3.Connection, filter_lists: dict):
     return state, f"{count} ({percent}%)"
 
 
-# sort keys of the boundary row (software of the current set)
+# Sort keys of the boundary row (software of the current set).
 _BOUNDARY_SELECT = (
     "SELECT software.name, year.name, maker.name, software.id FROM software "
     "JOIN year ON year.id = software.year_id "
     "JOIN maker ON maker.id = software.developer_id")
-# the complete list reads software directly (one row per software, the name
-# order follows ix_software_name) instead of DISTINCT over all sets
+# The complete list reads software directly (one row per software, the name
+# order follows ix_software_name) instead of DISTINCT over all sets.
 _COMPLETE_FROM = (
     "FROM software JOIN year ON year.id = software.year_id "
     "JOIN maker ON maker.id = software.developer_id")
@@ -219,10 +202,12 @@ _COMPLETE_SELECT = (
 
 
 def _prev_row():
+    """Return the Prev sentinel row."""
     return {'id': "prev", 'name': "", 'year': "<<<", 'maker': '<<<'}
 
 
 def _next_row():
+    """Return the Next sentinel row."""
     return {'id': "next", 'name': "", 'year': ">>>", 'maker': '>>>'}
 
 
@@ -278,8 +263,11 @@ def _window_rows(window, start, total, index):
 
 
 def _window_start(index, total):
-    """First row of the window: the current software is row 50 (1-based),
-    clamped to the list, never negative; a short list is shown completely."""
+    """Return the first row of the window around row ``index``.
+
+    The current software is row 50 (1-based), clamped to the list; a short
+    list is shown completely.
+    """
 
     return max(0, min(index - (PAGE_SIZE // 2 - 1), total - PAGE_SIZE))
 
@@ -294,12 +282,12 @@ def _page_rows(slist, prevnext):
     more = len(slist) > PAGE_SIZE
     slist = slist[:PAGE_SIZE]
     if prevnext == 'next':
-        # boundary row first, the way back is always possible
+        # Boundary row first; the way back is always possible.
         slist.insert(0, _prev_row())
         if more:
             slist.append(_next_row())
         return slist, 1
-    # prev: fetched in descending order, boundary row last after reverse
+    # Prev: fetched in descending order, boundary row last after reverse.
     slist.reverse()
     slist.append(_next_row())
     if more:
@@ -323,6 +311,7 @@ def _complete_list_clause(state, filtered):
 
 
 def _fetch_dict_rows(cursor, sql, params):
+    """Run ``sql`` and return its rows as dicts."""
     cursor.execute(sql, params)
     return [dict(row) for row in cursor.fetchall()]
 
@@ -396,7 +385,7 @@ def _execute_complete(connection, state, set_id, software_id, prevnext):
                 f"{prevnext}, empty result", level='debug')
             return [], 0, 0
         slist, pos, result_count = [], 0, 0
-        # with an active filter that leaves nothing, retry once without it
+        # With an active filter that leaves nothing, retry once without it.
         for apply_filter in ((True, False) if filtered else (False,)):
             cond, params = _complete_list_clause(state, apply_filter)
             if prevnext:
@@ -427,18 +416,14 @@ def _execute_complete(connection, state, set_id, software_id, prevnext):
 
 def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                       set_id=None, software_id=None, prevnext=None):
-    """Compose and run one gamelist query from explicit ``state``.
+    """Run one game list query for ``state``; return ``(slist, pos, result_count)``.
 
-    Returns the historical ``(slist, pos, result_count)`` tuple. Every entry is
-    a plain dict: query results carry ``id``/``name``/``year``/``maker`` and the
-    ``prev``/``next`` sentinels are plain dictionaries too, so no
-    ``sqlite3.Row`` escapes this function. When ``state.order`` is not a known
-    order name it is reset in place to the safe fallback so :class:`Gamelist`
-    can take the reset over.
-
-    The complete list (no selector) reads only the shown window
-    (:func:`_execute_complete`); lists with a selector are small enough to be
-    read completely and cut in Python.
+    Rows are dicts with ``id``/``name``/``year``/``maker``, plus the
+    ``prev``/``next`` sentinel rows. An unknown ``state.order`` is reset in
+    place to the fallback, so :class:`Gamelist` can take it over. An active
+    filter that leaves nothing is retried once without it. The complete list
+    reads only the shown window; lists with a selector are read completely.
+    An invalid ``prevnext`` gives an empty result.
     """
 
     if prevnext not in (None, '', 'prev', 'next'):
@@ -462,7 +447,6 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
     if filter_join_list and filter_where_list:
         filter_join = " ".join(filter_join_list)
         filter_where = " AND ".join(filter_where_list)
-    # prepare joins and wheres from filters
     s_join, s_where = '', ''
     filters_applied = False
     if state.use_filter and state.where:
@@ -485,7 +469,7 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
             where = f"sets.id IN (SELECT sets.id FROM sets {s_join} WHERE {s_where})"
             where_params = s_where_params
             filters_applied = bool(filter_where)
-        # only for source
+        # Only for source.
         elif state.where:
             where = state.where
             where_params = state_where_params
@@ -500,8 +484,8 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
     else:
         log("UMSA database: execute_statement: no join and where clause", level='debug')
 
-    # Selector-only retry target. Identical to the historical fallback query:
-    # keeps the selector conditions and the Prev/Next boundary, drops filters.
+    # Selector-only retry: keeps the selector and the Prev/Next boundary,
+    # drops the filter.
     if state.where:
         retry_where = f"sets.id IN (SELECT sets.id FROM sets {state.join} WHERE {state.where})"
         retry_params = list(state.where_params)
@@ -511,33 +495,28 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
 
     cursor = connection.cursor()
     try:
-        # get software name (and the other sort keys for Prev/Next)
         boundary = _fetch_boundary(cursor, set_id, software_id)
         sname = None if boundary is None else boundary[0]
         if prevnext and sname is None:
-            # Prev/Next needs the name of the current software as boundary
             log("UMSA database: execute_statement: no software name for "
                 f"{prevnext}, empty result", level='debug')
             return [], 0, 0
-        # add ordering
         order, keys = _order_of(state)
         if prevnext:
             page_where, page_params = _page_condition(
                 keys, _key_values(keys, boundary), prevnext)
             direction = "ASC" if prevnext == 'next' else "DESC"
-            # one row more than a page tells whether another page follows
+            # One row more than a page tells whether another page follows.
             page_order = ", ".join(f"{k} {direction}" for k in keys)
             page_limit = f"LIMIT {PAGE_SIZE + 1}"
         time_rampup = time.time()
 
-        # fetch: at most two attempts. The second attempt is the selector-only
-        # fallback and only runs when active filters were applied to the first.
-        # An empty result after that terminates instead of looping forever.
+        # At most two attempts: the second is the selector-only retry and only
+        # runs when a filter was applied to the first.
         slist = []
         attempt = 0
         while attempt < 2:
             attempt += 1
-            # normal, previous or next
             if not prevnext:
                 if where:
                     i_where = "WHERE "+where
@@ -555,7 +534,6 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
                     i_params = list(page_params)
                 i_order = page_order
                 limit = page_limit
-            # fetch software list
             select_statement = f"SELECT DISTINCT \
                     software.id, software.name, year.name as year, maker.name as maker \
                 FROM sets \
@@ -568,8 +546,6 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
             if slist:
                 break
             if attempt == 1 and filters_applied:
-                # empty because active filters were applied: retry once
-                # without them, preserving selector and Prev/Next boundary
                 log("UMSA database: fetch list: no result, retry without filters",
                     level='debug')
                 where = retry_where
@@ -580,15 +556,12 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
         time_fetch = time.time()
 
         if not slist:
-            # no rows after the bounded attempts: return an empty result
-            # instead of fabricating Prev/Next sentinels or retrying forever
             return [], 0, 0
 
-        # get position and set prevnext
         if not prevnext:
             result_count = len(slist)
-            # index of the current software; when it is not part of the
-            # (filtered) list the window starts at the top of the list
+            # A current software outside the (filtered) list starts the
+            # window at the top.
             index = next(
                 (i for i, row in enumerate(slist) if row['name'] == sname), 0)
             start = _window_start(index, len(slist))
@@ -607,60 +580,58 @@ def execute_statement(connection: sqlite3.Connection, state: GamelistFilter,
 
 
 def software_query():
-    """Selector state for the complete list."""
+    """Return the selector ``(join, where, params)`` of the complete list."""
 
     return '', '', []
 
 
 def source_query(source):
-    """Selector state for a MAME source file."""
+    """Return the selector of a MAME source file."""
 
     return '', 'sets.source = ?', [source]
 
 
 def category_query(cat):
-    """Selector state for a category name."""
+    """Return the selector of a category name."""
 
     return ("JOIN category ON category.id = sets.classification_id",
             'category.name = ?', [cat])
 
 
 def year_query(year):
-    """Selector state for a year name."""
+    """Return the selector of a year name."""
 
     return 'JOIN year ON year.id = sets.year_id', 'year.name = ?', [year]
 
 
 def players_query(players):
-    """Selector state for a player count name."""
+    """Return the selector of a player count name."""
 
     return ('JOIN nplayers ON nplayers.id = sets.nplayers_id',
             'nplayers.name = ?', [players])
 
 
 def swl_query(swl_name):
-    """Selector state for a software-list name."""
+    """Return the selector of a software-list name."""
 
     return 'JOIN swl ON swl.id = sets.swllink_id', 'swl.name = ?', [swl_name]
 
 
 def maker_query(connection: sqlite3.Connection, maker):
-    """Selector state for a maker name, resolving clones.
+    """Return the selector of a maker name, including its clone family.
 
-    The maker's direct clone family (the resolved maker plus its direct
-    ``cloneof_id`` children) is selected; deeper descendants are not included.
+    The family is the parent maker and its direct ``cloneof_id`` children;
+    deeper descendants are not included.
     """
 
     cursor = connection.cursor()
     try:
-        # get parent if maker is clone
-        # an unknown maker has no row: no ids, the name match finds nothing
+        # An unknown maker has no row: no ids, the name match finds nothing.
         cursor.execute("SELECT id, cloneof_id FROM maker WHERE maker.name = ?", (maker,))
         row = cursor.fetchone()
         cloneof_id = None
         if row is not None:
             cloneof_id = row['cloneof_id'] or row['id']
-        # get all maker ids
         all_maker_ids = []
         if cloneof_id:
             cursor.execute("SELECT id FROM maker \
@@ -669,7 +640,6 @@ def maker_query(connection: sqlite3.Connection, maker):
                 all_maker_ids.append(str(i['id']))
     finally:
         cursor.close()
-    # set join and where
     join = 'JOIN maker ON maker.id = sets.publisher_id'
     if all_maker_ids:
         where = 'maker.id IN ({})'.format(
@@ -684,27 +654,21 @@ def maker_query(connection: sqlite3.Connection, maker):
 class Gamelist:
     """Filter, order and selector state of the game lists.
 
-    ``get_connection`` returns the current ``umsa.db`` connection
-    (``sqlite3.Row`` rows); it is asked on every call because ``DBMod.open_db``
-    replaces the connection after a database update. The connection is never
-    closed or committed here.
+    ``get_connection`` is asked on every call, because ``DBMod.open_db``
+    replaces the connection after a database update.
 
-    State:
-
-    - ``use_filter``: whether the active filter is applied
-      (:meth:`set_filter_enabled`).
-    - ``order``: ``name``, ``year`` or ``publisher`` (:meth:`set_order`).
-    - ``filter_join``/``filter_where``/``filter_where_params``: the clauses of
-      the active filter (:meth:`define_filter`).
-    - ``join``/``where``/``where_params``: the selector of the last list, set
-      by the ``get_by_*`` family and reused by :meth:`execute_statement` for
-      its Prev/Next pages.
-
-    :meth:`search` runs the software search (:mod:`umsa_core.software_search`)
-    with the active filter and leaves the selector alone.
+    Attributes:
+        use_filter: Whether the active filter is applied.
+        order: ``name``, ``year`` or ``publisher``.
+        filter_join: Clauses of the active filter (with ``filter_where`` and
+            ``filter_where_params``), see :meth:`define_filter`.
+        join: Selector of the last list (with ``where`` and
+            ``where_params``), set by the ``get_by_*`` family and reused for
+            its Prev/Next pages.
     """
 
     def __init__(self, get_connection):
+        """Start with the name order, the filter on and no selector."""
         self._get_connection = get_connection
         self.use_filter = True
         self.order = 'name'
@@ -715,12 +679,11 @@ class Gamelist:
         self.filter_where = []
         self.filter_where_params = []
         self._search = SoftwareSearch(get_connection)
-        # candidate software ids of get_random_id, see _random_candidates
         self._random_ids_token = None
         self._random_ids_cache = {}
 
     def search(self, term):
-        """Search software by name (``software_search.SearchResult``).
+        """Search software by name; return a ``software_search.SearchResult``.
 
         The active filter applies while ``use_filter`` is on. The selector of
         the last list (``join``/``where``) is left alone.
@@ -748,7 +711,7 @@ class Gamelist:
         self.order = order
 
     def define_filter(self, filter_lists):
-        """Make ``filter_lists`` the active filter; returns its count label.
+        """Make ``filter_lists`` the active filter and return its count label.
 
         TODO
         - when list smaller then 50% of all do NOT IN = faster?
@@ -791,44 +754,44 @@ class Gamelist:
         return slist, pos, result_count
 
     def get_by_software(self, set_id):
-        """Return list of software"""
+        """Select the complete list and return it (see :meth:`execute_statement`)."""
 
         self.join, self.where, self.where_params = software_query()
         return self.execute_statement(set_id)
 
     def get_software_for_source(self, set_id, source):
-        """Return list of software based on MAME source file"""
+        """Select the software of a MAME source file and return the list."""
 
         self.join, self.where, self.where_params = source_query(source)
         return self.execute_statement(set_id)
 
     def get_by_cat(self, cat, set_id):
-        """Return list of software based on category"""
+        """Select the software of a category and return the list."""
 
         self.join, self.where, self.where_params = category_query(cat)
         return self.execute_statement(set_id)
 
     def get_by_year(self, year, set_id):
-        """Return list of software based on year"""
+        """Select the software of a year and return the list."""
 
         self.join, self.where, self.where_params = year_query(year)
         return self.execute_statement(set_id)
 
     def get_by_players(self, players, set_id):
-        """Return list of software based on number of players"""
+        """Select the software for a number of players and return the list."""
 
         self.join, self.where, self.where_params = players_query(players)
         return self.execute_statement(set_id)
 
     def get_by_maker(self, maker, set_id):
-        """Return list of software based on maker"""
+        """Select the software of a maker (with clones) and return the list."""
 
         self.join, self.where, self.where_params = maker_query(
             self._get_connection(), maker)
         return self.execute_statement(set_id)
 
     def get_by_swl(self, swl_name, set_id):
-        """Return list of software based on softwarelist"""
+        """Select the software of a software list and return the list."""
 
         self.join, self.where, self.where_params = swl_query(swl_name)
         return self.execute_statement(set_id)
@@ -840,7 +803,7 @@ class Gamelist:
         nothing, the pick falls back to the whole database (like the
         selector-only retry of :meth:`execute_statement` and the random
         artwork). Every software has the same chance, whatever its number of
-        sets. The pick comes from a cached id list (:meth:`_random_candidates`).
+        sets.
         """
 
         if self.use_filter and self.filter_join and self.filter_where:
@@ -856,11 +819,8 @@ class Gamelist:
         """Return the software ids :meth:`get_random_id` picks from.
 
         The ids of one filter (or of the whole database) are read once and
-        kept, so a pick no longer sorts all software by ``RANDOM()``. umsa.db
-        is read-only, new data only comes with a new connection
-        (``DBMod.open_db``): the lists are dropped when the connection
-        changes. The filter clauses are the key, so a changed filter gets its
-        own list.
+        kept, so a pick does not sort all software by ``RANDOM()``. umsa.db is
+        read-only, so the lists are dropped only when the connection changes.
         """
 
         connection = self._get_connection()
@@ -897,12 +857,11 @@ class Gamelist:
 
 
 def build_filter_lists(filter_lists, category, games):
-    """Partition a filter category's database entries into active/inactive.
+    """Return ``{'active': […], 'inactive': […]}`` entries of a filter category.
 
-    ``games`` is the game repository (``DBMod.games``). ``active`` holds the
-    entries whose id is in ``filter_lists[category]``, ``inactive`` the rest
-    (database order preserved). Each entry is a dict
-    ``{'id': str, 'name', 'count'}``. Unknown categories yield empty lists.
+    ``games`` is the game repository. ``active`` holds the entries whose id
+    is in ``filter_lists[category]``, in database order. Each entry is
+    ``{'id': str, 'name', 'count'}``; an unknown category gives empty lists.
     """
 
     active_ids = set(filter_lists.get(category, []))

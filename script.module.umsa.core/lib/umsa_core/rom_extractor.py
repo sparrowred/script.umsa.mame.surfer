@@ -9,11 +9,11 @@ from umsa_core.rom_finder import EXTENSIONS
 
 
 class _EmptyArchive(Exception):
-    """The archive holds no file to start."""
+    """Raised when the archive holds no file to start."""
 
 
 def _listing(folder):
-    """Sorted file names of a folder: the first one is the launch file."""
+    """Return the sorted file names of a folder; the first one is the launch file."""
 
     return sorted(os.listdir(folder))
 
@@ -36,45 +36,40 @@ def _extract_into(folder, zip_file, swl_name):
     if not zfiles:
         raise _EmptyArchive(zip_file)
 
-    # simple hack to concatenate files so other emulators can read them
+    # Other emulators want one file: two files are concatenated.
     if len(zfiles) == 2 and swl_name in EXTENSIONS:
-        # hack swl nes: prg before chr
+        # NES: prg before chr; otherwise by name.
         if zfiles[0][-3:] == 'chr' and zfiles[1][-3:] == 'prg':
             _join_files(folder, zfiles[1], zfiles[0])
         elif zfiles[0][-3:] == 'prg' and zfiles[1][-3:] == 'chr':
             _join_files(folder, zfiles[0], zfiles[1])
-        # rest is simply sorted by name
         else:
             _join_files(folder, zfiles[0], zfiles[1])
         zfiles = _listing(folder)
 
-    # rename
+    # Other emulators recognise the system by the extension.
     if swl_name in EXTENSIONS:
         if os.path.splitext(zfiles[0])[1] != EXTENSIONS[swl_name]:
             os.rename(
                 os.path.join(folder, zfiles[0]),
-                # EXTENSIONS values already start with a dot
+                # EXTENSIONS values already start with a dot.
                 os.path.join(folder, zfiles[0] + EXTENSIONS[swl_name])
             )
 
 
 def extract_rom(emurun):
-    """Extract MAME rom zipfile and apply platform-specific processing.
+    """Extract the first ROM zip of ``emurun`` into ``emurun['folder']``.
 
-    The folder is filled through ``rom_cache.staged_dir``: it only exists
-    once the extraction is complete, so an existing, non-empty folder is a
-    finished extraction and is reused.
-
-    Args:
-        emurun: Emulation run state dict containing zips, folder, swl_name
+    The folder is filled through :func:`umsa_core.rom_cache.staged_dir`, so it
+    only exists once the extraction is complete; an existing, non-empty
+    folder is reused. ``emurun['extract_files']`` gets the sorted file names.
 
     Returns:
-        Empty string on success, error message string on failure.
-        ``emurun['extract_files']`` holds the sorted file names.
+        ``''`` on success, else an error text.
     """
     folder = emurun['folder']
     if os.path.isdir(folder) and not os.listdir(folder):
-        # leftover of an extraction that produced nothing
+        # Leftover of an extraction that produced nothing.
         os.rmdir(folder)
 
     if not os.path.exists(folder):

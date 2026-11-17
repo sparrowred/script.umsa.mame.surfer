@@ -1,4 +1,4 @@
-"""Artwork-related domain logic (Kodi-independent)."""
+"""Artwork paths, root keys and layout categories of artwork types."""
 
 import hashlib
 import os
@@ -7,14 +7,10 @@ from urllib.parse import quote
 
 
 def check_image_aspect(set_info: dict) -> str:
-    """Return the artwork orientation used by the GUI skin.
+    """Return the skin orientation ``'Vertical'``, ``'Horizontal'`` or ``'NotScaled'``.
 
-    Args:
-        set_info: Dictionary with keys 'display_rotation', 'display_type',
-            'category', 'swl_name'
-
-    Returns:
-        'Vertical', 'Horizontal', or 'NotScaled'
+    ``set_info`` needs ``display_rotation``, ``display_type``, ``category``
+    and ``swl_name``.
     """
 
     aspect_ratio = 'Vertical' if set_info['display_rotation'] in [90, 270] else 'Horizontal'
@@ -29,7 +25,6 @@ def check_image_aspect(set_info: dict) -> str:
     return aspect_ratio
 
 
-# Artwork type categorization for UI layout
 LEFT_IMAGELIST = (
     'snap', 'titles', 'howto', 'logo', 'bosses', 'ends',
     'gameover', 'scores', 'select', 'versus', 'warning'
@@ -41,20 +36,16 @@ RIGHT_IMAGELIST = (
     'projectmess_covers'
 )
 
-# All artwork types that are images (excludes videosnaps, manuals, soundtrack, ips)
+# Excludes videosnaps, manuals, soundtrack and ips.
 IMAGE_ART_TYPES = LEFT_IMAGELIST + RIGHT_IMAGELIST
 
 
 def find_local_snapshots(snapshot_dir: str, set_info: dict) -> list[str]:
-    """Find local MAME snapshot files for a game set.
+    """Return the paths of every entry in the set's MAME snapshot directory.
 
-    Args:
-        snapshot_dir: Base snapshot directory from mame.ini
-        set_info: Dict with 'swl_name' and 'name' keys
-
-    Returns:
-        Full paths of every entry in the set's snapshot directory, in
-        os.listdir order (no extension filtering or sorting).
+    ``snapshot_dir`` is the snapshot directory of mame.ini; ``set_info``
+    needs ``swl_name`` and ``name``. Unfiltered and unsorted; ``[]`` when the
+    directory does not exist.
     """
 
     if set_info['swl_name'] == 'mame':
@@ -67,14 +58,7 @@ def find_local_snapshots(snapshot_dir: str, set_info: dict) -> list[str]:
 
 
 def categorize_art_type(art_type: str) -> str:
-    """Categorize an artwork type for UI layout.
-
-    Args:
-        art_type: Artwork type from the database
-
-    Returns:
-        'right', 'left', 'video', 'manual', or 'unknown'
-    """
+    """Return the layout slot: ``right``, ``left``, ``video``, ``manual``, ``unknown``."""
 
     if art_type in RIGHT_IMAGELIST:
         return 'right'
@@ -88,21 +72,18 @@ def categorize_art_type(art_type: str) -> str:
 
 
 # Root keys computed by root_key_for_path, by root path string. The resolver
-# reads them instead of calling realpath for every artwork row (C-L22).
+# reads them instead of calling realpath for every artwork row.
 _ROOT_KEYS: dict[str, str] = {}
 _ROOT_KEYS_MAX = 64
 
 
 def root_key_for_path(root_path: str) -> str:
-    """Generate a deterministic root key from a filesystem path.
+    """Return the SHA256 root key of a path (realpath, no trailing separator).
 
-    Normalizes the path (realpath, strips trailing separators) and returns
-    a stable SHA256 hex digest. This ensures records from a previous root
-    cannot be accidentally resolved against a new root.
-
-    Always computes the key afresh (scanners, ``ArtworkQueries.set_source_roots``)
-    and stores it for :func:`resolve_artwork_path`, so a scan also refreshes
-    the key the resolver uses (e.g. after a symlinked root was moved).
+    Records of a previous root can then never be resolved against a new one.
+    The key is always computed afresh and stored for
+    :func:`resolve_artwork_path`, so a scan also refreshes the key the
+    resolver uses (e.g. after a symlinked root was moved).
     """
 
     if root_path is None:
@@ -113,7 +94,6 @@ def root_key_for_path(root_path: str) -> str:
     except OSError:
         normalized = os.path.abspath(root_path)
 
-    # Strip trailing path separators for consistency
     normalized = normalized.rstrip(os.sep)
     if os.altsep:
         normalized = normalized.rstrip(os.altsep)
@@ -152,36 +132,27 @@ def _safe_relative(relative_path: str) -> bool:
 
 def resolve_artwork_path(art: dict[str, Any], set_info: dict[str, Any],
                          source_roots: dict[str, str]) -> str:
-    """Resolve the full filesystem path for an artwork entry.
+    """Return the full path of an artwork row, or ``''`` if it cannot be resolved.
 
-    Supports both ordinary files and files stored inside ZIP archives.
-    For archive records, returns a Kodi-compatible archive path (not extracted).
-    The function does not rely on absolute roots stored in the database and
-    validates root_key against the current configured root (the key of a
-    root path is computed once, see :func:`root_key_for_path`). A stored
-    ``relative_path`` that is absolute or contains ``..`` resolves to ``''``.
+    A ZIP member gives a Kodi ``zip://`` path (not extracted). The row's
+    ``root_key`` must match the configured root of its source; a
+    ``relative_path`` that is absolute or contains ``..`` gives ``''``.
 
     Args:
-        art: Artwork metadata from database (new schema). May contain:
-            source, root_key, scan_unit, type, extension, relative_path,
-            archive_member
-        set_info: Game set info (swl_name, name)
-        source_roots: Mapping from source name to configured root directory
-
-    Returns:
-        Full path to artwork file, or empty string if cannot resolve
+        art: Artwork row (``source``, ``root_key``, ``type``, ``extension``,
+            ``relative_path``, ``archive_member``).
+        set_info: Set info with ``swl_name`` and ``name``.
+        source_roots: ``{source name: configured root directory}``.
     """
 
     source = art.get('source')
     if not source:
-        # Fallback to old-style reconstruction if needed
         return _build_legacy_path(art, set_info, source_roots)
 
     current_root = source_roots.get(source) if source_roots else None
     if not current_root:
         return ''
 
-    # Validate root key matches current root to prevent cross-root resolution
     art_root_key = art.get('root_key', '')
     current_root_key = _cached_root_key(current_root)
     if art_root_key and current_root_key and art_root_key != current_root_key:
@@ -193,24 +164,19 @@ def resolve_artwork_path(art: dict[str, Any], set_info: dict[str, Any],
     if relative_path and not _safe_relative(relative_path):
         return ''
 
-    # Handle archive-contained files
     if archive_member:
         if relative_path:
             archive_full = os.path.join(current_root, relative_path)
-            # Kodi archive path format: zip://<urlencoded_archive_path>/<member_path>
-            # The archive path becomes the URL-encoded hostname component.
-            # Example: /tmp/exodos/archive.zip -> zip://%2ftmp%2fexodos%2farchive.zip/member.mp4
+            # Kodi archive path: the URL-encoded archive path is the host part,
+            # /tmp/x/a.zip -> zip://%2ftmp%2fx%2fa.zip/member.mp4
             encoded_archive = quote(archive_full, safe='')
             return f"zip://{encoded_archive}/{archive_member}"
-        # If no relative_path but archive member exists, cannot construct
         return ''
 
-    # Handle ordinary files
     if relative_path:
-        # For sources that store explicit relative paths (exodos/gb64)
         return os.path.join(current_root, relative_path)
 
-    # Reconstruct from set info and type (progettosnaps-style)
+    # Without a relative path the location follows the progettosnaps layout.
     art_type = art.get('type', '')
     extension = art.get('extension', '')
 
@@ -222,7 +188,7 @@ def resolve_artwork_path(art: dict[str, Any], set_info: dict[str, Any],
     elif (set_info.get('swl_name') == 'exodos') or (
         set_info.get('swl_name', '')[:5] == 'gb64_'
     ):
-        # Fallback - should not happen if relative_path is properly stored
+        # eXoDOS/GB64 rows normally carry a relative path.
         filename = os.path.join(current_root, art_type, f"{set_info['name']}.{extension}")
     else:
         filename = os.path.join(
@@ -234,7 +200,7 @@ def resolve_artwork_path(art: dict[str, Any], set_info: dict[str, Any],
 
 def _build_legacy_path(art: dict[str, Any], set_info: dict[str, Any],
                        source_roots: dict[str, str]) -> str:
-    """Build path using old-style art dict (for backward compatibility)."""
+    """Return the path of an artwork dict without ``source`` (old row layout)."""
 
     art_path_flag = art.get('path')
     progettosnaps = source_roots.get('progettosnaps', '')
@@ -260,17 +226,10 @@ def _build_legacy_path(art: dict[str, Any], set_info: dict[str, Any],
 
 
 def build_artwork_path(art: dict, set_info: dict, progettosnaps: str, own_artwork: str) -> str:
-    """Build the full filesystem path for an artwork entry (legacy API).
+    """Return the full path of an artwork dict for the two MAME artwork roots.
 
-    Args:
-        art: Artwork metadata (type, extension, path, filename) - old style
-            or new style fields
-        set_info: Game set info (swl_name, name)
-        progettosnaps: ProgettoSnaps base path
-        own_artwork: Own artwork base path
-
-    Returns:
-        Full path to the artwork file
+    Accepts both the current row layout (resolved by
+    :func:`resolve_artwork_path`) and the old one without ``source``.
     """
 
     source_roots = {
@@ -278,11 +237,9 @@ def build_artwork_path(art: dict, set_info: dict, progettosnaps: str, own_artwor
         'own_artwork': own_artwork,
     }
 
-    # Try new resolver if it looks like new schema
     if art.get('source') or art.get('root_key') is not None or art.get('relative_path') is not None:
         return resolve_artwork_path(art, set_info, source_roots)
 
-    # Fall back to legacy
     return _build_legacy_path(art, set_info, source_roots)
 
 
@@ -304,34 +261,29 @@ def get_machine_artwork_path(
     set_info: dict, cab_path: str, fallback_media_dir: str,
     cabinets: dict | None = None, source_roots: dict | None = None,
 ) -> str:
-    """Return the machine artwork path for a game set.
+    """Return the path of the machine picture of a set.
 
     Args:
-        set_info: Dict with keys 'machine_name', 'name', 'is_machine',
-            'category'
-        cab_path: Base cabinet artwork path (e.g. /progettosnaps/cabinets/cabinets),
-            used when the artwork database has no cabinet for the machine
-            (no artwork scan yet)
-        fallback_media_dir: Directory with fallback images (pinball.png,
-            reels.png, arcade.png)
+        set_info: Dict with ``machine_name``, ``name``, ``is_machine`` and
+            ``category``.
+        cab_path: Cabinet folder (e.g. ``/progettosnaps/cabinets/cabinets``),
+            used when the artwork database has no cabinet for the machine.
+        fallback_media_dir: Folder with ``pinball.png``, ``reels.png`` and
+            ``arcade.png``.
         cabinets: Optional ``{machine set name: art row}`` from
-            ``ArtworkQueries.get_machine_cabinets`` (own artwork already
-            preferred)
-        source_roots: Artwork source roots to resolve the ``cabinets`` rows
-
-    Returns:
-        Full path to the machine artwork image
+            ``ArtworkQueries.get_machine_cabinets``.
+        source_roots: Artwork source roots to resolve the ``cabinets`` rows.
     """
 
     machine = machine_set_name(set_info)
     if machine is not None:
         art = (cabinets or {}).get(machine)
         if art:
-            # set_name: parent or clone whose cabinet stands in for the machine
+            # set_name: parent or clone whose cabinet stands in for the machine.
             path = resolve_artwork_path(
                 art, {"name": art.get("set_name", machine), "swl_name": "mame"},
                 source_roots or {})
-            # empty when the source root changed since the scan
+            # Empty when the source root changed since the scan.
             if path:
                 return path
         return os.path.join(cab_path, machine + ".png")

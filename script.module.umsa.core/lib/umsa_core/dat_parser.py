@@ -1,28 +1,9 @@
-"""Parsers for MAME support DAT files and the History XML.
+"""Pure parsers for MAME support DAT files and the History XML (no database).
 
-The parsers are pure: they never touch a database and never import SQLite.
-Each parser consumes raw input (an iterable of text lines, or a binary XML
-file object) plus a mapping from ``"<swl>:<set>"`` to a UMSA set id, and
-yields :class:`DatEntry` records. An optional :class:`DatFileReport` collects
-the file version from the header and what could not be matched.
-
-A DAT block (``$info=<sets>`` up to ``$end``) becomes **one** entry with
-its whole text; its label (``dat.file``) is the name of the input file without
-extension (``mameinfo``, ``gameinit``, ``command`` ...), so two files never
-overwrite each other's text of the same set. The ``$`` tag lines (``$mame``,
-``$bio``, ``$cmd``, ``$story``, ``$drv``) are not part of the text; one or
-more empty lines become one paragraph break, empty lines at the start and the
-end are dropped. :func:`recommended_text` cuts the ``Recommended Games``
-sections out of a text; :func:`split_info_text` splits a ``mameinfo``/
-``messinfo`` text for the display into the ``WIP:`` part and the rest without
-the ``Recommended Games`` sections (the stored text stays whole). Further
-rules:
-
-* only the list name ``info`` exactly is mapped to ``mame`` (C-L15);
-* a block or History ``<entry>`` without a single matching set yields nothing
-  (C-L16); driver sections (``$drv``) are always kept;
-* a line ``$end<rest>`` ends the entry and ``<rest>`` is read as a new line;
-* empty set names (``$info=``) are skipped.
+They map ``"<swl>:<set>"`` names to set ids and yield :class:`DatEntry`
+records; a DAT block becomes one entry labelled with the file name without
+extension. Only the list name ``info`` maps to ``mame``; a block without a
+matching set yields nothing, a driver block (``$drv``) is always kept.
 """
 
 from __future__ import annotations
@@ -42,13 +23,10 @@ class DatEntry:
         file: The label (``dat.file``): the input file name without extension
             for a DAT block (``mameinfo``, ``sysinfo`` ...), :data:`DAT_HISTORY`
             for the History XML, :data:`DRIVER_WIP` for a driver block.
-        entry: The whole entry text, lines separated by ``[CR]``. ``None`` is
-            preserved for an empty History ``<text>`` element, matching the
-            historical ``dat.entry`` value.
-        set_ids: The ids of every matched UMSA set, in discovery order. An
-            entry may be linked to several sets and the same id may appear more
-            than once when the input names it through more than one
-            software-list/set combination.
+        entry: The whole entry text, every line ended by ``[CR]``; ``None``
+            for an empty History ``<text>`` element.
+        set_ids: The ids of every matched UMSA set, in discovery order; an id
+            may appear more than once.
         driver: The MAME driver source name of a driver entry (``$drv``
             section of ``mameinfo.dat``/``messinfo.dat``), exactly as the DAT
             names it (``1942.cpp`` or, for ambiguous names,
@@ -90,14 +68,14 @@ class DatFileReport:
 
 
 # Labels (``dat.file``) the parsers write besides the DAT file names. The
-# frontend orders and dispatches on them (``umsa_gui.constants.TEXTLIST_ORDER``),
-# so it imports these names instead of repeating the texts.
+# frontend orders and dispatches on them, so it imports these names instead
+# of repeating the texts.
 #: The ``<text>`` of the History XML.
 DAT_HISTORY = 'history'
 #: Label of the WIP history of a MAME driver (``$drv`` block).
 DRIVER_WIP = 'WIP Driver'
 
-# tag lines of a block that are not part of its text
+# Tag lines of a block that are not part of its text.
 _TAG_LINES = frozenset(('$mame', '$bio', '$cmd', '$story', '$drv'))
 
 #: Labels of the info texts whose ``WIP:`` section is shown as an entry of its
@@ -107,8 +85,8 @@ INFO_WIP_LABELS = {'mameinfo': 'WIP Mame', 'messinfo': 'WIP Mess'}
 _CR = '[CR]'
 _RECOMMENDED = 'Recommended Games'
 _WIP = 'WIP:'
-# lines that end a "Recommended Games" section: a heading ("Other Emulators:",
-# "WIP:") or one of the size/level lines that follow the list in mameinfo.dat
+# Lines that end a "Recommended Games" section: a heading ("Other Emulators:",
+# "WIP:") or one of the size/level lines that follow the list in mameinfo.dat.
 _SECTION_END = re.compile(r'(?:.*:$|(?:romset|chd|levels):)', re.IGNORECASE)
 
 _VERSION_PATTERNS = (
@@ -167,8 +145,10 @@ def recommended_text(text) -> str:
 
 
 def _join_paragraphs(lines) -> str:
-    """Join text lines with ``[CR]``; empty lines at the ends are dropped,
-    several empty lines in a row become one paragraph break."""
+    """Join text lines with ``[CR]``, collapsing empty lines into one paragraph break.
+
+    Empty lines at the ends are dropped.
+    """
 
     out = []
     for line in lines:
@@ -187,7 +167,7 @@ def split_info_text(text) -> tuple:
     Games`` sections (the menu entry "Recommended" shows them). A section
     runs up to the next heading (a line ending with ``:``, not a ``-`` list
     line) or a ``Romset:``/``CHD:``/``LEVELS:`` line; that line belongs to
-    the rest. A text without both sections comes back unchanged with
+    the rest. A text without both sections comes back as it is with
     ``wip == ''``; ``None`` gives ``('', '')``.
     """
 
@@ -229,6 +209,7 @@ def find_recommended(set_dats) -> str:
 
 
 def _is_entry_start(line: str) -> bool:
+    """Return whether ``line`` starts an entry (``$<swl>=<sets>``)."""
     return line[0] == '$' and '=' in line
 
 
@@ -273,14 +254,13 @@ class _Block:
     def __init__(self, number: int, line: str) -> None:
         self.line = number
         self.header = line
-        # remove last ,
         if line[-1:] == ',':
             line = line[:-1]
         swl_str, sets_str = line[1:].split('=', 1)
         self.swl = ['mame' if name == 'info' else name
                     for name in swl_str.split(',') if name]
         self.sets = [name for name in sets_str.split(',') if name]
-        # text lines; ``blank`` notes empty lines since the last text line
+        # ``blank`` notes empty lines since the last text line.
         self.lines = []
         self.blank = False
         self.driver = None
@@ -298,11 +278,10 @@ def _add_line(block: _Block, line: str) -> None:
         block.blank = True
     elif line in _TAG_LINES:
         if line == '$drv':
-            # driver section: "$info=<driver>.cpp" followed by "$drv"
+            # Driver section: "$info=<driver>.cpp" followed by "$drv".
             block.driver = block.sets[0] if block.sets else None
     else:
         if block.blank and block.lines:
-            # one or more empty lines: one paragraph break
             block.lines.append('')
         block.blank = False
         block.lines.append(line)
@@ -365,21 +344,20 @@ def parse_dat(fobj: Iterable[str], all_sets: Mapping[str, int], datfile: str,
               report: DatFileReport | None = None, drivers=None):
     """Parse a MAME support file, yielding one :class:`DatEntry` per block.
 
-    ``fobj`` is any iterable of text lines (for example an open file or a
-    ``StringIO``). ``all_sets`` maps ``"<swl>:<set>"`` to a UMSA set id.
-    ``datfile`` is the input file name; without its extension it is the
-    label of every entry (``mameinfo.dat`` -> ``mameinfo``). A driver block
-    (``$drv``) yields a :data:`DRIVER_WIP` entry instead. Stubs of
-    ``sysinfo.dat`` ("just a stub", only ``=`` lines) are dropped.
+    The ``$`` tag lines are not part of the text; empty lines collapse into
+    one paragraph break. A line ``$end<rest>`` ends the entry and ``<rest>``
+    is read as a new line. A driver block yields a :data:`DRIVER_WIP` entry;
+    ``sysinfo.dat`` stubs are dropped. Streams: only the current entry is
+    kept in memory.
 
-    ``report`` (optional) receives the header version/date, the number of
-    yielded entries and what was not found; it is complete once the
-    generator is exhausted. ``drivers`` is the set of known driver names
-    (full ``sets.source`` and base name, see :func:`driver_lookup_keys`);
-    ``None`` skips the driver check.
-
-    The generator keeps only the current entry in memory, so large DAT files
-    are streamed.
+    Args:
+        fobj: Iterable of text lines.
+        all_sets: ``{"<swl>:<set>": set id}``.
+        datfile: Input file name; without extension it labels every entry.
+        report: Receives header version/date, the entry count and what was
+            not found; complete once the generator is exhausted.
+        drivers: Known driver names (see :func:`driver_lookup_keys`);
+            ``None`` skips the driver check.
     """
 
     if report is None:

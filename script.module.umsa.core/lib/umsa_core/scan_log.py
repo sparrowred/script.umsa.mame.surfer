@@ -1,9 +1,8 @@
 """Plain-text log file of a scan (for example ``datscan.log``).
 
-A :class:`ScanLog` collects its lines in memory and writes them in one go:
-first to ``<path>.part``, then ``os.replace`` onto ``path``, so a reader
-never sees a half-written file and a failed write keeps the previous log.
-The module knows nothing about a particular scanner.
+Lines are collected in memory and written to ``<path>.part``, then moved onto
+``path``, so a reader never sees a half-written file and a failed write keeps
+the previous log.
 """
 
 from __future__ import annotations
@@ -51,8 +50,8 @@ class ScanLog:
     def write(self) -> bool:
         """Write the log (UTF-8) atomically; return ``False`` on failure.
 
-        A failure is logged as an error and leaves an existing file at
-        ``path`` unchanged; the ``.part`` file is removed.
+        A failure is logged as an error and keeps an existing file at
+        ``path``; the ``.part`` file is removed.
         """
 
         part = self.path + ".part"

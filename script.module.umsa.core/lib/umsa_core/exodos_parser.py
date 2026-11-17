@@ -1,20 +1,7 @@
-"""Pure parser for the eXoDOS MS-DOS metadata XML.
+"""Pure parser for the eXoDOS metadata XML ``xml/all/MS-DOS.xml`` (no I/O).
 
-The parser is pure: it never touches a database, the filesystem or a ZIP
-archive, and never imports SQLite or Kodi. It consumes the already-read text of
-``xml/all/MS-DOS.xml`` (from ``Content/XODOSMetadata.zip``) plus the
-RootFolder-to-UMSA-set mapping and returns :class:`ExodosMetadata` records
-grouped in an :class:`ExodosParseResult`.
-
-The generated metadata text, the ``eXoDOS`` display category and the RootFolder
-matching are a direct extraction of the historical XML loop that used to write
-straight into ``dat``/``dat_set`` from ``support.py``: only the database access
-was removed, so the stored text stays byte-for-byte identical.
-
-Every metadata field is initialised independently for each ``<Game>`` element,
-so a field missing from one game can never inherit the value of the preceding
-game. Missing tags and tags whose ``.text`` is ``None`` become an empty string
-rather than the literal ``"None"``.
+Every field is read afresh for each ``<Game>``, so a missing tag never
+inherits the previous game's value; missing or empty tags become ``""``.
 """
 
 from __future__ import annotations
@@ -25,7 +12,7 @@ from dataclasses import dataclass
 
 DAT_FILE = "eXoDOS"
 
-# The tags rendered into the metadata note, in the historical field order.
+# The tags rendered into the metadata note, in this order.
 _FIELD_TAGS = (
     "Genre",
     "Developer",
@@ -44,18 +31,13 @@ class ExodosParseError(ValueError):
 
 @dataclass(frozen=True)
 class ExodosMetadata:
-    """One parsed eXoDOS metadata record, ready for the DAT repository.
+    """One parsed eXoDOS record, shaped like :class:`~umsa_core.dat_parser.DatEntry`.
 
     Attributes:
-        file: The display category, always :data:`DAT_FILE` (``eXoDOS``),
-            matching the historical ``dat.file`` value.
-        entry: The complete rendered metadata text (see :func:`render_note`).
-        set_ids: The matched UMSA set ids. Exactly one id for a matched game;
-            kept as a tuple so the record is directly usable by the DAT
-            repository, which accepts the same ``file``/``entry``/``set_ids``
-            shape as :class:`umsa_core.dat_parser.DatEntry`.
-        root_folder: The final RootFolder path component that was matched, kept
-            for diagnostics.
+        file: The display category, always :data:`DAT_FILE`.
+        entry: The rendered metadata text (see :func:`render_note`).
+        set_ids: One-element tuple with the matched set id.
+        root_folder: The matched final RootFolder component (diagnostics).
     """
 
     file: str
@@ -71,8 +53,7 @@ class ExodosParseResult:
     Attributes:
         records: The matched records, in document order.
         unmatched: The final RootFolder component of every game that could not
-            be mapped (including missing/empty RootFolder values), in document
-            order, so the caller can log them.
+            be mapped (also empty ones), in document order.
     """
 
     records: tuple
@@ -81,13 +62,7 @@ class ExodosParseResult:
 
 def render_note(genre, developer, publisher, notes, source, rating, series,
                 region) -> str:
-    """Render the human-readable eXoDOS metadata text.
-
-    The layout, label spelling and blank lines reproduce exactly what the
-    historical ``scan_exodos()`` XML loop stored, including the blank line after
-    ``Genre:``, the blank line before the notes, the blank line before
-    ``Source:`` and the trailing newline.
-    """
+    """Return the eXoDOS metadata text stored in ``dat.entry``."""
 
     return (
         f"Genre: {genre}\n"
@@ -107,9 +82,8 @@ def render_note(genre, developer, publisher, notes, source, rating, series,
 def _root_folder_component(text: str | None) -> str:
     """Return the final path component of a RootFolder value.
 
-    Both Windows-style backslashes and forward slashes are accepted regardless
-    of the host operating system. A missing or empty value yields an empty
-    string, which the caller treats as unmatched.
+    Backslashes and forward slashes are accepted on every OS; a missing value
+    gives ``""``.
     """
 
     if not text:
@@ -119,14 +93,11 @@ def _root_folder_component(text: str | None) -> str:
 
 def _match_set_id(root_folder: str,
                   root_folder_map: Mapping[str, int]) -> int | None:
-    """Map a RootFolder component to a UMSA set id.
+    """Return the set id of a RootFolder component, or ``None``.
 
-    An exact mapping match is preferred. Otherwise a genuine case-insensitive
-    fallback compares the RootFolder against every mapping key (the keys keep
-    their original casing, so lower-casing only the lookup value would never
-    match them). A fallback that matches several keys with *different* set ids
-    is ambiguous and left unmatched, so it can never silently pick the wrong
-    set. Returns ``None`` when nothing matches.
+    An exact match wins; otherwise the keys are compared case-insensitively.
+    A case-insensitive match on several keys with different set ids is
+    ambiguous and gives ``None``.
     """
 
     if not root_folder:
@@ -152,13 +123,11 @@ def parse_exodos_metadata(xml_text: str,
                           ) -> ExodosParseResult:
     """Parse eXoDOS ``MS-DOS.xml`` text into metadata records.
 
-    ``xml_text`` is the already-read XML document; ``root_folder_map`` maps a
-    RootFolder component to a UMSA set id (the historical ``exodos_sets_names``
-    mapping). Returns an :class:`ExodosParseResult`.
+    ``root_folder_map`` maps a RootFolder component to a set id.
 
-    Malformed XML raises :class:`ExodosParseError` (chaining the original
-    :class:`xml.etree.ElementTree.ParseError`); it never returns a
-    valid-looking empty result, so a failed parse cannot wipe existing data.
+    Raises:
+        ExodosParseError: On malformed XML, so a failed parse never looks like
+            an empty result that would wipe existing data.
     """
 
     try:

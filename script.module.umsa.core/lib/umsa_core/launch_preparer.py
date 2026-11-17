@@ -1,4 +1,4 @@
-"""Emulator-specific launch preparation."""
+"""Fill the ``emurun`` dict of a launch: emulator, arguments, extracted files."""
 
 import os
 import subprocess
@@ -65,14 +65,18 @@ def _remove_owned_symlink(emurun: dict) -> None:
 
 
 def update_dialog(dialog, percent, msg):
-    """Helper for emulator dialog from Kodi."""
+    """Update the progress dialog if there is one."""
 
     if dialog:
         dialog.update(percent, msg)
 
 
 class LaunchPreparer:
-    """Handles emulator-specific launch preparation."""
+    """Prepare the ``emurun`` dict for MAME, eXoDOS, MARP and other emulators.
+
+    The ``find_*``/``extract_*`` callables can be replaced (tests); ``None``
+    uses the Core functions.
+    """
 
     def __init__(
         self,
@@ -101,13 +105,13 @@ class LaunchPreparer:
         self._find_nonmame_roms = find_nonmame_roms
         self._extract_rom = extract_rom
         self._extract_chd = extract_chd
-        # setting rom_cache: copy archives that are started directly
+        # Setting rom_cache: copy archives that are started directly.
         self.rom_cache = rom_cache
         self._cache_layout = cache_layout
 
     @property
     def cache_layout(self):
-        """Layout of the ROM cache; without one a flat layout in ``temp_dir``."""
+        """Return the ROM cache layout; without one a flat layout in ``temp_dir``."""
 
         if self._cache_layout is not None:
             return self._cache_layout
@@ -115,10 +119,11 @@ class LaunchPreparer:
 
     @cache_layout.setter
     def cache_layout(self, layout):
+        """Set the ROM cache layout (``None``: flat layout in ``temp_dir``)."""
         self._cache_layout = layout
 
     def prepare_exodos_run(self, emurun, emu_infos):
-        """Prepare emurun for eXoDOS."""
+        """Prepare ``emurun`` for eXoDOS (terminal start, ``alt`` launcher if set)."""
         alt = "shell"
         if 'alt' in emu_infos.get('exe', ''):
             alt = "alt"
@@ -131,7 +136,7 @@ class LaunchPreparer:
         emurun['emulation_start'] = 2
 
     def prepare_marp_run(self, emurun, emu_infos):
-        """Prepare emurun for a MARP replay."""
+        """Prepare ``emurun`` for a MARP replay; downloads the ``.inp`` file."""
         emurun['emu_exe'] = self.mame_exe
         inp_file = marp_download(
             emu_infos['marp_dl'],
@@ -140,40 +145,34 @@ class LaunchPreparer:
             emu_infos['set_name'], "-playback", inp_file, "-exit_after_playback"]
 
     def prepare_mame_run(self, emurun, ggdb, actset, dialog=None):
-        """Prepare emurun['args'] for MAME based on actset."""
+        """Set ``emurun['args']`` and ``state_subdir`` for MAME and the set ``actset``."""
         emurun['emu_exe'] = self.mame_exe
         if actset['swl_name'] == 'mame':
             emurun['args'] = actset['name']
-        # check for Gamebase64 files
         elif actset['swl_name'].startswith('gb64_'):
             filename = os.path.join(
                 self.nonmame['gb64'], 'Games', actset['name'] + '.zip')
             emurun['args'] = [
                 'c64p', f"-{actset['swl_name'][-4:]}", filename]
-        # start a swl item
         else:
             if dialog is not None:
                 dialog.update(20, 'create swl options...')
-            # get cmd options
             emurun['args'] = get_cmd_line_options(
                 ggdb.games, actset['id'], actset['name'],
                 actset['machine_name'], actset['swl_name'])
-        # folder of the set's save states (umsa_core.savestates)
         emurun['state_subdir'] = state_subdir(actset, emurun['args'])
 
     def demul(self, emurun):
-        """Set parameters for Demul.
+        """Set the Demul arguments ``-run=[dc,naomi,awave,...] -rom=``.
 
-        CMD: demul -run=[dc,naomi,awave,...] -rom=
+        Returns an error text, ``''`` on success.
         """
         err = ''
         params = []
-        # dreamcast
         if emurun['swl_name'] == 'dc' and emurun['chds']:
             params.extend(['-run=dc', f'-image={emurun["chds"][0]}'])
-        # arcade
         else:
-            # call -listroms to find parameter for -run=
+            # The -listroms section of the set is the -run= value.
             section = ''
             found = False
             try:
@@ -189,7 +188,6 @@ class LaunchPreparer:
                     log(f"UMSA Emu run_emulator: demul - found {i}", level='debug')
                     found = True
                     break
-            # Atomiswave exception
             if section == "Atomiswave":
                 section = "awave"
             if found:
@@ -203,37 +201,40 @@ class LaunchPreparer:
         return err
 
     def fsuae(self, emurun):
-        """Set parameters for FS-UAE.
+        """Set the FS-UAE arguments.
 
         args: --floppies_dir=<temp_dir> --floppy_drive_0=disk1 ...
               --floppy_image_0=disk1 --floppy_image_1=disk2 ...
         or    --cdrom-drive-0=path/to/cd-image = cue/iso TODO test chd
         """
         params = []
-        # set amiga model depending on softwarelist
         models = {'amigaaga_flop': "A1200", 'cd32': "CD32", 'cdtv': "CDTV"}
         try:
             params.append("--amiga_model={}".format(models[emurun['swl_name']]))
         except KeyError:
             params.append('--amiga_model=A500')
-        # set cdrom/floppy
         if emurun['chds'] and emurun['chds'][0]:
             params.append('--cdrom-drive-0={}'.format(emurun['chds'][0]))
         else:
-            # set floppies_dir
             params.append('--floppies_dir={}'.format(emurun['folder']))
             for count, file_name in enumerate(emurun.get('extract_files', [])):
-                # set all floppy images so switching disk in fs-uae is available
+                # All images, so switching disks in fs-uae is available.
                 params.append('--floppy_image_{}={}'.format(
                     count, os.path.join(emurun['folder'], file_name)))
-                # set up to 4 floppy drives with images
+                # FS-UAE has up to 4 floppy drives.
                 if count <= 3:
                     params.append('--floppy_drive_{}={}'.format(
                         count, os.path.join(emurun['folder'], file_name)))
         emurun['args'] = params
 
     def _prepare_chd_directory_symlink(self, emurun):
-        """Link an unextracted MAME CHD beside its discovered ROM ZIP if needed."""
+        """Link the CHD folder beside the ROM ZIP if needed; return the link or ``None``.
+
+        The link is recorded in ``emurun`` so only this launch removes it.
+
+        Raises:
+            OSError: When a file is missing or another path is in the way.
+        """
 
         launch_id = emurun.get("launch_id", "unknown")
         chds = emurun.get('chds') or []
@@ -307,24 +308,22 @@ class LaunchPreparer:
         _remove_owned_symlink(emurun)
 
     def other_emulator(self, emurun, emu_infos, dialog=None, sleep=None, wait=None):
-        """Prepare run for other emulators.
+        """Prepare ``emurun`` for a non-MAME emulator; ``False`` when it cannot start.
 
-        ``wait`` (``umsa_core.abort.Wait``) makes a CHD extraction stop on a
-        shutdown request (``ShutdownRequested``).
+        Finds the files, extracts or caches them and sets the arguments.
+        ``wait`` (:data:`umsa_core.abort.Wait`) makes a CHD extraction stop on
+        a shutdown request (``ShutdownRequested``).
         """
         ret_val = True
         update_dialog(dialog, 10, 'searching roms/chds...')
 
-        # set temporary folder
         emurun['folder'] = self.cache_layout.extract_dir(
             emurun['swl_name'], emurun['set_name'], emurun.get('source'))
-        # set emulator, working dir and mode
         emurun['emu_exe'] = emu_infos['exe']
         emurun['working_dir'] = emu_infos['dir']
         if 'mode' in emu_infos:
             emurun['emulation_start'] = emu_infos['mode']
 
-        # find file by the name of the set
         launch_id = emurun.get("launch_id", "unknown")
         log(
             f'UMSA Emu: launch={launch_id} preparing emulator='
@@ -367,7 +366,6 @@ class LaunchPreparer:
                 level='warning',
             )
             ret_val = False
-        # extract rom_file if needed
         elif not emu_infos.get('zip', False):
             log(
                 f"UMSA Emu: launch={launch_id} extraction requested "
@@ -383,14 +381,13 @@ class LaunchPreparer:
                     extract_rom_func = extract_rom
                 extract_error = extract_rom_func(emurun)
                 if extract_error:
-                    # never start the emulator without its file
+                    # Never start the emulator without its file.
                     log(
                         f'UMSA Emu err: {extract_error} launch={launch_id} '
                         f'zip={zips[0]!r}',
                         level='warning',
                     )
                     ret_val = False
-            # extract 1st chd
             if chds and chds[0]:
                 update_dialog(dialog, 20, 'extracting chd...')
                 extract_chd_func = self._extract_chd
@@ -404,17 +401,14 @@ class LaunchPreparer:
                 f"extractcd={emurun.get('extractcd')!r}",
                 level="debug",
             )
-            # set args
             if emurun.get('extract_files'):
                 emurun['args'] = os.path.join(
                     emurun['folder'], emurun['extract_files'][0])
             elif 'extractcd' in emurun:
                 emurun['args'] = os.path.join(
                     emurun['folder'], emurun['extractcd'][0])
-        # set 1st rom or chd as argument
         else:
             if self.rom_cache:
-                # start from a copy in the ROM cache
                 update_dialog(dialog, 20, 'caching roms/chds...')
                 cache_archives(emurun, self.cache_layout, dialog, wait)
                 zips = emurun.get('zips') or []
@@ -451,7 +445,6 @@ class LaunchPreparer:
                 level="debug",
             )
 
-        # special emulator handling
         exe_lower = emu_infos['exe'].lower()
         if 'demul' in exe_lower:
             err = self.demul(emurun)

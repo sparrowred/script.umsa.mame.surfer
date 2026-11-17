@@ -1,21 +1,8 @@
-"""One-time legacy-file import for ``status.db`` history and filter state.
+"""One-time import of ``lastgames.txt`` and ``filter_<name>.txt`` into status.db.
 
-This module owns the Kodi-free half of roadmap step 4.6.1: discovering the
-recognized legacy sources, validating them all-or-nothing, importing the valid
-ones into ``status.db`` together with a durable terminal marker and the list of
-files pending deletion, and only then deleting the recognized files.
-
-Only two source families are recognized:
-
-- :attr:`umsa_core.data_paths.CoreDataPaths.lastgames_file` (``lastgames.txt``);
-- ``filter_<name>.txt`` files in the profile directory whose name part passes
-  :meth:`CoreDataPaths.filter_file` validation.
-
-Nothing else is ever read or deleted. The GUI startup path calls
-:func:`run_legacy_import` through ``DBMod.run_legacy_import``; the explicit
-``retry_import`` command uses :func:`retry_import`. The module never imports
-Kodi and never opens a connection - it receives the caller-owned ``status.db``
-connection.
+Sources are validated all-or-nothing, imported together with a durable marker
+and the list of files to delete, and only then deleted. Nothing else is ever
+read or deleted. Works on the caller's status.db connection.
 """
 
 from __future__ import annotations
@@ -72,10 +59,10 @@ def _logical_lines(content: str) -> list[str]:
 def _read_decodable(path: Path) -> str:
     """Read ``path`` as UTF-8.
 
-    Undecodable bytes are a *content* problem and surface as ``ValueError``
-    (the whole file is discarded). Filesystem failures (``OSError``: missing
-    file, permissions, I/O) are *not* a content verdict and are allowed to
-    propagate so the caller can abort the attempt without deleting anything.
+    Raises:
+        ValueError: For undecodable bytes (the file is discarded).
+        OSError: For filesystem failures, which are no content verdict; the
+            caller aborts without deleting anything.
     """
 
     try:
@@ -101,11 +88,9 @@ def _validate_ids(tokens: list[str]) -> list[str]:
 def validate_lastgames(path: Path) -> list[int]:
     """Validate a ``lastgames.txt`` file and return its software ids.
 
-    The writer emits one line of comma-separated decimal ids (no trailing
-    newline). A zero-byte file (or an empty first line) means "no entries".
-    Only the first line is data; further lines are ignored, matching the
-    historical legacy reader. A non-integer token or
-    undecodable bytes raise ``ValueError`` (whole file discarded).
+    Only the first line is data: comma-separated decimal ids; an empty file
+    means no entries. A non-integer token or undecodable bytes raise
+    ``ValueError`` (whole file discarded).
     """
 
     content = _read_decodable(path)
@@ -118,10 +103,9 @@ def validate_lastgames(path: Path) -> list[int]:
 def validate_filter(path: Path) -> dict[str, list[str]]:
     """Validate a ``filter_<name>.txt`` file and return the public mapping.
 
-    The strict binding rule: exactly five logical lines, mapping in the
-    writer's order to the five categories. Any line may be empty; a non-empty
-    line holds comma-separated decimal ids. An incorrect line count, an
-    invalid or empty token, or undecodable text invalidates the whole file.
+    Exactly five logical lines, one per category in
+    :data:`FILTER_CATEGORY_ORDER`; a non-empty line holds comma-separated
+    decimal ids. Anything else raises ``ValueError`` (whole file discarded).
     """
 
     content = _read_decodable(path)
@@ -144,11 +128,9 @@ def discover_legacy_paths(
 ) -> tuple[Path | None, list[Path]]:
     """Return the recognized legacy sources ``(lastgames, filter_files)``.
 
-    Only ``lastgames.txt`` and ``filter_<name>.txt`` files directly inside the
-    profile directory are recognized. Filter names are validated with the
-    established ``filter_file()`` rule; unsafe or unrecognized names are
-    skipped and never become cleanup candidates. Discovery never recurses and
-    never matches other extensions.
+    Only files directly inside the profile directory count; a filter name
+    must pass :meth:`CoreDataPaths.filter_file`, others are never cleanup
+    candidates.
     """
 
     lastgames = Path(paths.lastgames_file)
@@ -164,7 +146,6 @@ def discover_legacy_paths(
                 continue
             filter_name = name[len(_FILTER_PREFIX):-len(_FILTER_SUFFIX)]
             try:
-                # Reuse the authoritative filename validation.
                 paths.filter_file(filter_name)
             except ValueError:
                 continue
@@ -212,6 +193,7 @@ def _cleanup(
 def _existing_recognized(
     lastgames: Path | None, filters: list[Path]
 ) -> list[str]:
+    """Return the paths of the recognized sources that exist."""
     existing: list[str] = []
     if lastgames is not None and lastgames.exists():
         existing.append(str(lastgames))
@@ -222,11 +204,9 @@ def _existing_recognized(
 
 
 def _record_failure(repo: HistoryRepository, error: str) -> bool:
-    """Best-effort durable ``failed`` marker with ``error`` diagnostics.
+    """Record a ``failed`` marker; return ``False`` when that write failed.
 
-    Returns ``True`` when the marker was recorded. When it returns ``False``
-    (the marker write itself failed) no durable marker exists, which is the
-    established signal for the next ordinary startup to retry.
+    Without a marker the next startup retries the import.
     """
 
     try:
@@ -248,16 +228,12 @@ def _record_failure(repo: HistoryRepository, error: str) -> bool:
 def run_legacy_import(connection, paths: CoreDataPaths) -> ImportResult:
     """Run (or resume) the one-time legacy import.
 
-    The full sequence is: discover → read+validate all → commit data + terminal
-    marker + pending-delete list in one transaction → delete recognized files
-    → update the pending list → return the result. Terminal markers are never
-    re-imported; a ``completed*`` marker with leftovers degrades to
-    cleanup-only. A recorded ``failed`` marker is reported and left alone.
-
-    A filesystem failure while discovering or reading a recognized source is
-    **not** treated as malformed content: the attempt aborts before the import
-    transaction, no legacy file is deleted, and a best-effort ``failed`` marker
-    is recorded so subsequent startups wait for the explicit retry command.
+    Discover, validate all, commit data + marker + pending-delete list in one
+    transaction, then delete the files and update the pending list. A
+    ``completed*`` marker only retries the cleanup; a ``failed`` marker is
+    reported and left alone (see :func:`retry_import`). A filesystem failure
+    while discovering or reading aborts before the transaction, deletes
+    nothing and records ``failed``.
     """
 
     repo = HistoryRepository(connection)
@@ -291,9 +267,7 @@ def run_legacy_import(connection, paths: CoreDataPaths) -> ImportResult:
         _record_failure(repo, error)
         return ImportResult(status="failed", error=error)
 
-    # No terminal marker: read and validate every source *before* opening the
-    # import transaction. A filesystem read error aborts the whole attempt, so
-    # no other recognized file is partially imported.
+    # Validate every source before the transaction; a read error aborts all.
     lastgames_ids: list[int] = []
     filters: dict[str, dict[str, list[str]]] = {}
     discarded: list[str] = []
@@ -327,7 +301,6 @@ def run_legacy_import(connection, paths: CoreDataPaths) -> ImportResult:
     recognized = _existing_recognized(lastgames_path, filter_paths)
 
     if not recognized:
-        # No recognized source exists at all: intentional completion.
         marker_data = {
             "status": "completed_no_source",
             "discarded": [],
@@ -358,8 +331,7 @@ def run_legacy_import(connection, paths: CoreDataPaths) -> ImportResult:
     except Exception as exc:
         if not in_caller_transaction:
             connection.rollback()
-        # Best-effort durable failure marker in a separate transaction. If
-        # this also fails, no marker exists and the next startup retries.
+        # Separate transaction; if it fails too, the next startup retries.
         try:
             repo.record_import_marker(
                 {

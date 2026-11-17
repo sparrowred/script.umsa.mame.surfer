@@ -1,12 +1,8 @@
-"""Maintenance actions of the UMSA settings (Core add-on script entry).
+"""Maintenance actions of the settings: ``RunScript(script.module.umsa.core,<command>)``.
 
-The Maintenance section of ``resources/settings.xml`` runs
-``RunScript(script.module.umsa.core,<command>)``. This file lives outside
-``lib/umsa_core`` because it uses Kodi; the file selection itself is the
-Kodi-free ``umsa_core.data_paths.maintenance_targets``.
-
-A running frontend holds umsa.db/status.db open, so it is asked to close
-(``request_frontend_close``) before anything is deleted.
+Deletes databases after a confirmation. A running frontend holds umsa.db and
+status.db open, so it is asked to close first; with a running screensaver
+nothing is deleted.
 """
 
 import os
@@ -19,7 +15,7 @@ import xbmcgui
 ADDON = xbmcaddon.Addon(id="script.module.umsa.core")
 sys.path.append(os.path.join(ADDON.getAddonInfo("path"), "lib"))
 
-# imported after the lib path is on sys.path
+# Imported after the lib path is on sys.path.
 from umsa_core.data_paths import (
     MAINTENANCE_COMMANDS,
     maintenance_targets,
@@ -42,11 +38,15 @@ CLOSE_POLL = 0.5
 
 
 def _log(message, level=xbmc.LOGINFO):
+    """Write ``message`` to the Kodi log."""
     xbmc.log(f"UMSA maintenance: {message}", level)
 
 
 def _wait_for_frontend_close(monitor):
-    """Ask the frontend to close; return True once it is gone."""
+    """Ask the frontend to close; return ``True`` once it is gone.
+
+    Waits at most ``CLOSE_TIMEOUT`` seconds; a Kodi abort returns ``False``.
+    """
 
     request_frontend_close()
     waited = 0.0
@@ -60,7 +60,7 @@ def _wait_for_frontend_close(monitor):
 
 
 def _delete(paths):
-    """Delete ``paths``; return (deleted names, error messages)."""
+    """Delete ``paths``; return ``(deleted names, error messages)``."""
 
     deleted, errors = [], []
     for path in paths:
@@ -75,7 +75,7 @@ def _delete(paths):
 
 
 def run(command, dialog=None, monitor=None):
-    """Run one maintenance ``command``; return True if files were deleted."""
+    """Run one maintenance ``command``; return ``True`` if files were deleted."""
 
     dialog = dialog or xbmcgui.Dialog()
     monitor = monitor or xbmc.Monitor()

@@ -1,24 +1,8 @@
-"""Centralized scan coordination to serialize all covered scan workflows.
+"""One process-wide lock that serializes the DAT, artwork, GB64 and eXoDOS scans.
 
-This module provides a single process-wide lock shared by every covered scan
-workflow:
-
-* DAT scans that use the shared staging tables (``DatScanner`` /
-  ``Scans.dats``).
-* The MAME artwork scan (``ArtworkScanner`` / ``Scans.artwork``).
-* The GB64 scan, including its DAT metadata work
-  (``GB64Scanner`` / ``Scans.gb64``).
-* The eXoDOS scan, including its DAT metadata work
-  (``ExodosScanner`` / ``Scans.exodos``).
-
-The lock is process-local: it does not coordinate separate Python processes
-that may access the same database files.
-
-Acquisition is non-blocking. A scan that cannot take the lock returns an
-explicit ``busy`` result immediately instead of waiting. Acquisition is
-re-entrant per thread: an internal helper that re-enters while the *same*
-thread owns the lock does not deadlock and does not release the lock early.
-Only the outermost acquisition releases the underlying lock.
+Acquisition is non-blocking (a scan that cannot take it returns ``busy``) and
+re-entrant per thread; only the outermost release frees it. The lock does not
+coordinate separate processes.
 """
 
 from __future__ import annotations
@@ -39,12 +23,7 @@ class ScanCoordinator:
         self._depth = 0
 
     def acquire(self) -> bool:
-        """Try to take the lock without blocking.
-
-        Returns ``True`` when the lock is now held: either it was just acquired
-        by the current thread, or the current thread already owned it (a nested
-        call). Returns ``False`` when another thread owns it.
-        """
+        """Take the lock without blocking; ``False`` when another thread owns it."""
 
         ident = threading.get_ident()
         if self._owner_ident == ident:
@@ -60,8 +39,8 @@ class ScanCoordinator:
     def release(self) -> None:
         """Release one acquisition if the current thread owns the lock.
 
-        The underlying lock is released only when the outermost acquisition is
-        released, so a nested internal helper never frees the outer scan.
+        Only the outermost release frees the lock, so a nested helper never
+        frees the outer scan.
         """
 
         ident = threading.get_ident()
@@ -83,7 +62,7 @@ class ScanCoordinator:
         return self._owner_ident is not None
 
 
-# The single shared coordinator instance used by every covered scan workflow.
+# The shared coordinator of every scan.
 scan_coordinator = ScanCoordinator()
 
 
@@ -98,11 +77,7 @@ class ScanBusyError(Exception):
 class ScanLockContext:
     """Context manager that holds the shared scan lock for one workflow.
 
-    Raises :class:`ScanBusyError` when the lock is already owned by another
-    thread. Used as::
-
-        with ScanLockContext(scan_coordinator):
-            ...
+    Raises :class:`ScanBusyError` on entry when another thread owns the lock.
     """
 
     def __init__(self, coordinator: ScanCoordinator | None = None) -> None:

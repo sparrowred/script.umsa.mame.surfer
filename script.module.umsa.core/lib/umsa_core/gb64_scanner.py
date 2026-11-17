@@ -1,21 +1,8 @@
-"""GameBase64 support-file scanner.
+"""GameBase64 scan: NFO metadata into dat.db, covers and screenshots into artwork.db.
 
-This module owns the GameBase64 import algorithm: it loads the ``gb64_*`` set
-mapping from ``umsa.db`` once, inventories the ``Extras/Cover`` and
-``Screenshots`` directory trees once each, reads every ``Games/<set>.zip``
-``VERSION.NFO`` at most once, and writes the resulting DAT metadata and
-artwork through :mod:`umsa_core.dat_repository` and
-:mod:`umsa_core.artwork_repository`.
-
-The scanner never imports or touches ``DBMod`` and owns its own short-lived
-worker connections. All SQL lives in the repositories; the scanner only
-coordinates them. Each game archive is one scan unit (``Games/<set>.zip``), so
-a failure mid-scan leaves everything already processed committed, preserves the
-previous records for the failed unit, and keeps it retryable.
-
-The legacy screenshot unit (``Screenshots``) is retired only after a completely
-successful scan (no missing archives, no errors, no cancellation, no incomplete
-discovery); until then its records are preserved.
+Each ``Games/<set>.zip`` is one scan unit; a failed unit keeps its previous
+records and stays retryable. Archives are committed in batches. Uses its own
+connections.
 """
 
 from __future__ import annotations
@@ -39,10 +26,10 @@ COVER_UNIT = "Extras/Cover"
 SCREENSHOT_DIR = "Screenshots"
 LEGACY_SCREENSHOT_UNIT = "Screenshots"
 GAMES_DIR = "Games"
-# archives written per transaction (C-M15): one commit per archive cost
-# three fsyncs each and invalidated the screensaver's candidate cache
+# Archives written per transaction: one commit per archive cost three fsyncs
+# each and invalidated the screensaver's candidate cache.
 COMMIT_EVERY = 250
-# summary counters of archives that only count once their batch is committed
+# Summary counters of archives that only count once their batch is committed.
 _BATCH_COUNTERS = ('dat', 'artwork', 'processed')
 
 
@@ -56,22 +43,17 @@ class GB64Scanner:
     Args:
         db_paths: Resolved Core data paths (needs ``umsa_db``, ``dat_db`` and
             ``artwork_db``).
-        initialize_dat: Optional callable taking the DAT DB cursor; must ensure
-            the ``dat``/``dat_set`` schema exists. Defaults to the repository's
-            authoritative schema helper.
-        initialize_art: Optional callable taking the artwork DB cursor; must
-            ensure the ``art_set``/``art_scan_unit`` schema exists. Defaults to
-            the repository's authoritative schema helper.
-        progress: Optional ``progress(percent, what)`` callback. Either value
-            may be ``None`` to leave it unchanged.
+        initialize_dat: Optional callable taking the DAT DB cursor; default
+            :func:`umsa_core.dat_repository.create_dat_tables`.
+        initialize_art: Optional callable taking the artwork DB cursor;
+            default :func:`umsa_core.artwork_repository.create_artwork_tables`.
+        progress: Optional ``progress(percent, what)`` callback; ``None`` for
+            either value keeps it.
         is_cancelled: Optional predicate returning ``True`` when the host wants
             the scan to stop.
-        listdir: Optional directory listing callable (defaults to
-            ``os.listdir``).
-        isfile: Optional file predicate callable (defaults to
-            ``os.path.isfile``).
-        open_zip: Optional archive opener (defaults to ``zipfile.ZipFile``),
-            used once per archive.
+        listdir: Directory listing callable (default ``os.listdir``).
+        isfile: File predicate (default ``os.path.isfile``).
+        open_zip: Archive opener (default ``zipfile.ZipFile``).
     """
 
     def __init__(self, db_paths, initialize_dat=None, initialize_art=None,
@@ -110,14 +92,12 @@ class GB64Scanner:
     # -- discovery helpers ----------------------------------------------
 
     def _walk_files(self, base_dir):
-        """Inventory every file under ``base_dir`` recursively.
+        """Return ``(paths, complete)`` of every file under ``base_dir``.
 
-        Returns ``(paths, complete)`` where ``paths`` are sorted relative paths
-        using forward slashes. ``complete`` is ``False`` when the base directory
-        itself is missing or when any directory or entry could not be
-        inspected, so a missing or unreadable tree is never mistaken for a
-        successfully empty one (which could otherwise delete valid artwork). A
-        genuinely empty but readable directory is still ``complete``.
+        ``paths`` are sorted relative paths with forward slashes. ``complete``
+        is ``False`` when the tree is missing or anything could not be
+        inspected, so an unreadable tree is never mistaken for an empty one
+        (which would delete valid artwork).
         """
 
         files = []
@@ -128,8 +108,6 @@ class GB64Scanner:
             try:
                 entries = list(self._listdir(abs_dir))
             except FileNotFoundError as exc:
-                # A missing required tree (or a child that vanished after it
-                # was discovered) is incomplete, not an empty success.
                 log(f"UMSA gb64 scan: directory missing '{abs_dir}': {exc}",
                     level='error')
                 complete = False
@@ -157,13 +135,11 @@ class GB64Scanner:
         return files, complete
 
     def _load_mappings(self):
-        """Load ``{set name: id}`` and ``{title: id}`` for the gb64 sets.
+        """Return ``({set name: id}, {title: id})`` of the gb64 sets.
 
-        Titles keep the first id seen, matching the historical behaviour. Rows
-        with an unusable (NULL/empty) set name are skipped, so an all-unusable
-        result comes back empty and the caller aborts instead of scanning junk.
-        The connection is opened and closed here so nothing is held open while
-        the filesystem is traversed.
+        A title keeps the first id seen; rows without a set name are skipped.
+        The connection is closed again, so nothing is held open while the
+        filesystem is traversed.
         """
 
         umsa_db = self._db_paths.umsa_db
@@ -183,9 +159,8 @@ class GB64Scanner:
                 gb64_name = {}
                 for set_id, name, gamename in cursor.fetchall():
                     if not name:
-                        # An unusable row (NULL/empty set name) cannot resolve
-                        # to an archive; skip it so a mapping made only of such
-                        # rows is rejected below instead of scanning junk.
+                        # Cannot resolve to an archive; a mapping of only such
+                        # rows comes back empty and the scan aborts.
                         continue
                     gb64_sets[name] = set_id
                     if gamename not in gb64_name:
@@ -206,20 +181,12 @@ class GB64Scanner:
 
     @staticmethod
     def _normalize_screenshot_ref(ref) -> tuple:
-        """Classify a ``Screenshot:`` value and normalise it when usable.
+        """Classify a ``Screenshot:`` value; return ``(state, path)``.
 
-        Returns ``(state, path)`` where ``state`` is one of:
-
-        * ``'absent'``  -- no reference was given (a valid empty result); the
-          returned ``path`` is ``''``.
-        * ``'valid'``   -- a safe relative reference; ``path`` is relative to
-          the ``Screenshots`` directory (backslashes normalised, surrounding
-          whitespace stripped and a leading ``Screenshots/`` dropped so it is
-          not prefixed twice).
-        * ``'invalid'`` -- a non-empty unsafe reference (absolute or
-          parent-traversing); the returned ``path`` is the original value for
-          diagnostics. A malicious or malformed NFO must never escape the
-          artwork root, and must not be silently turned into an empty success.
+        ``'absent'`` with ``''`` when there is no reference; ``'valid'`` with
+        the path relative to ``Screenshots`` (forward slashes, a leading
+        ``Screenshots/`` dropped); ``'invalid'`` with the original value for an
+        absolute or ``..`` reference, which must never escape the artwork root.
         """
 
         if not ref:
@@ -239,8 +206,7 @@ class GB64Scanner:
         if parts and parts[0] == SCREENSHOT_DIR:
             parts = parts[1:]
         if not parts:
-            # A degenerate reference (e.g. just "Screenshots/") carries no
-            # file; treat it the same as an absent reference.
+            # Just "Screenshots/" carries no file.
             return 'absent', ''
         return 'valid', '/'.join(parts)
 
@@ -252,14 +218,11 @@ class GB64Scanner:
         return ext.removeprefix('.')
 
     def _screenshot_rows(self, set_id, root_key, unit, normalized, screenshots):
-        """Build the artwork rows for one game from its normalised reference.
+        """Return the snap and title rows of one game.
 
-        ``normalized`` is the already-validated path relative to ``Screenshots``
-        (empty for an absent reference). Only references actually present in the
-        (successfully enumerated) ``screenshots`` inventory produce a row, so a
-        genuinely missing screenshot creates no record. The title image is the
-        ``_1`` sibling of the snap in the same directory, computed with
-        ``splitext`` so it works for any extension.
+        ``normalized`` is the validated path relative to ``Screenshots`` (empty
+        when absent). Only files present in ``screenshots`` give a row. The
+        title is the ``_1`` sibling of the snap, for any extension.
         """
 
         rows = []
@@ -288,12 +251,10 @@ class GB64Scanner:
     # -- scan ------------------------------------------------------------
 
     def scan(self, gb64_root, cancel_event=None):
-        """Scan a GameBase64 installation under the shared scan lock.
+        """Scan a GameBase64 installation under the shared scan lock; return the summary.
 
-        This public entry point owns the process-wide scan lock for the whole
-        combined metadata/artwork workflow. When another covered scan is
-        already running it returns immediately with ``busy`` set and leaves all
-        data untouched.
+        When another scan holds the lock, return at once with ``busy`` set.
+        See :meth:`_scan_locked`.
         """
 
         busy_summary = {
@@ -328,25 +289,20 @@ class GB64Scanner:
             lock_ctx.__exit__(None, None, None)
 
     def _scan_locked(self, gb64_root, cancel_event=None):
-        """Scan a GameBase64 installation.
+        """Scan ``gb64_root``, the folder with ``Games``, ``Extras`` and ``Screenshots``.
 
-        ``gb64_root`` is the configured GameBase64 directory (the one that
-        contains ``Games``, ``Extras`` and ``Screenshots``). Returns a summary
-        whose keys are ``sets``, ``processed``, ``zips``, ``dat``, ``artwork``,
-        ``covers``, ``missing``, ``errors``, ``cancelled``, ``aborted``,
-        ``discovery_incomplete`` and ``legacy_cleaned``.
+        A missing root, an unloadable or empty set mapping aborts before
+        anything is written. A failed archive or an invalid screenshot
+        reference keeps the previous records; a missing archive counts in
+        ``missing``. An unlistable cover or screenshot tree sets
+        ``discovery_incomplete`` and counts one error. The old ``Screenshots``
+        unit and rows of other roots are removed only after a scan without
+        missing archives, errors, cancellation or incomplete discovery.
 
-        A missing/unreadable root, an unloadable UMSA mapping or an empty
-        GameBase64 set mapping (including one made only of unusable rows)
-        aborts before anything is written. A failed archive preserves its
-        previous DAT and artwork and is left retryable; a missing archive is
-        skipped with a warning and counted in ``missing``. An invalid
-        screenshot reference is a per-archive error that preserves the previous
-        artwork. A failed required-root discovery sets ``discovery_incomplete``
-        and increments ``errors`` once per failed root, so an incomplete scan
-        never reports zero errors. The legacy ``Screenshots`` unit is removed
-        only when the whole scan completed with no missing archives, no errors,
-        no cancellation, no abort and no incomplete discovery.
+        Returns:
+            Summary with ``sets``, ``processed``, ``zips``, ``dat``,
+            ``artwork``, ``covers``, ``missing``, ``errors``, ``cancelled``,
+            ``aborted``, ``discovery_incomplete`` and ``legacy_cleaned``.
         """
 
         summary = {
@@ -389,9 +345,7 @@ class GB64Scanner:
             summary['errors'] += 1
             return summary
 
-        # An empty mapping means there is nothing to import; treat it as an
-        # aborted scan rather than a successful empty one so existing DAT and
-        # artwork records are preserved and no cleanup is attempted.
+        # An abort, not an empty success: no cleanup runs.
         if not gb64_sets:
             log("UMSA gb64 scan: no GameBase64 sets in the UMSA mapping; "
                 "aborting without changes", level='error')
@@ -399,12 +353,8 @@ class GB64Scanner:
             summary['errors'] += 1
             return summary
 
-        # Inventory both directory trees once, before any database write, so
-        # the filesystem is each traversed a single time. Both roots are
-        # required: an explicit check validates them before traversal so a
-        # missing root can never be mistaken for an empty success. Each failed
-        # root is counted once here (not once per affected unit) so the summary
-        # reports the discovery failure without double-counting it.
+        # Both trees are listed once, before any database write. A failed root
+        # counts one error here, not one per affected unit.
         self._report(0, 'reading covers...')
         cover_dir = os.path.join(root, 'Extras', 'Cover')
         if os.path.isdir(cover_dir):
@@ -449,7 +399,7 @@ class GB64Scanner:
 
         dat_conn = None
         art_conn = None
-        # summary counters when the open archive batch began (None: no batch)
+        # Summary counters when the open archive batch began (None: no batch).
         batch_start = None
         try:
             dat_conn = connect_sqlite(
@@ -510,16 +460,13 @@ class GB64Scanner:
                     log(f"UMSA gb64 scan: cannot read '{zip_path}': {exc}",
                         level='error')
                     summary['errors'] += 1
-                    # Mark the unit errored so a corrupt archive is visible and
-                    # stays retryable; its previous DAT/artwork is untouched.
+                    # Keeps the previous DAT/artwork; the unit stays retryable.
                     self._record_unit_error(art_repo, root_key, unit, exc)
                     continue
 
                 summary['zips'] += 1
 
-                # Write the DAT metadata first; it is authoritative and comes
-                # from the archive itself. Only if it succeeds do we touch the
-                # artwork, so a failed metadata write never replaces artwork.
+                # Metadata first: a failed metadata write never replaces artwork.
                 try:
                     dat_repo.replace_origin_for_set(
                         ORIGIN_GB64, set_id, DAT_FILE, nfo.entry)
@@ -531,10 +478,6 @@ class GB64Scanner:
                     self._record_unit_error(art_repo, root_key, unit, exc)
                     continue
 
-                # Classify the screenshot reference. An invalid (absolute or
-                # parent-traversing) reference is a per-archive error: keep the
-                # previous artwork, mark the unit errored (not done) and leave
-                # it retryable. The DAT metadata written above is unaffected.
                 ref_state, normalized_ref = self._normalize_screenshot_ref(
                     nfo.screenshot)
                 if ref_state == 'invalid':
@@ -547,13 +490,8 @@ class GB64Scanner:
                     continue
 
                 if not screenshots_complete:
-                    # The screenshot tree could not be fully enumerated, so a
-                    # missing reference cannot be trusted; keep the previous
-                    # artwork and mark the unit errored (not done) so a later
-                    # retry reprocesses it. The DAT metadata above is kept.
-                    # The discovery failure itself was already counted once in
-                    # summary['errors'] when the root was walked, so no
-                    # per-archive error count is raised here.
+                    # A missing screenshot cannot be trusted: keep the artwork
+                    # and retry later. The failure was counted once already.
                     log(f"UMSA gb64 scan: screenshot tree incomplete, keeping "
                         f"artwork for '{unit}'", level='warning')
                     self._record_unit_error(
@@ -572,17 +510,12 @@ class GB64Scanner:
                     summary['errors'] += 1
                     self._record_unit_error(art_repo, root_key, unit, exc)
 
-            # what was written so far is kept, also after a cancellation
+            # What was written so far is kept, also after a cancellation.
             self._commit_batch(dat_conn, art_conn, summary, batch_start)
             batch_start = None
 
-            # Retire the legacy 'Screenshots' unit only after a fully
-            # successful scan: every expected archive present (no missing), no
-            # errors, no cancellation, no incomplete discovery and no abort. A
-            # missing archive means the replacement data is incomplete, so the
-            # legacy records are preserved until a later fully successful scan.
-            # A cleanup failure is logged and retried on the next run without
-            # failing the scan.
+            # Cleanup only after a fully successful scan; a missing archive
+            # means the replacement data is incomplete.
             if (not summary['cancelled'] and not summary['aborted']
                     and not summary['discovery_incomplete']
                     and summary['errors'] == 0
@@ -594,8 +527,8 @@ class GB64Scanner:
                     log(f"UMSA gb64 scan: could not retire legacy screenshot "
                         f"unit: {exc}", level='error')
                     summary['errors'] += 1
-                # rows of an earlier GB64 folder (other root key) can never
-                # be resolved again
+                # Rows of an earlier GB64 folder (other root key) can never
+                # be resolved again.
                 try:
                     removed = art_repo.delete_other_roots(SOURCE, [root_key])
                     if removed:
@@ -609,7 +542,7 @@ class GB64Scanner:
             summary['aborted'] = True
             summary['errors'] += 1
             if batch_start is not None:
-                # archives finished before the abort are kept
+                # Archives finished before the abort are kept.
                 self._commit_batch(dat_conn, art_conn, summary, batch_start)
         finally:
             if art_conn is not None:
@@ -715,7 +648,7 @@ class GB64Scanner:
 
     @staticmethod
     def _record_unit_error(art_repo, root_key, unit, exc):
-        """Best-effort: mark a unit errored without hiding the original failure."""
+        """Mark a unit errored; a failure here is only logged."""
 
         try:
             art_repo.set_scan_unit_error(SOURCE, root_key, unit, str(exc))

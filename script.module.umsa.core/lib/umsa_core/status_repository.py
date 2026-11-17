@@ -1,31 +1,8 @@
-"""status.db repository for play history and per-set further media.
+"""Repository for play status and further media in status.db (``sets``).
 
-This module centralises SQL access to the ``status.db`` ``sets`` table (play
-status, play history and the per-set MARP/Youtube links) and is the
-authoritative definition of that table's schema, following the conventions of
-:mod:`umsa_core.dat_repository` and :mod:`umsa_core.game_repository`. The
-``emu``/``emu_conn`` tables of ``status.db`` live in
-:mod:`umsa_core.emulator_repository` (roadmap step 4.6).
-
-The repository operates on an existing SQLite connection supplied by the
-caller; it never opens or closes it, never caches a different connection and
-never manages the lifetime of the caller's connection. Connections must use
-``sqlite3.Row`` (step 4.2b contract, decision Q7) and are rejected otherwise.
-
-Write methods run their statements inside a savepoint (the ownership-aware
-transaction convention of :func:`umsa_core.sqlite.write_savepoint`):
-
-- a standalone successful write commits the transaction the savepoint
-  started, so ``connection.in_transaction`` is ``False`` afterwards;
-- a failure rolls back exactly the repository operation's statements;
-- a caller-owned outer transaction is never committed (and unrelated pending
-  caller changes survive a repository failure);
-- no savepoint or transaction is left open on either path.
-
-Reads never commit and own only short-lived cursors that are closed in a
-``finally`` block. Rows are returned transparently as the connection's native
-``sqlite3.Row``, so both ``row['col']`` and ``row[i]`` access keep working;
-presentation and time formatting live in :mod:`umsa_core.software_details`.
+Owns the table schema. Writes use :func:`umsa_core.sqlite.write_savepoint`;
+reads return ``sqlite3.Row``. Formatting lives in
+:mod:`umsa_core.software_details`.
 """
 
 from __future__ import annotations
@@ -36,26 +13,18 @@ from collections.abc import Iterable
 
 from .sqlite import require_row_connection, write_savepoint
 
-# sort columns of the play status list (``sets`` columns of status.db)
+# Sort columns of the play status list.
 PLAY_STATUS_ORDERS = ('time_played', 'last_played', 'play_count')
 PLAY_STATUS_DEFAULT = 'time_played'
 
-# ids per ``IN (...)`` statement, below SQLite's historical limit of 999
+# Ids per ``IN (...)`` statement, below the 999-variable limit of older SQLite.
 _IN_BLOCK = 500
 
 
 def create_status_tables(cursor: sqlite3.Cursor) -> None:
-    """Create the ``status.db`` ``sets`` table (current schema, unchanged).
+    """Create the ``sets`` table if it does not exist.
 
-    Column names, order, declared types, defaults and the primary-key
-    behaviour are exactly the DDL that used to be inlined in
-    ``DBMod._open_persistent_databases``. No migration runs here: schema
-    changes must follow the documented ``PRAGMA user_version`` policy (Q6 in
-    ``docs/historical/database_refactor/README.md``), and this step introduces no schema
-    change.
-
-    Args:
-        cursor: Any cursor on the ``status.db`` connection.
+    Schema changes go through :mod:`umsa_core.status_migrations`.
     """
 
     cursor.execute(
@@ -79,20 +48,15 @@ def create_status_tables(cursor: sqlite3.Cursor) -> None:
 class StatusRepository:
     """Play-history and further-media operations on a caller-owned connection.
 
-    The repository never opens or closes the supplied connection and never
-    caches a different one; :class:`umsa_core.database.DBMod` builds one per
-    access of ``DBMod.status`` so it can never pin a connection that later code has replaced.
+    Never opens or closes the connection.
     """
 
     def __init__(self, connection: sqlite3.Connection) -> None:
-        """Initialise the repository.
-
-        Args:
-            connection: The existing ``status.db`` connection to operate on.
-                The repository does not own this connection.
+        """Wrap a ``status.db`` connection.
 
         Raises:
-            ValueError: If the connection does not use ``sqlite3.Row``.
+            ValueError: If the connection does not use ``sqlite3.Row``
+                (:func:`umsa_core.sqlite.require_row_connection`).
         """
 
         require_row_connection(connection, "StatusRepository")
@@ -100,16 +64,13 @@ class StatusRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the underlying connection (read-only access)."""
+        """Return the wrapped connection."""
         return self._conn
 
     def get_status_for_set(self, set_id) -> sqlite3.Row | None:
-        """Return the raw status row for ``set_id``, or ``None``.
+        """Return the raw status row (``SELECT *``) for ``set_id``, or ``None``.
 
-        Row-transparent: both positional access (``row[1]``…``row[4]``, used
-        by ``software_details.status_dict``) and named access keep working.
-        Time/elapsed formatting is presentation logic and lives in
-        :mod:`umsa_core.software_details`.
+        ``software_details.status_dict`` reads it by position.
         """
 
         cursor = self._conn.cursor()
@@ -122,9 +83,7 @@ class StatusRepository:
     def get_status_for_sets(self, set_ids: Iterable) -> dict:
         """Return ``{set id: status row}`` for the ids that have a status row.
 
-        The batch form of :meth:`get_status_for_set` (same ``SELECT *`` row
-        shape). Ids without a status row are missing from the mapping, an
-        empty id collection returns an empty mapping. The ids are queried in
+        The batch form of :meth:`get_status_for_set`. The ids are queried in
         blocks so a large software never exceeds SQLite's variable limit.
         """
 
@@ -147,11 +106,11 @@ class StatusRepository:
     def get_played_sets(self, order, limit=250) -> list:
         """Return the status rows of the played sets, highest ``order`` first.
 
-        ``order`` must be one of :data:`PLAY_STATUS_ORDERS`; anything else
-        raises ``ValueError`` (the column name is part of the statement, so
-        only whitelisted names are ever interpolated). Rows carry ``id``,
-        ``last_played``, ``play_count`` and ``time_played`` and come in the
-        database order of ``ORDER BY <order> DESC``.
+        Rows carry ``id``, ``last_played``, ``play_count`` and ``time_played``.
+
+        Raises:
+            ValueError: If ``order`` is not in :data:`PLAY_STATUS_ORDERS`; the
+                column name is interpolated into the statement.
         """
 
         if order not in PLAY_STATUS_ORDERS:
@@ -169,12 +128,7 @@ class StatusRepository:
             cursor.close()
 
     def get_further_media(self, set_id) -> dict | None:
-        """Return a ``marp``/``youtube`` dict for ``set_id``, or ``None``.
-
-        Returns a plain dict with the ``marp`` and ``youtube`` keys (consumers
-        use named access such as ``media['marp']``); no ``sqlite3.Row`` leaves
-        this method.
-        """
+        """Return ``{'marp': …, 'youtube': …}`` for ``set_id``, or ``None``."""
 
         cursor = self._conn.cursor()
         try:
@@ -189,12 +143,9 @@ class StatusRepository:
     def get_latest_by_set_ids(self, set_ids: Iterable) -> int | None:
         """Return the latest played set id among ``set_ids``, or ``None``.
 
-        Keeps the historical ``ORDER BY last_played DESC LIMIT 1`` semantics
-        across the given ids (a status row with a ``NULL`` ``last_played`` is
-        still a candidate, exactly as before). An empty id collection returns
-        ``None`` without building malformed SQL, and set ids without a status
-        row simply do not match. Returns the bare id value (not a Row), which
-        is the shape ``SoftwareDetails.get_latest_by_software`` returns.
+        Uses ``ORDER BY last_played DESC LIMIT 1``, so a status row with a
+        ``NULL`` ``last_played`` is still a candidate. Empty ``set_ids``
+        return ``None`` without a query.
         """
 
         ids = list(set_ids)
@@ -217,27 +168,21 @@ class StatusRepository:
         return row[0]
 
     def write_status_after_play(self, set_id, played_seconds) -> None:
-        """Record one play session for ``set_id``.
+        """Record one play session of ``played_seconds`` for ``set_id``.
 
-        Preserves the existing behaviour exactly: the timestamp format
-        ``%Y-%m-%d %H:%M``; a new status row is inserted when none exists;
-        otherwise ``last_played`` is replaced, ``time_played`` accumulates
-        ``played_seconds`` and ``play_count`` is incremented with the same
-        arithmetic as before. The SELECT and the corresponding INSERT/UPDATE
-        run within one savepoint, so an exception can never leave a partially
-        applied update. Observable return value: ``None``.
+        Sets ``last_played`` (``%Y-%m-%d %H:%M``), adds to ``time_played``
+        and increments ``play_count``, inserting the row if needed. The read
+        and the write run in one savepoint.
         """
 
         date = time.strftime("%Y-%m-%d %H:%M")
 
         with write_savepoint(self._conn, "umsa_status_write") as cursor:
-            # get data
             cursor.execute(
                 "SELECT time_played, play_count FROM sets WHERE id = ?",
                 (set_id,),
             )
             set_fetch = cursor.fetchone()
-            # update data
             if set_fetch:
                 set_data = (
                     date,
@@ -251,7 +196,6 @@ class StatusRepository:
                     "WHERE id = ?",
                     (set_data),
                 )
-            # new data
             else:
                 set_data = (set_id, date, played_seconds, 1)
                 cursor.execute(
@@ -265,19 +209,13 @@ class StatusRepository:
     ) -> None:
         """Save MARP or Youtube entries for ``set_id``.
 
-        Preserves the Q4 fix and the current update semantics: an existing
-        row is only updated with the supplied truthy ``marp``/``youtube``
-        values (unspecified values are never overwritten); a missing row gets
-        exactly one INSERT holding both columns when at least one value is
-        supplied; when neither needs writing and no row exists, nothing
-        happens. Observable return value: ``None``.
+        Only truthy values are written; an existing value is never cleared.
+        A missing row gets one INSERT holding both columns.
         """
 
         with write_savepoint(self._conn, "umsa_status_write") as cursor:
-            # check set_id
             cursor.execute("SELECT sets.id FROM sets WHERE id = ?", (set_id,))
             if cursor.fetchone():
-                # update
                 if marp:
                     cursor.execute(
                         "UPDATE sets SET marp = ? WHERE id = ?", (marp, set_id)
@@ -288,8 +226,7 @@ class StatusRepository:
                         (youtube, set_id),
                     )
             elif marp or youtube:
-                # insert: both values belong to this one row, so a single
-                # INSERT writes them (a second INSERT would reuse the same PK)
+                # A second INSERT would reuse the same primary key.
                 cursor.execute(
                     "INSERT INTO sets (id, marp, youtube) VALUES(?,?,?)",
                     (set_id, marp or None, youtube or None),

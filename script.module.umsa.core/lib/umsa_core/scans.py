@@ -1,10 +1,8 @@
 """Scan entry points and the shared state of the one active scan.
 
-``Scans`` runs the DAT, artwork, eXoDOS and GameBase64 scanners against the
-Core databases; ``ScanState`` holds what the progress dialog shows (``percent``,
-``what``) and the stop signal every scanner polls (``running``). The scanners
-open their own connections through :class:`~umsa_core.data_paths.CoreDataPaths`,
-so nothing here needs a ``DBMod``.
+``Scans`` runs the DAT, artwork, eXoDOS and GameBase64 scanners; each opens
+its own connections. ``ScanState`` holds the progress (``percent``, ``what``)
+and the stop signal every scanner polls (``running``).
 """
 
 from __future__ import annotations
@@ -52,17 +50,13 @@ class ScanState:
 
     @contextmanager
     def own(self, start_what):
-        """Own the state fields for one scan.
+        """Own the state fields for one scan; yield whether the scan lock was taken.
 
-        The process-wide scan lock is taken *before* any field is touched. The
-        context yields ``True`` once the lock is owned; only then does it
-        initialise the fields and clear ``running`` again on exit. When another
-        scan already owns the lock it yields ``False`` and never touches the
-        fields, so a competing invocation can neither overwrite the active
-        scan's progress nor clear (and thereby cancel) its ``running``.
-
-        The lock is re-entrant per thread, so a scan entry point called from
-        inside the block re-acquires it harmlessly.
+        The process-wide scan lock is taken *before* any field is touched.
+        When another scan owns it, the context yields ``False`` and leaves the
+        fields alone, so a competing call can neither overwrite the active
+        scan's progress nor cancel it. ``running`` is cleared on exit. The
+        lock is re-entrant per thread.
         """
 
         lock_ctx = ScanLockContext(scan_coordinator)
@@ -87,14 +81,15 @@ class ScanState:
 class Scans:
     """The scan entry points of the GUI.
 
-    db_paths -- resolved :class:`CoreDataPaths` of the Core databases.
-    nonmame -- getter returning the ``{'exodos', 'gb64', 'whdload'}`` roots
-        (``SharedSettings.nonmame``); asked on every scan, so changed settings
-        apply to the next one.
+    Every method returns the scanner's summary dictionary; a scan that finds
+    another one running returns the scanner's ``busy`` summary and leaves
+    ``state`` alone.
 
-    Every method returns the scanner's summary dictionary unchanged; a scan
-    that finds another one running returns the scanner's ``busy`` summary and
-    leaves ``state`` alone.
+    Args:
+        db_paths: Resolved :class:`~umsa_core.data_paths.CoreDataPaths`.
+        nonmame: Getter of the ``{'exodos', 'gb64', 'whdload'}`` roots
+            (``SharedSettings.nonmame``); asked on every scan, so changed
+            settings apply to the next one.
     """
 
     def __init__(self, db_paths, nonmame=lambda: None):
@@ -103,6 +98,7 @@ class Scans:
         self.state = ScanState()
 
     def _root(self, key):
+        """Return the configured root of collection ``key``, or ``''``."""
         roots = self._nonmame() or {}
         return roots.get(key, '')
 
@@ -119,11 +115,7 @@ class Scans:
 
     def artwork(self, paths, listdir=None, source=None, cancel_event=None,
                 only_types=None, resume=True):
-        """Scan artwork folders, unit-based and resumable.
-
-        See :meth:`ArtworkScanner.scan` for the discovery/inventory semantics,
-        resumability, filesystem retry policy and summary keys.
-        """
+        """Scan artwork folders, resumable (:meth:`ArtworkScanner.scan`)."""
 
         with self.state.own('discovering'):
             return ArtworkScanner(

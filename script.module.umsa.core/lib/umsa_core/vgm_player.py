@@ -1,9 +1,7 @@
-"""VGM playback logic, header parsing, and playback callbacks.
+"""VGM track preparation, random track selection and the music info.
 
-This module handles VGM-specific logic: random VGM selection, header parsing,
-playback plan calculation, and callback notifications. Socket management and
-process execution are handled by the Emulation facade, which also owns the
-playback threads (``Emulation.play_vgm`` / ``play_random_vgm`` / ``stop_vgm``).
+Sockets, processes and the playback threads belong to
+:class:`umsa_core.emulation.Emulation`.
 """
 
 import os
@@ -27,19 +25,20 @@ from umsa_core.vgm_socket import _parse_vgmplay_port, parse_lua_level
 
 VGM_RANDOM_BATCH_SIZE = 100
 VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE = 5
-# Music info countdown: refresh interval and bounded join on stop
+# Music info countdown: refresh interval and bounded join on stop (seconds).
 VGM_INFO_TICK_SECONDS = 1.0
 VGM_INFO_TICKER_JOIN_TIMEOUT = 1.5
 # Longest wait for MAME after the Lua connect: -seconds_to_run counts emulated
-# time, so a slow machine may take longer; beyond this the track is stopped
+# time, so a slow machine may take longer; beyond this the track is stopped.
 VGM_WAIT_FACTOR = 1.5
 VGM_WAIT_MARGIN_SECONDS = 30.0
 
 
 class VgmPlayer:
-    """Handles VGM playback logic, header parsing, and callbacks.
+    """Prepare VGM tracks, pick random ones and keep the music info.
 
-    Socket management and process execution are handled by the Emulation facade.
+    ``vgm_info_callback(text)`` gets the music info line,
+    ``vgm_stopped_callback()`` the end of a playback (once per playback).
     """
 
     def __init__(
@@ -66,10 +65,10 @@ class VgmPlayer:
         self.playintrovgm = False
         self.playrandomvgm = False
         self._vgm_stopped_notified = False
-        # session token of the current playback (VGMPLAY_TOKEN, M4)
+        # Session token of the current playback (VGMPLAY_TOKEN): only the
+        # MAME of this playback may connect.
         self.vgm_token = None
 
-        # music info countdown ("<title> -MM:ss (<+gain> dB[ auto| manual])")
         self._vgm_title = None
         self._planned_seconds = 0
         self._level = None  # (gain_db, state) of the last level frame
@@ -78,24 +77,31 @@ class VgmPlayer:
 
     @property
     def vgm_info_callback(self):
+        """Return the callback that gets the music info line."""
         return self._vgm_info_callback
 
     @vgm_info_callback.setter
     def vgm_info_callback(self, value):
+        """Set the callback that gets the music info line."""
         self._vgm_info_callback = value
 
     @property
     def vgm_stopped_callback(self):
+        """Return the callback for the end of a playback."""
         return self._vgm_stopped_callback
 
     @vgm_stopped_callback.setter
     def vgm_stopped_callback(self, value):
+        """Set the callback for the end of a playback."""
         self._vgm_stopped_callback = value
 
     def _vgm_process_env(self, vgm_port_env, fade_seconds=None, token=None):
-        """Environment of the MAME process: the port captured for this
-        listener, the fade-out length for vgmplay.lua (none: no fade) and the
-        session token for its HELLO line (none: no handshake)."""
+        """Return the environment of the MAME process.
+
+        Sets the port of this listener, the fade-out length in seconds for
+        vgmplay.lua (none: no fade) and the session token for its HELLO line
+        (none: no handshake).
+        """
         env = os.environ.copy()
         if token:
             env['VGMPLAY_TOKEN'] = token
@@ -113,7 +119,7 @@ class VgmPlayer:
         return env
 
     def _notify_vgm_info(self, message):
-        """Forward a VGM info message to the Kodi integration layer."""
+        """Pass a music info line to ``vgm_info_callback``; failures are only logged."""
         if self.vgm_info_callback:
             try:
                 self.vgm_info_callback(message)
@@ -121,17 +127,17 @@ class VgmPlayer:
                 log(f'UMSA Emu: VGM info callback failed: {error}', level='warning')
 
     def vgm_status(self, remaining_seconds):
-        """Music info line for the current track."""
+        """Return the music info line for the current track."""
         return format_vgm_status(self._vgm_title, remaining_seconds, self._level)
 
     def on_lua_log(self, text):
-        """Lua log frame listener: keep gain and state of the last level frame."""
+        """Keep gain and state of the last level frame of vgmplay.lua (socket thread)."""
         level = parse_lua_level(text)
         if level is not None:
             self._level = level
 
     def process_timeout(self):
-        """Seconds to wait for the MAME process of the prepared track."""
+        """Return the seconds to wait for the MAME process of the prepared track."""
 
         return self._planned_seconds * VGM_WAIT_FACTOR + VGM_WAIT_MARGIN_SECONDS
 
@@ -149,6 +155,7 @@ class VgmPlayer:
         planned = self._planned_seconds
 
         def tick():
+            """Send the countdown once per second until stopped or at 0."""
             while True:
                 remaining = planned - (clock() - started)
                 self._notify_vgm_info(self.vgm_status(remaining))
@@ -169,11 +176,9 @@ class VgmPlayer:
             ticker.join(VGM_INFO_TICKER_JOIN_TIMEOUT)
 
     def _notify_vgm_stopped(self):
-        """Forward the end of a VGM playback to the Kodi integration layer.
+        """Call ``vgm_stopped_callback`` at most once per playback.
 
-        The callback is delivered at most once per playback: the playback
-        owner and the playback worker can both reach the end of a track, and
-        the Kodi layer must only be told once that the VGM stopped.
+        The playback owner and the worker can both reach the end of a track.
         """
         if self._vgm_stopped_notified:
             return
@@ -194,21 +199,20 @@ class VgmPlayer:
 
     def prepare_vgm_run(self, emurun, vgm, sec2run=90, intro=False, plan=None, info=None,
                         vgm_port_env=None, title=None):
-        """Prepare emurun dict for VGM playback.
+        """Fill ``emurun`` for a VGM track and start a new session token.
 
         Args:
-            emurun: Emulation run state dict (will be updated)
-            vgm: VGM identifier string
-            sec2run: Seconds to run (fallback if plan not provided)
-            intro: Whether this is an intro VGM
-            plan: Optional PlaybackPlan object
-            info: Optional music info title (``format_vgm_title``)
-            vgm_port_env: VGMPLAY_PORT value for the process environment
+            vgm: ``<set>:<track>`` for MAME ``-quik``.
+            sec2run: Seconds to run when there is no ``plan``.
+            intro: The track is the intro VGM.
+            plan: Optional :class:`~umsa_core.vgm_header.PlaybackPlan`.
+            info: Optional music info title (``format_vgm_title``).
+            vgm_port_env: ``VGMPLAY_PORT`` value for the process environment.
             title: Music info title without the stop notification of ``info``
-                (random playback); defaults to ``info``
+                (random playback); default ``info``.
 
         Returns:
-            Tuple of (vgm_args, env_dict) for process execution
+            ``(vgm_args, env)`` of the MAME process.
         """
         self.begin_vgm_playback()
         self.playvgm = True
@@ -224,10 +228,10 @@ class VgmPlayer:
             or actual_sec < plan.seconds_to_run
             or plan.fade_out
         )
-        # one token per playback: only the MAME of this playback may connect
+        # One token per playback: only the MAME of this playback may connect.
         self.vgm_token = secrets.token_hex(8)
         self._vgm_title = title or info
-        # the info counts down from what MAME really runs
+        # The info counts down from what MAME really runs.
         self._planned_seconds = mame_seconds_to_run(actual_sec)
         self._level = None
         if self._vgm_title:
@@ -249,33 +253,29 @@ class VgmPlayer:
     def play_random_vgm_thread(self, emurun, textinfo=None, db_path=None,
                                find_roms_func=None, run_func=None,
                                stop_requested=None):
-        """Play random vgm until ordered to stop playing.
+        """Play random VGM tracks until stopped (runs in the worker thread).
 
-        Candidates are fetched from the database in batches and kept in an
-        in-memory queue; a new batch is requested only when the queue runs
-        out. Filesystem and archive checks stay in this player. After
+        Candidates come from umsa.db in batches. After
         ``VGM_RANDOM_MAX_CONSECUTIVE_UNPLAYABLE`` candidates in a row cannot
-        start playback (missing or broken archive, ``run_func`` returning
-        False), random playback stops.
+        play (missing or broken archive, ``run_func`` returning ``False``),
+        the playback stops.
 
         Args:
-            emurun: Emulation run state dict
-            textinfo: Optional Kodi text control for display
-            db_path: Core data directory with umsa.db; without one nothing
-                is played
-            find_roms_func: Function to find ROMs (emurun, rom_paths) -> None
-            run_func: Function to run a single VGM track
-                (vgm, close_server, plan, title); returning False
-                means MAME could not play it
-            stop_requested: Optional predicate; True ends the playback. A
-                stop that came before this worker set ``playrandomvgm``
-                still counts.
+            textinfo: Optional Kodi text control for the title.
+            db_path: Core data directory; without one nothing is played.
+            find_roms_func: ``(emurun, rom_paths) -> None``; default
+                :func:`umsa_core.rom_finder.find_roms`.
+            run_func: Plays one track ``(vgm, close_server, plan, title)``;
+                ``False`` means MAME could not play it.
+            stop_requested: Optional predicate; ``True`` ends the playback,
+                also when the stop came before this worker started.
         """
         self.playrandomvgm = True
         candidates = deque()
         consecutive_unplayable = 0
 
         def keep_playing():
+            """Return whether the playback goes on."""
             if not self.playrandomvgm:
                 return False
             return not (stop_requested and stop_requested())
@@ -338,7 +338,6 @@ class VgmPlayer:
                     continue
                 random_track = randint(1, len(vgm_tracklist))
                 play_vgm = f'{random_vgm["name"]}:{random_track:03d}'
-                # Parse header and calculate playback plan
                 from umsa_core.vgm_header import (
                     calculate_playback_plan,
                     parse_vgm_header,
@@ -366,15 +365,14 @@ class VgmPlayer:
                     except Exception as error:
                         log(f'UMSA Emu: VGM label update failed: {error}', level='debug')
                 if not keep_playing():
-                    # stopped while this track was prepared
+                    # Stopped while this track was prepared.
                     break
                 started = True
                 if run_func:
                     started = run_func(play_vgm, close_server=False,
                                        plan=plan, title=vgm_title)
                 if started is False:
-                    # MAME ended with an error before the Lua script connected:
-                    # a broken setup must not skip through tracks forever
+                    # A broken setup must not skip through tracks forever.
                     if note_unplayable(
                             f'UMSA Emu: play random vgm - MAME could not play {play_vgm}'):
                         break

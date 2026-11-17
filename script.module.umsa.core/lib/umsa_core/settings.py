@@ -1,9 +1,8 @@
-"""Typed access to the UMSA settings (owned by ``script.module.umsa.core``).
+"""Typed access to the UMSA settings, which all live in the Core add-on.
 
-All settings of the UMSA add-ons live in the Core add-on; the frontend has no
-settings of its own. ``SharedSettings.from_raw`` turns the raw Kodi strings into
-typed values. The resolve helpers derive the effective MAME paths from optional
-settings. Kodi-free: callers pass the ``getSetting`` function and file checks.
+``SharedSettings.from_raw`` turns the raw Kodi strings into typed values; the
+resolve helpers derive the effective MAME paths. Callers pass ``getSetting``
+and the file checks, so this module needs no Kodi.
 """
 
 import os
@@ -17,7 +16,7 @@ ASPECT_RATIOS = {
 }
 DEFAULT_ASPECT_RATIO = "16:9"
 
-# emulation_start values (settings.xml integer list)
+# emulation_start values (settings.xml integer list).
 EMULATION_START_NORMAL = 0
 EMULATION_START_WATCH = 1
 EMULATION_START_FALLBACK = 2
@@ -27,7 +26,7 @@ EMULATION_START_MODES = (
 DEFAULT_VGM_PORT = 22713
 COUNTRIES = ("USA", "Europe", "Japan")
 
-# Filter category names shown in the UI - must match the status.db filter mappings
+# Filter category names shown in the UI; must match the status.db filter mappings.
 FILTER_CATEGORIES = [
     "Softwarelists", "Game Categories", "Machine Categories", "Players",
     "Years", "----------", "Load Filter", "Save Filter"
@@ -36,7 +35,7 @@ FILTER_CATEGORIES = [
 
 @dataclass(frozen=True)
 class SharedSettings:
-    """Values of the settings in ``script.module.umsa.core/resources/settings.xml``.
+    """Values of the settings of the Core add-on (``resources/settings.xml``).
 
     Field names are the setting ids. Paths stay unresolved here: an empty
     optional path means "derive it" (see ``resolve_mame_setup``,
@@ -113,7 +112,7 @@ class SharedSettings:
 
     @property
     def nonmame(self) -> dict:
-        """Roots of the non-MAME collections, keyed like the database expects."""
+        """Return the roots of the non-MAME collections (``exodos``, ``gb64``, ``whdload``)."""
 
         return {
             "exodos": self.exodos_dir,
@@ -131,6 +130,7 @@ class SharedSettings:
 
 
 def _is_windows(platform):
+    """Return whether ``platform`` names Windows."""
     return platform.lower().startswith(("win", "nt"))
 
 
@@ -167,7 +167,7 @@ def resolve_mame_setup(mame_exe, mame_ini="", working_dir="", *,
 
 
 def resolve_chdman(chdman_exe, mame_exe, *, platform, isfile=os.path.isfile):
-    """Return the chdman executable: configured, else next to MAME, else ''."""
+    """Return the chdman executable: configured, else next to MAME, else ``''``."""
 
     if chdman_exe:
         return chdman_exe

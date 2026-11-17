@@ -1,18 +1,8 @@
-"""Artwork database repository.
+"""Repository for the artwork tables of artwork.db (``art_set``, ``art_scan_unit``).
 
-This module centralises all SQL access to artwork-related tables
-(``art_set``, ``art_scan_unit``) and is the authoritative artwork schema
-definition. The repository operates on an existing SQLite connection supplied
-by the caller; it never opens or closes that connection.
-
-Query methods do not manage transactions. The atomic operations
-(``replace_scan_unit`` and the ``running``/``error``/``done`` scan-status
-updates) manage their own short transactions and only commit a transaction
-they started themselves, so they can never flush unrelated caller work.
-
-Connections must use ``sqlite3.Row`` (step 4.2b contract, decision Q7), which
-is what the read helpers convert rows with and what callers consume; a
-connection with any other row factory is rejected at construction.
+Owns the schema. Writes use :func:`umsa_core.sqlite.write_savepoint`; the
+``running``/``error`` scan-unit markers commit at once so an interrupted scan
+can be found on resume.
 """
 
 from __future__ import annotations
@@ -26,12 +16,10 @@ from .sqlite import require_row_connection, write_savepoint
 def create_artwork_tables(db_cursor: sqlite3.Cursor) -> None:
     """Create artwork tables and indexes if they do not exist.
 
-    This is the authoritative schema definition for artwork tables.
     ``art_scan_unit.dir_mtime`` (mtime of the unit directory at its last
     successful scan) is added to older databases by ``ALTER TABLE``.
     """
 
-    # Ensure tables exist (new schema only)
     db_cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS art_set(
@@ -60,7 +48,6 @@ def create_artwork_tables(db_cursor: sqlite3.Cursor) -> None:
         "ON art_set(source, root_key, scan_unit)"
     )
 
-    # Create art_scan_unit table
     db_cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS art_scan_unit(
@@ -81,41 +68,23 @@ def create_artwork_tables(db_cursor: sqlite3.Cursor) -> None:
 
 
 class ArtworkRepository:
-    """Artwork database operations on an externally owned connection.
+    """Artwork operations on a caller-owned connection.
 
-    The repository never opens or closes the supplied connection. Query
-    methods leave transaction management to the caller; the atomic
-    operations (``replace_scan_unit`` and the ``running``/``error``/``done``
-    scan-status updates) manage their own short transactions and only
-    commit a transaction they started themselves, so they can never flush
-    unrelated caller work.
-
-    Connections must use ``sqlite3.Row`` (step 4.2b contract, decision Q7),
-    which is what the read helpers convert rows with and what callers
-    consume; a connection with any other row factory is rejected at
-    construction.
-
-    The repository accepts an optional ``schema`` parameter to qualify table
-    names. For scanner-owned connections where artwork.db is the ``main``
-    database, use ``schema="main"`` (the default). For the DBMod connection
-    where artwork.db is attached as ``art``, use ``schema="art"``. The
-    schema identifier must be from the allowlist ``{"main", "art"}``.
+    Never opens or closes the connection. Query methods leave transactions to
+    the caller. ``schema`` qualifies the table names: ``"main"`` for a
+    scanner's own artwork.db connection, ``"art"`` for the attached schema of
+    ``DBMod``.
     """
 
     _ALLOWED_SCHEMAS = frozenset({"main", "art"})
 
     def __init__(self, connection: sqlite3.Connection, schema: str = "main") -> None:
-        """Initialise the repository.
-
-        Args:
-            connection: An existing SQLite connection to operate on. The
-                repository does not own this connection.
-            schema: The database schema qualifier (``"main"`` or ``"art"``).
-                Defaults to ``"main"`` for scanner-owned connections.
+        """Wrap a connection for the schema ``"main"`` or ``"art"``.
 
         Raises:
-            ValueError: If the connection does not use ``sqlite3.Row`` or if
-                ``schema`` is not in the allowlist.
+            ValueError: If the connection does not use ``sqlite3.Row``
+                (:func:`umsa_core.sqlite.require_row_connection`) or
+                ``schema`` is not allowed.
         """
         require_row_connection(connection, "ArtworkRepository")
         if schema not in self._ALLOWED_SCHEMAS:
@@ -127,7 +96,7 @@ class ArtworkRepository:
 
     @property
     def connection(self) -> sqlite3.Connection:
-        """Return the underlying connection (read-only access)."""
+        """Return the wrapped connection."""
         return self._conn
 
     @property
@@ -140,10 +109,7 @@ class ArtworkRepository:
         return f"{self._schema}.{table}"
 
     def get_artwork_for_set(self, set_id: int) -> list:
-        """Return artwork records for a single set ID.
-
-        Returns a list of dicts built from the ``sqlite3.Row`` rows, matching
-        the historical caller expectation (dict-like rows with named access).
+        """Return the artwork records of one set as a list of dicts.
 
         TODO think about if dict with key = type is better?
         """
@@ -162,12 +128,7 @@ class ArtworkRepository:
     def get_artwork_record_for_set_type(
         self, set_id: int, art_type: str
     ) -> dict | None:
-        """Return one artwork record for a set and type, or ``None``.
-
-        Used to fetch the additional artwork record (for example the
-        screensaver's left-side image) without changing the surrounding
-        selection workflow.
-        """
+        """Return one artwork record for a set and type, or ``None``."""
         cursor = self._conn.cursor()
         try:
             cursor.execute(
@@ -184,11 +145,10 @@ class ArtworkRepository:
             cursor.close()
 
     def get_artwork_for_sets(self, set_ids: Iterable[int]) -> dict:
-        """Return artwork records grouped by set ID."""
+        """Return ``{set id: [record, …]}``; each record also carries ``filename``."""
         set_ids_list = list(set_ids)
         if not set_ids_list:
             return {}
-        # Build parameter placeholders
         placeholders = ",".join("?" for _ in set_ids_list)
         cursor = self._conn.cursor()
         try:
@@ -211,7 +171,7 @@ class ArtworkRepository:
             cursor.close()
 
     def get_art_types(self, excluded: Iterable[str] | None = None) -> list:
-        """Get distinct artwork types, excluding specified types."""
+        """Return the distinct artwork types without ``excluded`` (default: media)."""
         if excluded is None:
             excluded = ("videosnaps", "manuals", "soundtrack", "ips")
         excluded_set = set(excluded)
@@ -256,14 +216,12 @@ class ArtworkRepository:
         last_error: str | None = None,
         db_cursor: sqlite3.Cursor | None = None,
     ) -> None:
-        """Persist one scan-unit status in a short, explicit transaction.
+        """Write one scan-unit status and commit it at once.
 
-        The ``running``/``error`` markers intentionally live outside the
-        atomic artwork replacement so an interrupted scan can be identified on
-        resume, so they are committed immediately. The commit is only issued
-        when this call opened the transaction; if the caller already had one
-        open, committing would flush unrelated work, so the write is left for
-        the caller to commit.
+        The ``running``/``error`` markers live outside the atomic artwork
+        replacement so an interrupted scan can be found on resume. The commit
+        is issued only when this call opened the transaction; inside a caller
+        transaction the caller commits.
         """
         if status == "error":
             statement = (
@@ -322,14 +280,9 @@ class ArtworkRepository:
         )
 
     def delete_scan_unit(self, source: str, root_key: str, scan_unit: str) -> int:
-        """Delete every record of one scan unit and forget its status.
+        """Delete the records and the status of one scan unit; return the rows removed.
 
-        Intended for retiring a legacy scan unit once its replacement has been
-        written successfully. It is scoped strictly to the given
-        ``(source, root_key, scan_unit)``; other units and sources are never
-        touched. It manages its own short transaction, only commits one it
-        started, and never closes the caller's connection. Returns the number of
-        removed artwork rows.
+        For retiring an old scan unit once its replacement has been written.
         """
 
         with write_savepoint(self._conn, "umsa_art_delete_unit") as cursor:
@@ -347,13 +300,10 @@ class ArtworkRepository:
         return removed if removed is not None else 0
 
     def list_scan_units(self, source: str, root_key: str) -> list:
-        """List every persisted scan unit for an exact ``(source, root_key)``.
+        """Return the sorted scan units of ``(source, root_key)``.
 
-        The result is the union of the registered units in ``art_scan_unit`` and
-        the distinct scan units present in ``art_set``. Legacy artwork rows that
-        never received a status record, and registered empty units that never
-        received artwork rows, are therefore both included. Order is stable
-        (sorted) but should not be relied upon for correctness.
+        The union of ``art_scan_unit`` and ``art_set``, so units without a
+        status row and registered units without artwork are both included.
         """
 
         cursor = self._conn.cursor()
@@ -377,11 +327,9 @@ class ArtworkRepository:
 
         A moved artwork folder gets a new ``root_key``; the rows of the old
         root can no longer be resolved and are removed here (``art_set`` and
-        ``art_scan_unit``) in one savepoint. Other sources are never touched.
-        An empty ``keep_root_keys`` deletes nothing, so a source is never
-        emptied completely. It manages its own short transaction, only
-        commits one it started, and never closes the caller's connection.
-        Returns the number of removed artwork rows.
+        ``art_scan_unit``) in one savepoint. An empty ``keep_root_keys``
+        deletes nothing, so a source is never emptied completely. Returns the
+        number of removed artwork rows.
         """
 
         keep = sorted({key for key in keep_root_keys if key})
@@ -407,15 +355,9 @@ class ArtworkRepository:
     def delete_scan_units(
         self, source: str, root_key: str, scan_units: Iterable[str]
     ) -> int:
-        """Delete several scan units of one source/root in a single transaction.
+        """Delete several scan units of one source/root in one savepoint.
 
-        Every listed unit has its ``art_set`` rows and its ``art_scan_unit``
-        status removed inside one savepoint, so the cleanup is all-or-nothing.
-        It is scoped strictly to the given ``(source, root_key)`` and to the
-        listed units; other units, sources and roots are never touched. It
-        manages its own short transaction, only commits one it started, and
-        never closes the caller's connection. Returns the number of removed
-        artwork rows.
+        All-or-nothing. Returns the number of removed artwork rows.
         """
 
         units = [unit for unit in scan_units if unit is not None]
@@ -446,27 +388,11 @@ class ArtworkRepository:
         artwork_rows: Iterable[tuple],
         dir_mtime: float | None = None,
     ) -> None:
-        """Replace artwork records for a scan unit and mark it done atomically.
+        """Replace the artwork rows of a scan unit and mark it done, in one savepoint.
 
-        All changes are one logical unit of work executed inside a SQLite
-        savepoint:
-
-        1. Deletes only records for the specified (source, root_key, scan_unit).
-        2. Inserts all artwork rows.
-        3. Marks the unit as done (clearing any previous error) and stores
-           ``dir_mtime``, the mtime of the unit directory taken before it was
-           listed; the scanner skips the unit later only while it is unchanged.
-
-        The savepoint makes the replacement atomic without hijacking the
-        caller's transaction. When no transaction is active, releasing the
-        savepoint commits the operation durably. When the caller already owns a
-        transaction, the savepoint nests inside it: releasing commits only the
-        replacement, and the caller's transaction and unrelated pending work are
-        left untouched for the caller to commit or roll back.
-
-        On any error the savepoint is rolled back, so the previous artwork rows
-        and scan-unit state are preserved and the caller's transaction stays
-        active and usable. The caller's connection is never closed.
+        ``dir_mtime`` is the mtime of the unit directory taken before it was
+        listed; the scanner skips the unit later only while it still matches.
+        On error the previous rows and unit state are kept.
         """
         # Materialise the replacement before the savepoint: nothing is written
         # yet, so a failure while consuming ``artwork_rows`` leaves the

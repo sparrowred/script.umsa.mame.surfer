@@ -1,15 +1,8 @@
-"""ROM cache in the temp folder: one layout and one copy routine for all starts.
+"""ROM cache in the temp folder: extracted sets and copies of ROM zips and CHDs.
 
-The cache holds two kinds of entries that never overlap:
-
-* extracted sets (``CacheLayout.extract_dir``), filled by ``rom_extractor``
-  and ``chd_extractor`` for emulators that cannot read the archives;
-* copies of ROM ZIPs and CHDs (``CacheLayout.archive_path``), laid out like a
-  MAME rompath (the CHD folder of a set sits beside its ZIP). They are only
-  made while the setting ``rom_cache`` is on.
-
-MAME itself, MARP replays and the eXoDOS launcher never use the cache: MAME
-reads its own rompath, the eXoDOS launcher scripts unpack from their own tree.
+Copies are laid out like a MAME rompath and made only while the setting
+``rom_cache`` is on. A cache entry only exists once it is complete. MAME,
+MARP replays and the eXoDOS launcher never use the cache.
 """
 
 import os
@@ -21,12 +14,12 @@ from umsa_core import log
 from umsa_core.abort import ShutdownRequested, resolve_wait
 
 COPY_BLOCK_SIZE = 1024 * 1024
-# seconds between two progress updates / abort checks of a running copy
+# Seconds between two progress updates / abort checks of a running copy.
 COPY_PROGRESS_INTERVAL = 0.25
 PART_SUFFIX = '.part'
-# folder of the copies without the Batocera layout
+# Folder of the copies without the Batocera layout.
 ARCHIVE_ROOT = 'roms'
-# Batocera system folder of everything the mapping does not know
+# Batocera system folder of everything the mapping does not know.
 DEFAULT_SYSTEM = os.path.join('mame', 'roms')
 
 
@@ -48,13 +41,13 @@ class CacheLayout:
         self.batomame = batomame or {}
 
     def system_dir(self, swl_name, source=None):
-        """Batocera system folder of a software list or arcade driver."""
+        """Return the Batocera system folder of a software list or arcade driver."""
 
         key = source if swl_name == 'mame' else f'{swl_name}.xml'
         return self.batomame.get(key) or DEFAULT_SYSTEM
 
     def extract_dir(self, swl_name, set_name, source=None):
-        """Folder an extracted set lives in."""
+        """Return the folder of an extracted set."""
 
         entry = f'{swl_name}_{set_name}'
         if not self.batocera:
@@ -62,7 +55,7 @@ class CacheLayout:
         return os.path.join(self.temp_dir, self.system_dir(swl_name, source), entry)
 
     def archive_path(self, swl_name, set_name, filename, source=None, chd=False):
-        """Path of the cached copy of a ROM ZIP (or of a CHD of the set)."""
+        """Return the path of the cached copy of a ROM zip (or of a CHD of the set)."""
 
         if not self.batocera:
             base = os.path.join(self.temp_dir, ARCHIVE_ROOT, swl_name)
@@ -99,17 +92,18 @@ def staged_dir(folder):
 
 
 def is_cached(src, dst):
-    """True when ``dst`` is a complete, current copy of ``src``."""
+    """Return whether ``dst`` is a complete, current copy of ``src``."""
 
     try:
         source, copy = os.stat(src), os.stat(dst)
     except OSError:
         return False
-    # copystat keeps the mtime; file systems round it differently
+    # copystat keeps the mtime; file systems round it differently.
     return source.st_size == copy.st_size and abs(source.st_mtime - copy.st_mtime) < 2
 
 
 def _remove_part(part):
+    """Remove a partial copy; a failure is only logged."""
     try:
         os.remove(part)
     except FileNotFoundError:
@@ -125,7 +119,7 @@ def copy_to_cache(src, dst, dialog=None, wait=None):
     The data goes to ``dst + '.part'`` and is renamed when complete, so a
     file under its final name is never half written. ``dialog`` shows the
     progress and can cancel (``CacheCopyCancelled``); ``wait``
-    (``umsa_core.abort.Wait``) stops the copy when the host shuts down
+    (:data:`umsa_core.abort.Wait`) stops the copy when the host shuts down
     (``ShutdownRequested``). Both remove the partial copy.
     """
 
@@ -158,7 +152,7 @@ def copy_to_cache(src, dst, dialog=None, wait=None):
                     dialog.update(percent, f'caching {name}: {percent}%')
                     if dialog.iscanceled():
                         raise CacheCopyCancelled(f'copy of {name} cancelled')
-                # 1 ms: only asks for the abort request
+                # 1 ms: only asks for the abort request.
                 if wait(1):
                     raise ShutdownRequested('shutdown during cache copy')
         shutil.copystat(src, part)
@@ -170,12 +164,12 @@ def copy_to_cache(src, dst, dialog=None, wait=None):
 
 
 def cache_archives(emurun, layout, dialog=None, wait=None):
-    """Copy the found ROM ZIP and CHDs into the cache and start from there.
+    """Copy the found ROM zip and CHDs into the cache and start from there.
 
-    The entries of ``emurun['zips']`` / ``emurun['chds']`` are replaced by
-    the cached paths, so everything after the search (arguments, emulator
-    specifics, CHD symlink) uses the cache without knowing about it. The
-    original paths stay in ``source_zips`` / ``source_chds``.
+    ``emurun['zips']`` / ``emurun['chds']`` get the cached paths, so the
+    later steps use the cache without knowing about it; the original paths
+    go to ``source_zips`` / ``source_chds``. Raises like
+    :func:`copy_to_cache`.
     """
 
     swl_name = emurun['swl_name']

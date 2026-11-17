@@ -1,4 +1,7 @@
-"""Module for general emulation handling."""
+"""Emulator launches and VGM playback (:class:`Emulation`).
+
+``stop_vgm`` is the only way to stop a VGM playback; only one runs at a time.
+"""
 
 import os
 import shlex
@@ -16,7 +19,7 @@ from umsa_core import (
     log,
 )
 
-# Compatibility re-exports for existing code that imports from emulation.
+# Some names below are re-exported for callers that import them from here.
 from umsa_core.abort import ShutdownRequested, resolve_wait
 from umsa_core.chd_extractor import (
     CHDExtractionCancelled,  # noqa: F401
@@ -50,24 +53,27 @@ from umsa_core.vgm_socket import VgmSocketServer
 
 PLATFORM = platform()
 CHD_PROCESS_STOP_TIMEOUT = 2
-# stop_vgm(): time the VGM workers get to end after the stop request, and
-# after the kill that follows when they did not
+# stop_vgm(): seconds the VGM workers get to end after the stop request, and
+# after the kill that follows when they did not.
 VGM_STOP_TIMEOUT = 3.0
 VGM_KILL_JOIN_TIMEOUT = 1.0
-# longest wait for vgmplay.lua to connect after MAME was started. 268 starts
-# in the Kodi log of 2026-11-17 connected within 0.44-0.79 s; a MAME that
-# fails to start ends the wait early (process exit check), so this only
-# bounds a MAME that hangs before the script runs.
+# Longest wait in seconds for vgmplay.lua to connect after MAME was started.
+# Measured connects took 0.44-0.79 s; a MAME that fails to start ends the
+# wait early (process exit check), so this only bounds a MAME that hangs
+# before the script runs.
 VGM_CONNECT_TIMEOUT = 10.0
-# shortest gap between two volume steps sent to vgmplay.lua: Kodi raises
-# the volume actions of an analog trigger in bursts, one step per action
-# would change the gain by many dB at once (about 5 dB/s while held)
+# Shortest gap in seconds between two volume steps sent to vgmplay.lua: Kodi
+# raises the volume actions of an analog trigger in bursts, one step per
+# action would change the gain by many dB at once (about 5 dB/s while held).
 VOLUME_STEP_INTERVAL = 0.2
 VOLUME_COMMANDS = (b'volume_up', b'volume_down')
 
 
 def parse_mame_ini(ini_file):
-    """Parse mame.ini."""
+    """Return the ``path`` (lists) and ``directory`` options of mame.ini.
+
+    ``$HOME`` is expanded; a missing or unreadable file gives ``{}``.
+    """
 
     mame_ini = {}
     try:
@@ -80,12 +86,9 @@ def parse_mame_ini(ini_file):
                     continue
                 option = line.split(' ', 1)
                 if len(option) > 0:
-                    # linux replace $HOME
                     home_dir = os.path.expanduser('~')
-                    # can contain multiple directories
                     if 'path' in option[0]:
                         mame_ini[option[0].strip()] = option[1].replace('$HOME', home_dir).strip().split(';')
-                    # only one directory
                     if 'directory' in option[0]:
                         mame_ini[option[0].strip()] = option[1].replace('$HOME', home_dir).strip()
     except OSError:
@@ -97,13 +100,14 @@ def resolve_mame_paths(mame_ini, mame_dir):
     """Resolve mame.ini path/directory options against the MAME directory.
 
     ``path`` options are semicolon-separated lists, ``directory`` options are
-    single values. Absolute entries pass through unchanged (os.path.join
+    single values. Absolute entries are kept as they are (os.path.join
     semantics), matching the cwd (mame_dir) MAME is launched with.
     Environment variables and ``~`` are expanded first, like MAME does
     (the mame.ini of some distributions uses ``$HOME/.mame/...``).
     """
 
     def resolve(entry):
+        """Return ``entry`` expanded and joined to ``mame_dir``."""
         return os.path.join(
             mame_dir, os.path.expanduser(os.path.expandvars(entry)))
 
@@ -119,7 +123,7 @@ def resolve_mame_paths(mame_ini, mame_dir):
 
 
 class Emulation:
-    """Emulation handling class."""
+    """Launch emulators and play VGM tracks with MAME; owns the processes."""
 
     def __init__(self, temp_dir='.', mame_ini_file=None, mame_dir='.', mame_exe=None,
                     chdman_exe=None, vgmlua_script=None, vgm_info_callback=None, nonmame=None,
@@ -127,17 +131,16 @@ class Emulation:
                     vgm_max_duration=MAX_PLAYBACK_SECONDS, rom_cache=False,
                     cache_layout=None, vgm_port=None):
         self.percent = 0 # chd convert
-        # setting vgm_port; None: VGMPLAY_PORT of the environment, else default
+        # None: VGMPLAY_PORT of the environment, else the default port.
         self.vgm_port = vgm_port
         self.mame_exe = mame_exe
         self.mame_dir = mame_dir
         self.chdman_exe = chdman_exe
         self.process = None
-        # called with the exception when a VGM worker fails (GUI notification)
+        # Called with the exception when a VGM worker fails (GUI notification).
         self.on_vgm_error = None
-        # VGM playback: the MAME process of the running track, the stop
-        # request of stop_vgm() and the worker threads; the start lock makes
-        # "is a playback running?" and starting its worker one step
+        # The start lock makes "is a playback running?" and starting its
+        # worker one step.
         self._vgm_process = None
         self._vgm_stop = Event()
         self._vgm_start_lock = Lock()
@@ -147,7 +150,7 @@ class Emulation:
         self.temp_dir = temp_dir
         self.emurun = {}
         self.lua_script = vgmlua_script
-        # A fresh dict per instance, so instances never share one default
+        # A fresh dict per instance, so instances never share one default.
         self.nonmame = nonmame if nonmame is not None else {}
         self.terminal = terminal
         self.vgmplay_exe = vgmplay_exe
@@ -181,22 +184,20 @@ class Emulation:
             max_vgm_duration=vgm_max_duration,
         )
 
-        # throttle of the volume steps (send_vgmaction)
         self._clock = monotonic
         self._volume_lock = Lock()
         self._last_volume_step = None
 
-        # VGM socket transport
         self.vgm_socket = VgmSocketServer(
             logger=log,
             process_exited=lambda: self.process is not None and self.process.poll() is not None,
-            # gain_db/state of the level frames feed the music info
+            # gain_db/state of the level frames feed the music info.
             frame_listener=self.vgm_player.on_lua_log,
         )
 
     @staticmethod
     def _load_mame_ini(mame_ini_file, mame_dir):
-        """Parsed mame.ini with its paths resolved, {} without a file."""
+        """Return mame.ini parsed with its paths resolved, ``{}`` without a file."""
         if not mame_ini_file:
             return {}
         return resolve_mame_paths(parse_mame_ini(mame_ini_file), mame_dir)
@@ -206,10 +207,9 @@ class Emulation:
                        rom_cache=False, cache_layout=None, vgm_port=None):
         """Take over changed settings without recreating the instance.
 
-        Keeps the running process, the VGM socket and the playback state;
-        an emulator or VGM track that already runs keeps its arguments, the
-        next start uses the new values. LaunchPreparer and VgmPlayer hold
-        copies, so they are updated too.
+        A running emulator or VGM track keeps its arguments; the next start
+        uses the new values. LaunchPreparer and VgmPlayer hold copies, so they
+        are updated too.
         """
         self.temp_dir = temp_dir
         self.mame_dir = mame_dir
@@ -218,7 +218,7 @@ class Emulation:
         self.nonmame = nonmame if nonmame is not None else {}
         self.terminal = terminal
         self.vgmplay_exe = vgmplay_exe
-        # used by the next playback: a running one keeps its listener
+        # Used by the next playback: a running one keeps its listener.
         self.vgm_port = vgm_port
         self.mame_ini = self._load_mame_ini(mame_ini_file, mame_dir)
 
@@ -240,66 +240,77 @@ class Emulation:
         player.rom_paths = self.mame_ini.get('rompath', [])
         player.max_vgm_duration = vgm_max_duration
 
-    # VGM state properties for backward compatibility
     @property
     def playvgm(self):
+        """Return whether a single VGM track plays (``VgmPlayer.playvgm``)."""
         return self.vgm_player.playvgm
 
     @playvgm.setter
     def playvgm(self, value):
+        """Set ``VgmPlayer.playvgm``."""
         self.vgm_player.playvgm = value
 
     @property
     def playintrovgm(self):
+        """Return whether the intro VGM plays (``VgmPlayer.playintrovgm``)."""
         return self.vgm_player.playintrovgm
 
     @playintrovgm.setter
     def playintrovgm(self, value):
+        """Set ``VgmPlayer.playintrovgm``."""
         self.vgm_player.playintrovgm = value
 
     @property
     def playrandomvgm(self):
+        """Return whether random VGM playback runs (``VgmPlayer.playrandomvgm``)."""
         return self.vgm_player.playrandomvgm
 
     @playrandomvgm.setter
     def playrandomvgm(self, value):
+        """Set ``VgmPlayer.playrandomvgm``."""
         self.vgm_player.playrandomvgm = value
 
     @property
     def snapshot_directory(self):
-        """Absolute MAME snapshot directory ('' when unset)."""
+        """Return the absolute MAME snapshot directory (``''`` when unset)."""
 
         return self.mame_ini.get('snapshot_directory', '')
 
     @property
     def state_directory(self):
-        """Absolute MAME save state directory (mame.ini, else ``sta``)."""
+        """Return the absolute MAME save state directory (mame.ini, else ``sta``)."""
 
         return state_directory(self.mame_ini, self.mame_dir)
 
     @property
     def rom_paths(self):
-        """Absolute MAME rom path list ([] when unset)."""
+        """Return the absolute MAME rom paths (``[]`` when unset)."""
 
         return self.mame_ini.get('rompath', [])
 
     def run(self):
-        """Run the emulator."""
+        """Start the emulator of ``emurun``.
+
+        ``emulation_start`` 0/1 starts a process without pipes in
+        ``self.process``; 2 runs it in the terminal and blocks until it ends.
+
+        Raises:
+            ProcessLaunchError: When the terminal fallback cannot start.
+        """
 
         args = self._process_args()
         popen_env = {}
         if 'env' in self.emurun:
             popen_env['env'] = self.emurun['env']
-        # run executable depending on emulation start
         # Watch has no pipes here: nothing reads the output of this process
-        # (captured launches go through start_managed_process)
+        # (captured launches go through start_managed_process).
         if self.emurun['emulation_start'] in (0, 1): # Normal, Watch
             self.process = launch_popen(
                 args, self.emurun['working_dir'], **popen_env)
         elif self.emurun['emulation_start'] == 2: # Fallback
             self.process = None
-            # most terminals hand the -e string to a shell; shlex.join quotes
-            # every argument so names with quotes, $() or backticks stay data
+            # Most terminals hand the -e string to a shell; shlex.join quotes
+            # every argument so names with quotes, $() or backticks stay data.
             torun = [self.terminal, '-e', shlex.join(args)]
             launch_id = self.emurun.get("launch_id", "unknown")
             started_at = monotonic()
@@ -338,7 +349,7 @@ class Emulation:
                     level='error')
 
     def _process_args(self):
-        """Build the command used by direct process launches."""
+        """Return the command used by direct process launches."""
 
         args = []
         if isinstance(self.emurun['args'], list):
@@ -350,7 +361,7 @@ class Emulation:
         return args
 
     def start_managed_process(self, capture_output=False):
-        """Start a non-VGM process using Core process ownership."""
+        """Start the emulator through the Core process runner; ``OSError`` propagates."""
 
         args = self._process_args()
         launch_id = self.emurun.get("launch_id", "unknown")
@@ -414,21 +425,20 @@ class Emulation:
     def wait_for_completion(self, dialog=None, sleep=None, wait=None):
         """Wait for the running emulator to stop or the user to cancel.
 
-        Returns ``(stdout, stderr)``. ``wait`` is an abort-aware
-        ``wait(milliseconds) -> bool`` (``umsa_core.abort.Wait``); without it
-        the legacy millisecond ``sleep`` (for example ``xbmc.sleep``) or
-        ``time.sleep`` is used and no stop request is ever seen.
+        Returns ``(stdout, stderr)``, filled only for ``emulation_start`` 1.
+        ``wait`` is an abort-aware ``wait(ms) -> bool``
+        (:data:`umsa_core.abort.Wait`); without it the millisecond ``sleep``
+        is used and no stop request is ever seen.
 
-        Raises ``ShutdownRequested`` when the host asks to stop while the
-        emulator runs. The emulator keeps running (it is detached, neither
-        terminated nor killed) and its captured output is not read; it keeps
-        writing to the temporary files of the process runner.
+        Raises:
+            ShutdownRequested: When the host asks to stop while the emulator
+                runs. The emulator keeps running (detached) and its output is
+                not read.
         """
 
         wait = resolve_wait(wait, sleep)
         uses_process_runner = self.emurun['emulation_start'] in (0, 1)
         out, err = '', ''
-        # wait for emulator process to stop or cancel press to kill
         wait_cancel = True
         while wait_cancel:
             if wait(1000):
@@ -450,7 +460,7 @@ class Emulation:
                     self.terminate_managed_process()
                 else:
                     self.terminate()
-                # a shutdown request ends the grace time early: kill at once
+                # A shutdown request ends the grace time early: kill at once.
                 wait(3000)
                 if (uses_process_runner and
                         self.managed_process_status().state is ProcessState.RUNNING):
@@ -465,7 +475,7 @@ class Emulation:
 
 
     def after_run(self):
-        """Clean up after emulation run."""
+        """Remove the launch symlinks and reset ``emurun``."""
 
         emurun = self.emurun
         try:
@@ -484,7 +494,7 @@ class Emulation:
             self.process.kill()
 
     def _configured_vgm_port(self):
-        """Port of the VGM control socket as a string, None for the default.
+        """Return the VGM control port as a string, ``None`` for the default.
 
         The setting ``vgm_port`` wins; without one (use outside Kodi) the
         environment variable ``VGMPLAY_PORT`` is used.
@@ -494,13 +504,15 @@ class Emulation:
         return os.environ.get('VGMPLAY_PORT')
 
     def _vgm_process_env(self):
-        """Pass the port captured for this listener only to the MAME process."""
-        # vgmplay.lua reads VGMPLAY_PORT; without a configured port the
-        # variable stays out of the child environment (Lua default).
+        """Return the MAME environment with ``VGMPLAY_PORT`` when one is configured.
+
+        Without a configured port the variable stays out of the child
+        environment and vgmplay.lua uses its default.
+        """
         return self.vgm_player._vgm_process_env(self._configured_vgm_port())
 
     def _start_vgm_server(self):
-        """Create and start listening socket for vgmplay.lua (client)."""
+        """Start the socket server for vgmplay.lua; ``False`` when it failed."""
         if not self.vgm_socket.start_server(self._configured_vgm_port()):
             log("UMSA VGM: failed to start socket server, VGM playback disabled", level='warning')
             self.vgm_socket.close_server()
@@ -508,10 +520,9 @@ class Emulation:
         return True
 
     def _accept_vgm_conn(self):
-        """Accept connection from vgmplay.lua client with bounded waiting.
+        """Wait up to ``VGM_CONNECT_TIMEOUT`` for vgmplay.lua; return whether it came.
 
-        Logs how long the connection took (data for slower devices) or that
-        it did not come within ``VGM_CONNECT_TIMEOUT``.
+        Logs how long the connection took (data for slower devices).
         """
         started = monotonic()
         connected = self.vgm_socket.wait_for_connection(
@@ -525,14 +536,15 @@ class Emulation:
         return connected
 
     def _close_vgm_sockets(self):
+        """Close the VGM socket server and its client."""
         self.vgm_socket.close_server()
 
     def send_vgmaction(self, data):
-        """Send command to MAME Lua script over accepted socket connection.
+        """Send a command to vgmplay.lua; return ``False`` when it was not sent.
 
-        A volume step within ``VOLUME_STEP_INTERVAL`` of the last sent one
-        is dropped (returns True: nothing failed), so a burst of volume
-        actions changes the gain by one step only.
+        A volume step within ``VOLUME_STEP_INTERVAL`` of the last sent one is
+        dropped and returns ``True``, so a burst of volume actions changes the
+        gain by one step only.
         """
         if data.rstrip(b'\n') not in VOLUME_COMMANDS:
             return self.vgm_socket.send_command(data)
@@ -548,14 +560,14 @@ class Emulation:
             return sent
 
     def _vgm_workers(self):
-        """Running VGM worker threads, without the calling thread."""
+        """Return the running VGM worker threads, without the calling thread."""
         return [
             thread for thread in (self.rvgm_thread, self.pvgm_thread)
             if thread is not None and thread is not current_thread()
             and thread.is_alive()]
 
     def _vgm_busy(self):
-        """True while a VGM playback runs or its worker still ends.
+        """Return ``True`` while a VGM playback runs or its worker still ends.
 
         A worker stopped with ``stop_vgm(timeout=0)`` keeps running for a
         moment; its ``finally`` resets the playback state and closes the
@@ -648,15 +660,15 @@ class Emulation:
 
     def play_vgm_thread(self, vgm, sec2run=90, intro=False, close_server=True,
                     plan=None, info=None, title=None):
-        """Play vgm.
+        """Play one VGM track in the calling (worker) thread.
 
         ``info`` (single track) and ``title`` (random playback, no stop
         notification per track) are the music info title; once vgmplay.lua
         connected the info counts the remaining time down.
 
-        Returns False when MAME ended with an error before vgmplay.lua
-        connected (broken MAME setup or script) or had to be stopped because
-        it did not end in time (``_wait_vgm_process``), True otherwise.
+        Returns ``False`` when MAME failed before vgmplay.lua connected
+        (broken setup or script) or had to be stopped because it did not end
+        in time, else ``True``. Never raises; errors go to ``on_vgm_error``.
         """
         port = self.vgm_socket.bound_port
         port_str = str(port) if port is not None else None
@@ -664,19 +676,17 @@ class Emulation:
                                         title=title)
         try:
             if self._vgm_stop.is_set():
-                # stopped while the track was prepared: do not start MAME
+                # Stopped while the track was prepared: do not start MAME.
                 return True
             self.run()
-            # keep the process of this track: self.process also serves
-            # emulator launches
+            # Kept separately: self.process also serves emulator launches.
             process = self._vgm_process = self.process
             if self._vgm_stop.is_set():
-                # stop_vgm() ran before the process existed
+                # stop_vgm() ran before the process existed.
                 self._end_vgm_process('terminate')
             connected = self._accept_vgm_conn()
             if connected:
                 self.vgm_player.start_info_ticker()
-            # wait until emu is finished
             if process:
                 my_rc, timed_out = self._wait_vgm_process(process, connected)
                 log(f'UMSA Emu: MAME vgmplay returncode = {my_rc}', level='debug')
@@ -705,13 +715,14 @@ class Emulation:
                 self.vgm_player._notify_vgm_stopped()
 
     def play_random_vgm_thread(self, textinfo=None, db_path=None):
-        """Play random vgm until ordered to stop playing."""
+        """Play random VGM tracks until ``stop_vgm``; runs in the worker thread."""
         self.vgm_player.begin_vgm_playback()
         if not self._start_vgm_server():
             self.playrandomvgm = False
             self.vgm_player._notify_vgm_stopped()
             return
         def run_func(vgm, close_server=True, plan=None, info=None, title=None):
+            """Play one track of the random playback."""
             return self.play_vgm_thread(
                 vgm, sec2run=90, intro=False,
                 close_server=close_server, plan=plan, info=info, title=title)
@@ -741,11 +752,10 @@ class Emulation:
                 level='warning')
 
     def play_random_vgm(self, textinfo=None, db_path=None):
-        """Start random vgm playback in a thread.
+        """Start random VGM playback in a worker thread.
 
-        The socket server lifecycle stays with ``play_random_vgm_thread``,
-        this wrapper only owns the worker thread. Returns False when a VGM
-        playback runs (or still ends) and nothing was started.
+        Returns ``False`` when a VGM playback runs (or still ends) or the
+        worker did not start.
         """
         with self._vgm_start_lock:
             if self._vgm_busy():
@@ -754,7 +764,7 @@ class Emulation:
                 return False
             self._vgm_stop.clear()
             self.vgm_player.begin_vgm_playback()
-            # visible at once: a stop before the worker runs must end it
+            # Visible at once: a stop before the worker runs must end it.
             self.playrandomvgm = True
             thread = Thread(target=self.play_random_vgm_thread,
                 args=(textinfo, db_path))
@@ -801,19 +811,22 @@ class Emulation:
             return True
 
     def find_nonmame_roms(self, exodos_shell=''):
-        """Search for files from other sources than MAME."""
+        """Find the files of a non-MAME set (eXoDOS, GB64, WHDLoad) into ``emurun``."""
         find_nonmame_roms(self.emurun, self.nonmame, exodos_shell)
 
     def find_roms(self, swl_name=None, set_name=None):
-        """Search for rom zipfiles and chd files within MAME rompath."""
+        """Find the ROM zip and CHD files in the MAME rompath.
+
+        With ``swl_name`` and ``set_name`` (VGM) the result is returned and
+        ``emurun`` keeps its names; otherwise ``emurun`` is filled and
+        ``None`` returned.
+        """
         if swl_name and set_name:
-            # For VGM mode, temporarily set emurun with the provided names
             old_swl = self.emurun.get('swl_name')
             old_set = self.emurun.get('set_name')
             self.emurun['swl_name'] = swl_name
             self.emurun['set_name'] = set_name
             result = find_roms(self.emurun, self.rom_paths)
-            # Restore original values
             if old_swl is not None:
                 self.emurun['swl_name'] = old_swl
             if old_set is not None:
@@ -824,22 +837,19 @@ class Emulation:
             return None
 
     def extract_chd(self, sleep=None, dialog=None, wait=None):
-        """Extract MAME chd CD-ROM to CUE/BIN."""
+        """Extract the MAME CHD CD-ROM of ``emurun`` to CUE/BIN (:func:`extract_chd`)."""
         return extract_chd(self.emurun, self.chdman_exe, sleep, dialog, wait)
 
     def extract_rom(self):
-        """Extract MAME rom zipfile."""
+        """Extract the MAME ROM zip of ``emurun`` (:func:`extract_rom`)."""
         return extract_rom(self.emurun)
 
     def demul(self):
-        """Set parameters for Demul.
-
-        CMD: demul -run=[dc,naomi,awave,...] -rom=
-        """
+        """Set the Demul arguments: ``-run=[dc,naomi,awave,...] -rom=``."""
         return self.launch_preparer.demul(self.emurun)
 
     def fsuae(self):
-        """Set parameters for FS-UAE.
+        """Set the FS-UAE arguments.
 
         args: --floppies_dir=<temp_dir> --floppy_drive_0=disk1 ...
               --floppy_image_0=disk1 --floppy_image_1=disk2 ...
@@ -848,6 +858,6 @@ class Emulation:
         self.launch_preparer.fsuae(self.emurun)
 
     def other_emulator(self, emu_infos, dialog=None, sleep=None, wait=None):
-        """Prepare run for other emulators."""
+        """Prepare ``emurun`` for a non-MAME emulator."""
         return self.launch_preparer.other_emulator(
             self.emurun, emu_infos, dialog, sleep, wait=wait)

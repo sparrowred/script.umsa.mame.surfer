@@ -1,4 +1,4 @@
-"""Pure game-label and formatting helpers."""
+"""Game name splitting and elapsed-time formatting for the lists."""
 
 from __future__ import annotations
 
@@ -7,9 +7,10 @@ from re import findall, search
 
 
 def split_gamename(complete_name):
-    """Split the complete name of a MAME description into the name and details plus version.
+    """Return ``(gamename, detail)`` of a MAME description.
 
-    Return: gamename, detail
+    ``detail`` joins the parenthesised parts, led by a ``vX.Y`` version of
+    the name.
     """
 
     gamename, detail, details = '', '', []
@@ -31,7 +32,12 @@ def split_gamename(complete_name):
 
 
 def make_time_nice(timestamp, now=None):
-    """Format elapsed time."""
+    """Return a short elapsed time like ``05s``, ``3:07M``, ``2:05H``, ``4:12d``.
+
+    With ``now=True`` ``timestamp`` is a ``%Y-%m-%d %H:%M`` time and the
+    time since then is shown; otherwise it is a number of seconds. Months
+    have 30 days, years 360. Invalid input gives ``''``.
+    """
 
     if timestamp is None or timestamp == '':
         return ''

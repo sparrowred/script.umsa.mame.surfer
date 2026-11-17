@@ -1,17 +1,8 @@
-"""Coordinate scanning of MAME support DAT files into the DAT database.
+"""Scan of the MAME support DAT files into dat.db.
 
-The scanner owns the filesystem workflow: it resolves the Core data paths,
-opens its own worker connections through :func:`connect_sqlite`, loads the
-UMSA set mapping once, discovers the input files, parses them with
-:mod:`umsa_core.dat_parser` and stages the results through
-:class:`umsa_core.dat_repository.DatRepository`. Only when every file has been
-read and parsed successfully does it publish the staged ``mame_support``
-result in one short transaction, together with one ``dat_source`` row per
-file (header version and counters), and write ``datscan.log`` (entries and
-sets that were not found) next to the databases.
-
-The scanner never touches ``DBMod`` and never receives its connection. It
-contains no per-entry SQL; all statement ownership lives in the repository.
+Files are parsed and staged; only when every file was read is the
+``mame_support`` result published in one transaction, with one ``dat_source``
+row per file, and ``datscan.log`` written. Uses its own connections.
 """
 
 from __future__ import annotations
@@ -62,14 +53,13 @@ class DatScanner:
     Args:
         db_paths: Resolved Core data paths (needs ``dat_db`` and ``umsa_db``).
         initialize_tables: Optional callable taking the DAT DB cursor; must
-            ensure the ``dat``/``dat_set`` schema exists. Defaults to the
-            repository's authoritative schema helper.
-        progress: Optional ``progress(percent, what)`` callback. Either value
-            may be ``None`` to leave it unchanged.
+            ensure the schema exists. Default
+            :func:`umsa_core.dat_repository.create_dat_tables`.
+        progress: Optional ``progress(percent, what)`` callback; ``None`` for
+            either value keeps it.
         is_cancelled: Optional predicate returning ``True`` when the host wants
             the scan to stop.
-        listdir: Optional directory listing callable (defaults to
-            ``os.listdir``).
+        listdir: Directory listing callable (default ``os.listdir``).
     """
 
     def __init__(self, db_paths, initialize_tables=None, progress=None,
@@ -176,28 +166,20 @@ class DatScanner:
     def scan(self, datdir, cancel_event=None):
         """Scan ``datdir`` and atomically publish the ``mame_support`` result.
 
-        Returns a summary whose keys are ``files``, ``entries``, ``published``,
-        ``cancelled``, ``aborted``, ``errors``, ``busy``, the sums
-        ``unmatched_entries``, ``unmatched_sets`` and ``unmatched_drivers``
-        and ``log`` (path of the written ``datscan.log`` as ``str``, else
-        ``None``).
+        Entries without a matching set are not stored; they and the sets and
+        drivers not found are counted in ``dat_source`` and listed in
+        ``datscan.log``, which is written only after a publish (a write failure
+        is only logged). A missing ``umsa.db`` or input directory, an
+        unreadable input file, a cancellation or a raising cancellation
+        predicate publish nothing and keep the stored rows. Holds the scan
+        lock throughout; when another scan owns it, returns at once with
+        ``busy`` set.
 
-        Entries without any matching set are not stored; they, the sets and
-        the drivers that were not found are counted per file in
-        ``dat_source`` and listed in ``datscan.log``. The log is written only
-        after a successful publish; a failure to write it is logged and
-        leaves the scan published.
-
-        A missing/unreadable ``umsa.db``, a missing input directory or any
-        unreadable/unparseable input file aborts the scan without publishing,
-        leaving the previously stored DAT rows untouched. Cancellation discards
-        the staged result and likewise keeps the previous rows. A cancellation
-        predicate that raises is treated as an abort, never as "keep going".
-
-        The shared scan lock is acquired before any scan-specific preparation
-        or destructive change and held until the final status updates have
-        completed. When another scan already owns the lock the call returns
-        immediately with ``busy`` set and leaves all data untouched.
+        Returns:
+            Summary with ``files``, ``entries``, ``published``, ``cancelled``,
+            ``aborted``, ``errors``, ``busy``, the sums ``unmatched_entries``,
+            ``unmatched_sets``, ``unmatched_drivers`` and ``log`` (path of
+            ``datscan.log`` or ``None``).
         """
 
         summary = {
@@ -233,8 +215,8 @@ class DatScanner:
 
         db_paths = self._db_paths
 
-        # A missing/unreadable UMSA database must abort before any DAT data is
-        # touched, so a failed scan can never look like a valid empty result.
+        # Abort before any DAT data is touched, so a failed scan can never look
+        # like a valid empty result.
         try:
             all_sets, drivers = self._load_set_mapping()
         except Exception as exc:
@@ -244,8 +226,7 @@ class DatScanner:
             summary['errors'] += 1
             return summary
 
-        # Discover the input files before opening the DAT database. A missing
-        # or inaccessible directory must never be treated as an empty scan.
+        # A missing or inaccessible directory is never an empty scan.
         try:
             entries = list(self._listdir(datdir))
         except OSError as exc:
@@ -296,7 +277,6 @@ class DatScanner:
 
                 full_path = os.path.join(datdir, datfile)
 
-                # Ignore directory entries instead of trying to open them.
                 if os.path.isdir(full_path):
                     processed += 1
                     self._report(
@@ -306,7 +286,7 @@ class DatScanner:
 
                 report = DatFileReport(datfile)
                 history = datfile == 'history.xml'
-                # binary for the XML parser, which reads the encoding itself
+                # Binary for the XML parser, which reads the encoding itself.
                 open_args = ({'mode': 'rb'} if history else
                              {'mode': 'r', 'encoding': 'utf-8-sig',
                               'errors': 'ignore'})
@@ -347,9 +327,6 @@ class DatScanner:
                             f"{rollback_exc}", level='error')
                     break
                 except Exception as exc:
-                    # An unreadable or unparseable input must not be treated as
-                    # successfully processed; discard this file's staged rows
-                    # and abort without publishing.
                     log(f"UMSA dat scan: failed to read or parse '{full_path}': "
                         f"{exc}", level='error')
                     summary['aborted'] = True
@@ -366,8 +343,6 @@ class DatScanner:
                 if summary['cancelled']:
                     break
 
-            # Publish only when every file was read and no cancellation or
-            # abort happened.
             if not summary['cancelled'] and not summary['aborted']:
                 try:
                     self._report(what='publishing')
