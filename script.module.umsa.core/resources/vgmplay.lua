@@ -6,6 +6,10 @@
 -- out a playback that -seconds_to_run cuts (VGMPLAY_FADE_SECONDS), takes
 -- commands from the control socket and reports playback statistics.
 --
+-- Environment (set by the Python side): VGMPLAY_PORT (control socket port),
+-- VGMPLAY_FADE_SECONDS (fade-out length), VGMPLAY_TOKEN (session token, sent
+-- once as the first line "HELLO|<token>" of a new connection).
+--
 -- Playback terminates on:
 --   1. "exit" received on the control socket
 --   2. MAME's own -seconds_to_run limit (the final frames are sent
@@ -507,6 +511,7 @@ end
 -- so MAME would try to listen on a port the Python peer already owns.
 --
 -- Opened before the first log call so no startup diagnostic is lost.
+-- A new connection starts with the HELLO line (VGMPLAY_TOKEN), see below.
 --
 -- The autoboot script runs again after the initial machine reset. The mixer
 -- device object cannot carry the connection: on MAME 0.289 any new field on it
@@ -516,6 +521,7 @@ end
 -- set by the first execution are still there in the second one).
 --
 local socket_reused = false
+local invalid_token = false
 
 if VGMPLAY_SOCKET then
     socket = VGMPLAY_SOCKET
@@ -557,7 +563,31 @@ else
         socket = socket_obj
         VGMPLAY_SOCKET = socket_obj
         log_socket_ok = true
+
+        -- Handshake: the very first bytes of a new connection are
+        -- "HELLO|<token>\n" (token = VGMPLAY_TOKEN of this playback), so the
+        -- Python side can tell this connection from a stale one. Written
+        -- before any log() can use the socket; not counted against
+        -- LOG_MAX_TOTAL_BYTES. Without the variable nothing is sent (start
+        -- by hand); a token of another shape is reported and not sent, the
+        -- Python side drops the connection then.
+        local token = os.getenv("VGMPLAY_TOKEN")
+        if token ~= nil then
+            if #token >= 1 and #token <= 64 and not token:find("[^%w]") then
+                local ok, written = pcall(socket_obj.write, socket_obj,
+                    "HELLO|" .. token .. "\n")
+                if not ok or (type(written) == "number" and written < #token + 7) then
+                    log_socket_ok = false
+                end
+            else
+                invalid_token = true
+            end
+        end
     end
+end
+
+if invalid_token then
+    log("WARN", "Invalid VGMPLAY_TOKEN")
 end
 
 -- diagnostics only: a missing field must not end the script

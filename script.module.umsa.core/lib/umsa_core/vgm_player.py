@@ -7,6 +7,7 @@ playback threads (``Emulation.play_vgm`` / ``play_random_vgm`` / ``stop_vgm``).
 """
 
 import os
+import secrets
 import time
 from collections import deque
 from random import randint
@@ -65,6 +66,8 @@ class VgmPlayer:
         self.playintrovgm = False
         self.playrandomvgm = False
         self._vgm_stopped_notified = False
+        # session token of the current playback (VGMPLAY_TOKEN, M4)
+        self.vgm_token = None
 
         # music info countdown ("<title> -MM:ss (<+gain> dB[ auto| manual])")
         self._vgm_title = None
@@ -89,10 +92,15 @@ class VgmPlayer:
     def vgm_stopped_callback(self, value):
         self._vgm_stopped_callback = value
 
-    def _vgm_process_env(self, vgm_port_env, fade_seconds=None):
+    def _vgm_process_env(self, vgm_port_env, fade_seconds=None, token=None):
         """Environment of the MAME process: the port captured for this
-        listener and the fade-out length for vgmplay.lua (none: no fade)."""
+        listener, the fade-out length for vgmplay.lua (none: no fade) and the
+        session token for its HELLO line (none: no handshake)."""
         env = os.environ.copy()
+        if token:
+            env['VGMPLAY_TOKEN'] = token
+        else:
+            env.pop('VGMPLAY_TOKEN', None)
         port = _parse_vgmplay_port(vgm_port_env)
         if port is None:
             env.pop('VGMPLAY_PORT', None)
@@ -216,6 +224,8 @@ class VgmPlayer:
             or actual_sec < plan.seconds_to_run
             or plan.fade_out
         )
+        # one token per playback: only the MAME of this playback may connect
+        self.vgm_token = secrets.token_hex(8)
         self._vgm_title = title or info
         # the info counts down from what MAME really runs
         self._planned_seconds = mame_seconds_to_run(actual_sec)
@@ -231,7 +241,8 @@ class VgmPlayer:
             'emulation_start': 0,
             'working_dir': self.mame_dir,
             'env': self._vgm_process_env(
-                vgm_port_env, FADE_OUT_SECONDS if fade_out else None),
+                vgm_port_env, FADE_OUT_SECONDS if fade_out else None,
+                self.vgm_token),
         })
         return vgm_args, emurun['env']
 

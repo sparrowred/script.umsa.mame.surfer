@@ -4,6 +4,7 @@ This module encapsulates the TCP transport lifecycle and Lua log protocol
 between Python and the MAME Lua script (vgmplay.lua).
 """
 
+import hmac
 import math
 import select
 import socket
@@ -29,6 +30,10 @@ LUA_READER_JOIN_TIMEOUT = 1.0
 LUA_LOG_MAX_LINE_BYTES = 8192
 # bounds one sendall when vgmplay.lua stops reading (full send buffer, C-L12)
 LUA_SEND_TIMEOUT = 1.0
+# token handshake (M4): vgmplay.lua's first bytes are ``HELLO|<token>\n``
+LUA_HELLO_TIMEOUT = 2.0
+LUA_HELLO_MAX_BYTES = 128
+LUA_HELLO_PREFIX = b'HELLO|'
 
 # frames of vgmplay.lua that carry ``gain_db=`` and ``state=`` (end of the
 # music info): playback start, leveling step, leveling lock, manual change
@@ -201,7 +206,8 @@ class VgmSocketServer:
                 self._close_all()
                 return False
 
-    def wait_for_connection(self, timeout: float = 30.0) -> bool:
+    def wait_for_connection(self, timeout: float = 30.0,
+                            token: str | None = None) -> bool:
         """Accept a connection from the Lua client with bounded waiting.
 
         Waits for the Lua client to connect, or for the child process to exit,
@@ -209,6 +215,9 @@ class VgmSocketServer:
 
         Args:
             timeout: Maximum time to wait in seconds
+            token: Session token; when set, only a connection whose first
+                line is ``HELLO|<token>`` is accepted, every other one is
+                dropped and the wait goes on. None: no handshake.
 
         Returns:
             True if connection accepted, False otherwise
@@ -247,12 +256,21 @@ class VgmSocketServer:
                     self._close_socket(conn, 'client', shut_down=True)
                     return False
 
+                rest = b''
+                if token is not None:
+                    ok, rest = self._read_hello(conn, token, deadline)
+                    if not ok:
+                        self._log("UMSA VGM: dropped connection without matching HELLO",
+                                  level='debug')
+                        self._close_socket(conn, 'client', shut_down=True)
+                        continue
+
                 with self._lock:
                     if self._client:
                         self._close_client()
                     self._client = conn
                     try:
-                        self._start_reader(conn)
+                        self._start_reader(conn, rest)
                     except Exception as err:
                         self._log(f"UMSA VGM: reader start failed: {err}",
                                   level='warning')
@@ -268,12 +286,44 @@ class VgmSocketServer:
 
         return False
 
-    def _start_reader(self, conn):
+    def _read_hello(self, conn, token, deadline):
+        """Read the first line of a new connection and check the handshake.
+
+        Returns ``(ok, rest)``: ``rest`` are the bytes behind the HELLO line
+        (they belong to the reader). Reads until ``\\n``, at most
+        ``LUA_HELLO_MAX_BYTES`` bytes and ``LUA_HELLO_TIMEOUT`` seconds (and
+        not beyond ``deadline``). The token is never logged.
+        """
+        end = min(time.monotonic() + LUA_HELLO_TIMEOUT, deadline)
+        buf = b''
+        while b'\n' not in buf:
+            remaining = end - time.monotonic()
+            if remaining <= 0 or len(buf) >= LUA_HELLO_MAX_BYTES:
+                return False, b''
+            try:
+                if not select.select([conn], [], [], remaining)[0]:
+                    continue
+                data = conn.recv(LUA_HELLO_MAX_BYTES + 1 - len(buf))
+            except Exception as err:
+                self._log_socket_error("hello read error", err)
+                return False, b''
+            if not data:
+                return False, b''
+            buf += data
+        line, _, rest = buf.partition(b'\n')
+        if len(line) >= LUA_HELLO_MAX_BYTES:
+            return False, b''
+        expected = LUA_HELLO_PREFIX + token.encode('utf-8')
+        if not hmac.compare_digest(line.rstrip(b'\r'), expected):
+            return False, b''
+        return True, rest
+
+    def _start_reader(self, conn, initial=b''):
         """Start the daemon reader thread for Lua log frames."""
         self._stop_reader()
         stop = threading.Event()
         self._reader_stop = stop
-        thread = threading.Thread(target=self._reader_loop, args=(conn, stop), daemon=True)
+        thread = threading.Thread(target=self._reader_loop, args=(conn, stop, initial), daemon=True)
         self._reader_thread = thread
         try:
             thread.start()
@@ -309,10 +359,20 @@ class VgmSocketServer:
         if alive:
             self._log("UMSA VGM: reader thread still alive after join", level='debug')
 
-    def _reader_loop(self, conn, stop):
-        """Drain LOG frames sent by vgmplay.lua. Never raises into the caller."""
-        buf = b''
+    def _forward_buffered_lines(self, buf):
+        """Forward every complete line of ``buf``, return the remainder."""
+        while b'\n' in buf:
+            line, _, buf = buf.partition(b'\n')
+            self._forward_log_frame(line)
+        return buf
+
+    def _reader_loop(self, conn, stop, buf=b''):
+        """Drain LOG frames sent by vgmplay.lua. Never raises into the caller.
+
+        ``buf`` holds bytes read behind the HELLO line.
+        """
         try:
+            buf = self._forward_buffered_lines(buf)
             while not stop.is_set():
                 try:
                     readable = select.select([conn], [], [], LUA_READ_POLL_TIMEOUT)[0]
@@ -329,10 +389,7 @@ class VgmSocketServer:
                 if not data:
                     # Lua closed its side
                     return
-                buf += data
-                while b'\n' in buf:
-                    line, _, buf = buf.partition(b'\n')
-                    self._forward_log_frame(line)
+                buf = self._forward_buffered_lines(buf + data)
                 if len(buf) > LUA_LOG_MAX_LINE_BYTES:
                     self._log("UMSA VGM: log line too long, buffer dropped", level='warning')
                     buf = b''

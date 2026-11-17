@@ -504,7 +504,8 @@ class Emulation:
 
     def _accept_vgm_conn(self):
         """Accept connection from vgmplay.lua client with bounded waiting."""
-        return self.vgm_socket.wait_for_connection(timeout=30.0)
+        return self.vgm_socket.wait_for_connection(
+            timeout=30.0, token=self.vgm_player.vgm_token)
 
     def _close_vgm_sockets(self):
         self.vgm_socket.close_server()
