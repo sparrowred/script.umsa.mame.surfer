@@ -54,6 +54,11 @@ CHD_PROCESS_STOP_TIMEOUT = 2
 # after the kill that follows when they did not
 VGM_STOP_TIMEOUT = 3.0
 VGM_KILL_JOIN_TIMEOUT = 1.0
+# shortest gap between two volume steps sent to vgmplay.lua: Kodi raises
+# the volume actions of an analog trigger in bursts, one step per action
+# would change the gain by many dB at once (about 5 dB/s while held)
+VOLUME_STEP_INTERVAL = 0.2
+VOLUME_COMMANDS = (b'volume_up', b'volume_down')
 
 
 def parse_mame_ini(ini_file):
@@ -170,6 +175,11 @@ class Emulation:
             vgm_stopped_callback=vgm_stopped_callback,
             max_vgm_duration=vgm_max_duration,
         )
+
+        # throttle of the volume steps (send_vgmaction)
+        self._clock = monotonic
+        self._volume_lock = Lock()
+        self._last_volume_step = None
 
         # VGM socket transport
         self.vgm_socket = VgmSocketServer(
@@ -500,8 +510,24 @@ class Emulation:
         self.vgm_socket.close_server()
 
     def send_vgmaction(self, data):
-        """Send command to MAME Lua script over accepted socket connection."""
-        return self.vgm_socket.send_command(data)
+        """Send command to MAME Lua script over accepted socket connection.
+
+        A volume step within ``VOLUME_STEP_INTERVAL`` of the last sent one
+        is dropped (returns True: nothing failed), so a burst of volume
+        actions changes the gain by one step only.
+        """
+        if data.rstrip(b'\n') not in VOLUME_COMMANDS:
+            return self.vgm_socket.send_command(data)
+        with self._volume_lock:
+            now = self._clock()
+            if (self._last_volume_step is not None
+                    and now - self._last_volume_step < VOLUME_STEP_INTERVAL):
+                log('UMSA VGM: volume step skipped', level='debug')
+                return True
+            sent = self.vgm_socket.send_command(data)
+            if sent:
+                self._last_volume_step = now
+            return sent
 
     def _vgm_workers(self):
         """Running VGM worker threads, without the calling thread."""
