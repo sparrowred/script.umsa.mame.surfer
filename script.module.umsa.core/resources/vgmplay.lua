@@ -60,6 +60,7 @@ local LEVEL_RAMP_UP_DB_PER_ADJ = 0.5 -- max boost per adjustment (slower: a
 local LEVEL_START_DELAY  = 0.5    -- start adjusting after ~0.5s of valid measurements
 local LEVEL_REEVAL_INT   = 0.5    -- re-evaluate every ~0.5s
 local LEVEL_ROLL_SEC     = 1.5    -- rolling window ~1-2s for decisions
+local LEVEL_PEAK_SKIP_SEC = 0.2   -- peaks of the first seconds go to peak_sample_early
 
 --
 -- Leveling cutoff (freeze the gain once converged, never adapt forever)
@@ -141,6 +142,8 @@ local total_energy_sum = 0      -- Sum of (rms^2) across all fingerprint windows
 local total_energy_samples = 0  -- Total fingerprint samples (sum of fingerprint_samples per window)
 local peak_energy = 0           -- Peak RMS observed in any fingerprint window
 local peak_sample = 0           -- Largest absolute sample seen (leveling headroom)
+local peak_sample_early = 0     -- The same within the first LEVEL_PEAK_SKIP_SEC (diagnostics)
+local first_sound_time = nil    -- emu.time() of the first sound callback
 local periodic_calls = 0         -- calls of the periodic callback (RMS_STATS periodic=)
 local fingerprint_count = 0     -- Number of fingerprint windows completed
 -- The same over music windows only (review M9): neither flat nor at or below
@@ -355,7 +358,9 @@ local function update_leveling()
     local effective_db = level_baseline_vol + level_current_gain_db + rms_db
 
     -- Highest gain allowed: the configured maximum and the sample peak
-    -- (baseline + gain + peak <= headroom). The peak only limits a boost: a
+    -- (baseline + gain + peak <= headroom). The peak of the first
+    -- LEVEL_PEAK_SKIP_SEC (a chip init pop, review M6) is not counted: it plays
+    -- before any boost. The peak only limits a boost: a
     -- source that clips without any gain is not cut for it, so the limit
     -- never falls below 0 dB.
     local ceiling = LEVEL_MAX_GAIN_DB
@@ -789,19 +794,21 @@ local function emit_final_logs(reason)
         or string.format("%.2f", level_post_lock_max_db)
     local peak_db = linear_to_db(peak_sample)
     local peak_db_str = (peak_db == -math.huge) and "-inf" or string.format("%.2f", peak_db)
+    local peak_early_db = linear_to_db(peak_sample_early)
+    local peak_early_db_str = (peak_early_db == -math.huge) and "-inf" or string.format("%.2f", peak_early_db)
 
     -- Final RMS_STATS closes the statistics sequence. INFO (not DEBUG) so the
     -- final sequence survives with debug logging switched off.
     log("INFO", string.format(
         "RMS_STATS: t=%.3f fingerprint=%.3f avg_rms_so_far=%.6f peak_rms=%.6f windows=%d silence_dips=%d"
-            .. " lock_t=%s lock_gain=%s post_lock_max_db=%s locked_cut_db=%.2f periodic=%d peak_db=%s",
+            .. " lock_t=%s lock_gain=%s post_lock_max_db=%s locked_cut_db=%.2f periodic=%d peak_db=%s peak_early_db=%s",
         now, diag_last_rms,
         total_energy_samples > 0 and math.sqrt(total_energy_sum / total_energy_samples) or 0,
         peak_energy,
         fingerprint_count,
         silence_dips,
         lock_t_str, lock_gain_str, post_lock_max_str, level_locked_cut_db, periodic_calls,
-        peak_db_str
+        peak_db_str, peak_early_db_str
     ), true)
 
     log("INFO", string.format(
@@ -982,7 +989,11 @@ local fingerprint_flat = true   -- every callback of the current window was flat
 
 -- Returns the RMS over all channels and whether the buffer is flat (every
 -- channel holds one constant value).
-local function calculate_callback_rms(channels)
+local function calculate_callback_rms(channels, now)
+    if first_sound_time == nil then
+        first_sound_time = now
+    end
+    local early = now - first_sound_time < LEVEL_PEAK_SKIP_SEC
     local sum = 0
     local count = 0
     local flat = true
@@ -1006,7 +1017,11 @@ local function calculate_callback_rms(channels)
                 flat = false
             end
             local peak = math.max(math.abs(lo), math.abs(hi))
-            if peak > peak_sample then
+            if early then
+                if peak > peak_sample_early then
+                    peak_sample_early = peak
+                end
+            elseif peak > peak_sample then
                 peak_sample = peak
             end
         end
@@ -1112,14 +1127,13 @@ emu.register_sound_update(function(samples)
         return
     end
 
-    local rms, flat = calculate_callback_rms(channels)
+    local now = emu.time()
+    local rms, flat = calculate_callback_rms(channels, now)
     if rms == nil then
         return
     end
 
     diag_last_rms = rms
-
-    local now = emu.time()
 
     local silence_duration = update_silence_detection(rms, flat, now)
     if silence_duration then
