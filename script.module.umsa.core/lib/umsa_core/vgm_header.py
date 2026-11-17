@@ -155,8 +155,6 @@ def parse_vgm_header(
         
         total_s = total / rate if rate else 0
         loop_s = loop_cnt / rate if loop_cnt and rate else 0
-        intro_s = (total - loop_cnt) / rate if loop_off and loop_cnt and rate else None
-        
         has_loop = bool(loop_cnt)
         intro_s = (total - loop_cnt) / rate if loop_cnt and rate else None
         loop_only = has_loop and (intro_s is not None and intro_s < LOOP_ONLY_INTRO_THRESHOLD)

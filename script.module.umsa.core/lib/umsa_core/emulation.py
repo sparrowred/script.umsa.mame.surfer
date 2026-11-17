@@ -477,14 +477,6 @@ class Emulation:
             return str(self.vgm_port)
         return os.environ.get('VGMPLAY_PORT')
 
-    def _vgm_process_env(self):
-        """Return the MAME environment with ``VGMPLAY_PORT`` when one is configured.
-
-        Without a configured port the variable stays out of the child
-        environment and vgmplay.lua uses its default.
-        """
-        return self.vgm_player._vgm_process_env(self._configured_vgm_port())
-
     def _start_vgm_server(self):
         """Start the socket server for vgmplay.lua; ``False`` when it failed."""
         if not self.vgm_socket.start_server(self._configured_vgm_port()):
