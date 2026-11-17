@@ -13,7 +13,10 @@ overwrite each other's text of the same set. The ``$`` tag lines (``$mame``,
 ``$bio``, ``$cmd``, ``$story``, ``$drv``) are not part of the text; one or
 more empty lines become one paragraph break, empty lines at the start and the
 end are dropped. :func:`recommended_text` cuts the ``Recommended Games``
-sections out of a text. Further rules:
+sections out of a text; :func:`split_info_text` splits a ``mameinfo``/
+``messinfo`` text for the display into the ``WIP:`` part and the rest without
+the ``Recommended Games`` sections (the stored text stays whole). Further
+rules:
 
 * only the list name ``info`` exactly is mapped to ``mame`` (C-L15);
 * a block or History ``<entry>`` without a single matching set yields nothing
@@ -97,8 +100,13 @@ DRIVER_WIP = 'WIP Driver'
 # tag lines of a block that are not part of its text
 _TAG_LINES = frozenset(('$mame', '$bio', '$cmd', '$story', '$drv'))
 
+#: Labels of the info texts whose ``WIP:`` section is shown as an entry of its
+#: own (:func:`split_info_text`), mapped to the label of that entry.
+INFO_WIP_LABELS = {'mameinfo': 'WIP Mame', 'messinfo': 'WIP Mess'}
+
 _CR = '[CR]'
 _RECOMMENDED = 'Recommended Games'
+_WIP = 'WIP:'
 # lines that end a "Recommended Games" section: a heading ("Other Emulators:",
 # "WIP:") or one of the size/level lines that follow the list in mameinfo.dat
 _SECTION_END = re.compile(r'(?:.*:$|(?:romset|chd|levels):)', re.IGNORECASE)
@@ -156,6 +164,53 @@ def recommended_text(text) -> str:
             else:
                 parts.append(line + _CR)
     return ''.join(parts)
+
+
+def _join_paragraphs(lines) -> str:
+    """Join text lines with ``[CR]``; empty lines at the ends are dropped,
+    several empty lines in a row become one paragraph break."""
+
+    out = []
+    for line in lines:
+        if line or (out and out[-1]):
+            out.append(line)
+    while out and not out[-1]:
+        out.pop()
+    return ''.join(line + _CR for line in out)
+
+
+def split_info_text(text) -> tuple:
+    """Split an info text (``mameinfo``/``messinfo``) for the display.
+
+    Returns ``(rest, wip)``: ``wip`` is the text of the ``WIP:`` section
+    without its heading, ``rest`` everything else without the ``Recommended
+    Games`` sections (the menu entry "Recommended" shows them). A section
+    runs up to the next heading (a line ending with ``:``, not a ``-`` list
+    line) or a ``Romset:``/``CHD:``/``LEVELS:`` line; that line belongs to
+    the rest. A text without both sections comes back unchanged with
+    ``wip == ''``; ``None`` gives ``('', '')``.
+    """
+
+    if not text:
+        return '', ''
+    if _WIP not in text and _RECOMMENDED not in text:
+        return text, ''
+    rest = []
+    wip = []
+    target = rest
+    for line in text.split(_CR):
+        if line.rstrip() == _WIP:
+            target = wip
+            continue
+        if line.startswith(_RECOMMENDED):
+            target = None
+            continue
+        if (target is not rest and line and not line.startswith('-')
+                and _SECTION_END.match(line)):
+            target = rest
+        if target is not None:
+            target.append(line)
+    return _join_paragraphs(rest), _join_paragraphs(wip)
 
 
 def find_recommended(set_dats) -> str:

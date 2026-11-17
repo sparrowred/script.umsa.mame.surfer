@@ -16,7 +16,7 @@ from umsa_core import (
     get_machine_artwork_path,
     resolve_artwork_path,
 )
-from umsa_core.dat_parser import DAT_HISTORY
+from umsa_core.dat_parser import DAT_HISTORY, INFO_WIP_LABELS, split_info_text
 
 from . import menu
 from . import strings as S
@@ -59,6 +59,28 @@ def textlist_sort_key(category):
     rank = _TEXTLIST_RANK.get(
         category, _TEXTLIST_RANK[TEXTLIST_OTHER_CATEGORIES])
     return rank, category
+
+
+def displayed_dat(set_dat):
+    """Return the DAT texts of a set as TEXTLIST shows them.
+
+    The info texts of ``INFO_WIP_LABELS`` are split: the rest without
+    ``Recommended Games`` keeps the label, the ``WIP:`` section gets the
+    label ``WIP Mame``/``WIP Mess``; an empty part is left out.
+    """
+
+    shown = {}
+    for label, text in set_dat.items():
+        wip_label = INFO_WIP_LABELS.get(label)
+        if wip_label is None:
+            shown[label] = text
+            continue
+        rest, wip = split_info_text(text)
+        if rest:
+            shown[label] = rest
+        if wip:
+            shown[wip_label] = wip
+    return shown
 
 
 def create_gui_element_from_snap(set_info, image, art_type='unset'):
@@ -264,7 +286,7 @@ def show_artwork(ctx, howmuch='all'):
     list_items = []
     count = 0
     if ctx.software.actset['id'] in ctx.software.all_dat:
-        set_dat = ctx.software.all_dat[ctx.software.actset['id']]
+        set_dat = displayed_dat(ctx.software.all_dat[ctx.software.actset['id']])
         for k in sorted(set_dat, key=textlist_sort_key):
             moretext = ''
             if k == DAT_HISTORY:

@@ -67,6 +67,9 @@ TEXTLIST_ORDER = (
     'command',
     'mamescore',
     TEXTLIST_OTHER_CATEGORIES,
+    # WIP sections of the info texts (split off for the display)
+    _dat.INFO_WIP_LABELS['mameinfo'],
+    _dat.INFO_WIP_LABELS['messinfo'],
     _dat.DRIVER_WIP,
 )
 IMAGE_RIGHT = 2232
